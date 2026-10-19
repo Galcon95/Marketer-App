@@ -1,0 +1,87 @@
+/* BookCraft AI design system — tokens v1. Generated from tokens.json; edit that file, not this one.
+   Dark is the primary theme. Set data-theme="light" on <html> (or any container) for light. */
+
+:root, [data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #09090b;
+  --surface: #18181b;
+  --surface-raised: #27272a;
+  --surface-sunken: #0c0c0e;
+  --border: #27272a;
+  --border-strong: #71717a;
+  --ink: #f4f4f5;
+  --ink-muted: #a1a1aa;
+  --ink-subtle: #8b8b94;
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --on-accent: #ffffff;
+  --accent-text: #a5b4fc;
+  --accent-soft: #1e1b4b;
+  --success: #10b981;
+  --on-success: #022c22;
+  --success-text: #34d399;
+  --success-soft: #052e22;
+  --warning-text: #fbbf24;
+  --warning-soft: #2a1d05;
+  --danger: #e11d48;
+  --danger-text: #fb7185;
+  --danger-soft: #2c0b14;
+  --info-text: #7dd3fc;
+  --chart-1: #6366f1;
+  --chart-2: #0d9488;
+  --shadow-pop: 0 8px 24px rgba(0,0,0,0.5);
+}
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --surface-raised: #f4f4f5;
+  --surface-sunken: #f4f4f5;
+  --border: #e4e4e7;
+  --border-strong: #8b8b94;
+  --ink: #18181b;
+  --ink-muted: #52525b;
+  --ink-subtle: #6b6b74;
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --on-accent: #ffffff;
+  --accent-text: #4338ca;
+  --accent-soft: #eef2ff;
+  --success: #047857;
+  --on-success: #ffffff;
+  --success-text: #047857;
+  --success-soft: #ecfdf5;
+  --warning-text: #b45309;
+  --warning-soft: #fffbeb;
+  --danger: #be123c;
+  --danger-text: #be123c;
+  --danger-soft: #fff1f2;
+  --info-text: #0369a1;
+  --chart-1: #4f46e5;
+  --chart-2: #0d9488;
+  --shadow-pop: 0 8px 24px rgba(24,24,27,0.12);
+}
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-full: 9999px;
+  --font-sans: Geist, "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Type styles */
+.text-display { font-family: var(--font-sans); font-size: 28px; line-height: 34px; font-weight: 600; letter-spacing: -0.02em; }
+.text-title { font-family: var(--font-sans); font-size: 18px; line-height: 26px; font-weight: 600; letter-spacing: -0.01em; }
+.text-heading { font-family: var(--font-sans); font-size: 14px; line-height: 20px; font-weight: 600; }
+.text-body { font-family: var(--font-sans); font-size: 14px; line-height: 22px; font-weight: 400; }
+.text-small { font-family: var(--font-sans); font-size: 13px; line-height: 18px; font-weight: 400; }
+.text-label { font-family: var(--font-sans); font-size: 11px; line-height: 16px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; }
+.text-mono { font-family: var(--font-mono); font-size: 12px; line-height: 18px; font-weight: 400; }
+.text-mono-tag { font-family: var(--font-mono); font-size: 11px; line-height: 16px; font-weight: 500; }

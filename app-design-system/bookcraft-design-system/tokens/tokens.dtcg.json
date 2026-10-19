@@ -1,0 +1,434 @@
+{
+  "$description": "BookCraft AI design tokens (W3C DTCG format). Colour values per theme under color.dark / color.light.",
+  "color": {
+    "dark": {
+      "bg": {
+        "$type": "color",
+        "$value": "#09090b",
+        "$description": "App canvas behind the sidebar and workspace (zinc-950 / zinc-50)."
+      },
+      "surface": {
+        "$type": "color",
+        "$value": "#18181b",
+        "$description": "Cards, sidebar, panels, table body (zinc-900 / white)."
+      },
+      "surface-raised": {
+        "$type": "color",
+        "$value": "#27272a",
+        "$description": "Inputs, hovered rows, active nav item, code chips (zinc-800 / zinc-100)."
+      },
+      "surface-sunken": {
+        "$type": "color",
+        "$value": "#0c0c0e",
+        "$description": "Agent console and log wells; sits inside a surface."
+      },
+      "border": {
+        "$type": "color",
+        "$value": "#27272a",
+        "$description": "Hairline dividers and card outlines (zinc-800 / zinc-200). Decorative only — never the only edge of a control."
+      },
+      "border-strong": {
+        "$type": "color",
+        "$value": "#71717a",
+        "$description": "Input and control outlines; 3:1 on surface and surface-raised in both themes."
+      },
+      "ink": {
+        "$type": "color",
+        "$value": "#f4f4f5",
+        "$description": "Primary text and headings on bg, surface, surface-raised, surface-sunken."
+      },
+      "ink-muted": {
+        "$type": "color",
+        "$value": "#a1a1aa",
+        "$description": "Secondary text, labels, table metadata on bg, surface, surface-raised, surface-sunken."
+      },
+      "ink-subtle": {
+        "$type": "color",
+        "$value": "#8b8b94",
+        "$description": "Placeholders, timestamps, word counts on surface and surface-sunken only (≥4.5:1 there)."
+      },
+      "accent": {
+        "$type": "color",
+        "$value": "#4f46e5",
+        "$description": "Indigo-600 fill: primary buttons, active tab underline, selected node ring. Text on it is on-accent."
+      },
+      "accent-hover": {
+        "$type": "color",
+        "$value": "#4338ca",
+        "$description": "Hover state of an accent fill."
+      },
+      "on-accent": {
+        "$type": "color",
+        "$value": "#ffffff",
+        "$description": "Text and icons on accent."
+      },
+      "accent-text": {
+        "$type": "color",
+        "$value": "#a5b4fc",
+        "$description": "Indigo text, links, icons, focus ring and active nav icon on bg, surface, surface-raised, accent-soft."
+      },
+      "accent-soft": {
+        "$type": "color",
+        "$value": "#1e1b4b",
+        "$description": "Indigo tint behind accent-text: active nav item, selected chunk, accent badges."
+      },
+      "success": {
+        "$type": "color",
+        "$value": "#10b981",
+        "$description": "Emerald fill: Approve & Dispatch, live status dots, completed agent nodes. Text on it is on-success."
+      },
+      "on-success": {
+        "$type": "color",
+        "$value": "#022c22",
+        "$description": "Text and icons on success."
+      },
+      "success-text": {
+        "$type": "color",
+        "$value": "#34d399",
+        "$description": "Emerald text: ‘Active’, ‘AUDIT PASS’, high intent scores, on surface, surface-raised, surface-sunken, success-soft."
+      },
+      "success-soft": {
+        "$type": "color",
+        "$value": "#052e22",
+        "$description": "Emerald tint behind success-text in badges and the verification report."
+      },
+      "warning-text": {
+        "$type": "color",
+        "$value": "#fbbf24",
+        "$description": "Amber text: pending checkpoint, medium intent, on surface, surface-sunken, warning-soft."
+      },
+      "warning-soft": {
+        "$type": "color",
+        "$value": "#2a1d05",
+        "$description": "Amber tint behind warning-text."
+      },
+      "danger": {
+        "$type": "color",
+        "$value": "#e11d48",
+        "$description": "Rose fill for destructive confirmations. Text on it is on-accent (white)."
+      },
+      "danger-text": {
+        "$type": "color",
+        "$value": "#fb7185",
+        "$description": "Rose text: ‘AUDIT FAIL’, errors, Reject outline, on surface, surface-sunken, danger-soft. Always paired with an icon or word."
+      },
+      "danger-soft": {
+        "$type": "color",
+        "$value": "#2c0b14",
+        "$description": "Rose tint behind danger-text."
+      },
+      "info-text": {
+        "$type": "color",
+        "$value": "#7dd3fc",
+        "$description": "Sky text for tool calls (call_tool) in the console, on surface-sunken and surface."
+      },
+      "chart-1": {
+        "$type": "color",
+        "$value": "#6366f1",
+        "$description": "First data series (indigo). Validated with chart-2 for colour-blind separation in both themes."
+      },
+      "chart-2": {
+        "$type": "color",
+        "$value": "#0d9488",
+        "$description": "Second data series (teal). Never reuse status colours for series."
+      }
+    },
+    "light": {
+      "bg": {
+        "$type": "color",
+        "$value": "#fafafa",
+        "$description": "App canvas behind the sidebar and workspace (zinc-950 / zinc-50)."
+      },
+      "surface": {
+        "$type": "color",
+        "$value": "#ffffff",
+        "$description": "Cards, sidebar, panels, table body (zinc-900 / white)."
+      },
+      "surface-raised": {
+        "$type": "color",
+        "$value": "#f4f4f5",
+        "$description": "Inputs, hovered rows, active nav item, code chips (zinc-800 / zinc-100)."
+      },
+      "surface-sunken": {
+        "$type": "color",
+        "$value": "#f4f4f5",
+        "$description": "Agent console and log wells; sits inside a surface."
+      },
+      "border": {
+        "$type": "color",
+        "$value": "#e4e4e7",
+        "$description": "Hairline dividers and card outlines (zinc-800 / zinc-200). Decorative only — never the only edge of a control."
+      },
+      "border-strong": {
+        "$type": "color",
+        "$value": "#8b8b94",
+        "$description": "Input and control outlines; 3:1 on surface and surface-raised in both themes."
+      },
+      "ink": {
+        "$type": "color",
+        "$value": "#18181b",
+        "$description": "Primary text and headings on bg, surface, surface-raised, surface-sunken."
+      },
+      "ink-muted": {
+        "$type": "color",
+        "$value": "#52525b",
+        "$description": "Secondary text, labels, table metadata on bg, surface, surface-raised, surface-sunken."
+      },
+      "ink-subtle": {
+        "$type": "color",
+        "$value": "#6b6b74",
+        "$description": "Placeholders, timestamps, word counts on surface and surface-sunken only (≥4.5:1 there)."
+      },
+      "accent": {
+        "$type": "color",
+        "$value": "#4f46e5",
+        "$description": "Indigo-600 fill: primary buttons, active tab underline, selected node ring. Text on it is on-accent."
+      },
+      "accent-hover": {
+        "$type": "color",
+        "$value": "#4338ca",
+        "$description": "Hover state of an accent fill."
+      },
+      "on-accent": {
+        "$type": "color",
+        "$value": "#ffffff",
+        "$description": "Text and icons on accent."
+      },
+      "accent-text": {
+        "$type": "color",
+        "$value": "#4338ca",
+        "$description": "Indigo text, links, icons, focus ring and active nav icon on bg, surface, surface-raised, accent-soft."
+      },
+      "accent-soft": {
+        "$type": "color",
+        "$value": "#eef2ff",
+        "$description": "Indigo tint behind accent-text: active nav item, selected chunk, accent badges."
+      },
+      "success": {
+        "$type": "color",
+        "$value": "#047857",
+        "$description": "Emerald fill: Approve & Dispatch, live status dots, completed agent nodes. Text on it is on-success."
+      },
+      "on-success": {
+        "$type": "color",
+        "$value": "#ffffff",
+        "$description": "Text and icons on success."
+      },
+      "success-text": {
+        "$type": "color",
+        "$value": "#047857",
+        "$description": "Emerald text: ‘Active’, ‘AUDIT PASS’, high intent scores, on surface, surface-raised, surface-sunken, success-soft."
+      },
+      "success-soft": {
+        "$type": "color",
+        "$value": "#ecfdf5",
+        "$description": "Emerald tint behind success-text in badges and the verification report."
+      },
+      "warning-text": {
+        "$type": "color",
+        "$value": "#b45309",
+        "$description": "Amber text: pending checkpoint, medium intent, on surface, surface-sunken, warning-soft."
+      },
+      "warning-soft": {
+        "$type": "color",
+        "$value": "#fffbeb",
+        "$description": "Amber tint behind warning-text."
+      },
+      "danger": {
+        "$type": "color",
+        "$value": "#be123c",
+        "$description": "Rose fill for destructive confirmations. Text on it is on-accent (white)."
+      },
+      "danger-text": {
+        "$type": "color",
+        "$value": "#be123c",
+        "$description": "Rose text: ‘AUDIT FAIL’, errors, Reject outline, on surface, surface-sunken, danger-soft. Always paired with an icon or word."
+      },
+      "danger-soft": {
+        "$type": "color",
+        "$value": "#fff1f2",
+        "$description": "Rose tint behind danger-text."
+      },
+      "info-text": {
+        "$type": "color",
+        "$value": "#0369a1",
+        "$description": "Sky text for tool calls (call_tool) in the console, on surface-sunken and surface."
+      },
+      "chart-1": {
+        "$type": "color",
+        "$value": "#4f46e5",
+        "$description": "First data series (indigo). Validated with chart-2 for colour-blind separation in both themes."
+      },
+      "chart-2": {
+        "$type": "color",
+        "$value": "#0d9488",
+        "$description": "Second data series (teal). Never reuse status colours for series."
+      }
+    }
+  },
+  "shadow": {
+    "dark": {
+      "shadow-pop": {
+        "$type": "shadow",
+        "$value": "0 8px 24px rgba(0,0,0,0.5)",
+        "$description": "Menus and the review drawer only; cards use borders, not shadows."
+      }
+    },
+    "light": {
+      "shadow-pop": {
+        "$type": "shadow",
+        "$value": "0 8px 24px rgba(24,24,27,0.12)",
+        "$description": "Menus and the review drawer only; cards use borders, not shadows."
+      }
+    }
+  },
+  "spacing": {
+    "space-1": {
+      "$type": "dimension",
+      "$value": "4px",
+      "$description": "Icon-to-label gap, tag padding."
+    },
+    "space-2": {
+      "$type": "dimension",
+      "$value": "8px",
+      "$description": "Gaps inside controls and between badges."
+    },
+    "space-3": {
+      "$type": "dimension",
+      "$value": "12px",
+      "$description": "Button horizontal padding, row gaps in lists."
+    },
+    "space-4": {
+      "$type": "dimension",
+      "$value": "16px",
+      "$description": "Card padding, grid gutters."
+    },
+    "space-6": {
+      "$type": "dimension",
+      "$value": "24px",
+      "$description": "Workspace padding and gaps between panels."
+    },
+    "space-8": {
+      "$type": "dimension",
+      "$value": "32px",
+      "$description": "Space between page header and content."
+    }
+  },
+  "radius": {
+    "radius-sm": {
+      "$type": "dimension",
+      "$value": "4px",
+      "$description": "Metadata tags, console chips, checkboxes."
+    },
+    "radius-md": {
+      "$type": "dimension",
+      "$value": "6px",
+      "$description": "Buttons, inputs, nav items."
+    },
+    "radius-lg": {
+      "$type": "dimension",
+      "$value": "10px",
+      "$description": "Cards, panels, agent nodes, drawers."
+    },
+    "radius-full": {
+      "$type": "dimension",
+      "$value": "9999px",
+      "$description": "Status dots and pill badges."
+    }
+  },
+  "fontFamily": {
+    "sans": {
+      "$type": "fontFamily",
+      "$value": "Geist, \"Inter\", system-ui, -apple-system, \"Segoe UI\", sans-serif"
+    },
+    "mono": {
+      "$type": "fontFamily",
+      "$value": "\"Geist Mono\", \"JetBrains Mono\", ui-monospace, SFMono-Regular, Menlo, monospace"
+    }
+  },
+  "typography": {
+    "display": {
+      "$type": "typography",
+      "$value": {
+        "fontFamily": "{fontFamily.sans}",
+        "fontSize": "28px",
+        "lineHeight": "34px",
+        "fontWeight": 600,
+        "letterSpacing": "-0.02em"
+      },
+      "$description": "One per view: the workspace page title."
+    },
+    "title": {
+      "$type": "typography",
+      "$value": {
+        "fontFamily": "{fontFamily.sans}",
+        "fontSize": "18px",
+        "lineHeight": "26px",
+        "fontWeight": 600,
+        "letterSpacing": "-0.01em"
+      },
+      "$description": "Panel and drawer titles."
+    },
+    "heading": {
+      "$type": "typography",
+      "$value": {
+        "fontFamily": "{fontFamily.sans}",
+        "fontSize": "14px",
+        "lineHeight": "20px",
+        "fontWeight": 600
+      },
+      "$description": "Card titles, table headers, node names."
+    },
+    "body": {
+      "$type": "typography",
+      "$value": {
+        "fontFamily": "{fontFamily.sans}",
+        "fontSize": "14px",
+        "lineHeight": "22px",
+        "fontWeight": 400
+      },
+      "$description": "Generated copy, descriptions, form values."
+    },
+    "small": {
+      "$type": "typography",
+      "$value": {
+        "fontFamily": "{fontFamily.sans}",
+        "fontSize": "13px",
+        "lineHeight": "18px",
+        "fontWeight": 400
+      },
+      "$description": "Secondary lines, helper text, nav links."
+    },
+    "label": {
+      "$type": "typography",
+      "$value": {
+        "fontFamily": "{fontFamily.sans}",
+        "fontSize": "11px",
+        "lineHeight": "16px",
+        "fontWeight": 500,
+        "letterSpacing": "0.06em"
+      },
+      "$description": "Uppercase field labels and sidebar section headings."
+    },
+    "mono": {
+      "$type": "typography",
+      "$value": {
+        "fontFamily": "{fontFamily.mono}",
+        "fontSize": "12px",
+        "lineHeight": "18px",
+        "fontWeight": 400
+      },
+      "$description": "Console logs, tool names, server ids, chunk ids."
+    },
+    "mono-tag": {
+      "$type": "typography",
+      "$value": {
+        "fontFamily": "{fontFamily.mono}",
+        "fontSize": "11px",
+        "lineHeight": "16px",
+        "fontWeight": 500
+      },
+      "$description": "Metadata tags, word counts, intent scores."
+    }
+  }
+}

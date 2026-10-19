@@ -1,0 +1,25 @@
+/* Design tokens + component styles, adapted from app-design-system/bookcraft-design-system.
+   tokens.css: colour, spacing, radius and type tokens (dark + light).
+   bookcraft.css: component styles (bc-* classes); fonts @import removed (next/font loads Geist). */
+@import "./styles/tokens.css";
+@import "./styles/bookcraft.css";
+
+/* Point the token font stacks at the next/font variables set in layout.tsx. */
+:root {
+  --font-sans: var(--font-geist-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Placeholder-only helper until real content replaces the dummies. */
+.bc-placeholder { min-height: 160px; justify-content: center; }
+.theme-toggle { position: fixed; right: 16px; bottom: 16px; z-index: 50; }
+
+/* Slide-out drawer (shadow-pop is reserved for drawers, menus and modals). */
+.drawer-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, .4); z-index: 60; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(480px, 100vw); z-index: 61; display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--border); box-shadow: var(--shadow-pop); animation: drawer-in .2s ease-out; }
+.drawer-head { display: flex; align-items: center; gap: var(--space-2); min-height: 48px; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); }
+.drawer-head h3 { margin: 0; flex: 1; min-width: 0; font: 600 14px/20px var(--font-sans); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawer-head .bc-ico { color: var(--accent-text); }
+.drawer-body { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); }
+@keyframes drawer-in { from { transform: translateX(100%); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .drawer { animation: none; } }

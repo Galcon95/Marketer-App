@@ -1,0 +1,16 @@
+/* Base layer + helper classes used by react/primitives.tsx (Tailwind v3 syntax).
+   Import after tokens.css and the Tailwind directives. */
+@layer base {
+  html, body { background: var(--bg); color: var(--ink); font-family: var(--font-sans); font-size: 14px; line-height: 22px; -webkit-font-smoothing: antialiased; }
+  :focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+  ::selection { background: var(--accent-soft); color: var(--ink); }
+}
+@layer components {
+  .label { @apply text-label uppercase text-ink-muted; }
+  .mono-tag { @apply font-mono text-tag; }
+  .field { @apply w-full rounded-md border border-line-strong bg-surface-raised px-3 py-[7px] text-[14px] leading-5 text-ink placeholder:text-ink-muted focus:border-transparent focus:outline focus:outline-2 focus:outline-accent-text; }
+  .dot-grid { background-image: radial-gradient(circle, var(--border) 1px, transparent 1.5px); background-size: 16px 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001s !important; animation-iteration-count: 1 !important; transition: none !important; }
+}
