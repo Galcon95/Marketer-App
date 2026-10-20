@@ -7,12 +7,22 @@ import { useApi } from "@/lib/useApi";
 import AssetCard from "../AssetCard";
 import { Button, Card, ErrorNote, Field, Placeholder, SectionHeading } from "../ui";
 
-/** Phase 1: zero-shot generation from a brief (POST /generate with grounded: false). */
+/**
+ * Phase 1: zero-shot generation from a brief (POST /generate with grounded: false).
+ * Left: a campaign brief form. Right: all zero-shot assets of the project, newest first.
+ * @param refresh Counter from AppShell; changing it reloads the asset list.
+ * @param onChange Call after generating so the whole app (lists, counts) refreshes.
+ */
 export default function ContentGenerator({ refresh, onChange }: { refresh: number; onChange: () => void }) {
   const assets = useApi(`assets:${refresh}`, api.listAssets);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Form submit: combine the brief fields into one sentence-like brief, e.g.
+   * "Acme Pro by Acme Inc. (SaaS) <description> Audience: Developers", and request a zero-shot asset.
+   * Empty optional fields are left out.
+   */
   async function submit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -37,6 +47,7 @@ export default function ContentGenerator({ refresh, onChange }: { refresh: numbe
     }
   }
 
+  // The server returns assets oldest first; show only zero-shot ones, newest on top.
   const zeroShot = (assets.data ?? []).filter((a) => !a.grounded).reverse();
 
   return (

@@ -1,4 +1,8 @@
-"""In-memory dummy data. Replaced step by step by real storage, ingestion and RAG."""
+"""In-memory dummy data. Replaced step by step by real storage, ingestion and RAG.
+
+The module-level dicts (projects, sources, chunks, assets) act as a fake database keyed by id.
+They live only in the server process and are reset to the demo content on every restart.
+"""
 
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -9,13 +13,25 @@ DEFAULT_PROJECT_ID = "demo-campaign"
 
 
 def now() -> datetime:
+    """Return the current time as a timezone-aware UTC datetime, used for all created_at fields."""
     return datetime.now(timezone.utc)
 
 
 def new_id(prefix: str) -> str:
+    """Create a short, unique, readable id such as "src_1a2b3c4d".
+
+    Joins the prefix with the first 8 hex characters of a random UUID4.
+
+    Args:
+        prefix: Type marker for the id, e.g. "prj", "src", "ast".
+
+    Returns:
+        The new id string.
+    """
     return f"{prefix}_{uuid4().hex[:8]}"
 
 
+# Projects by id; starts with one demo project.
 projects: dict[str, Project] = {
     DEFAULT_PROJECT_ID: Project(
         id=DEFAULT_PROJECT_ID,
@@ -25,6 +41,7 @@ projects: dict[str, Project] = {
     )
 }
 
+# Sources by id; two demo sources (a book and a video) that have no files on disk.
 sources: dict[str, Source] = {
     "src_demo0001": Source(
         id="src_demo0001",
@@ -50,6 +67,7 @@ sources: dict[str, Source] = {
     ),
 }
 
+# Chunks by id; fake ingestion output of the two demo sources.
 chunks: dict[str, Chunk] = {
     c.id: c
     for c in [
@@ -71,9 +89,19 @@ chunks: dict[str, Chunk] = {
     ]
 }
 
+# Generated assets by id; empty until the user generates something.
 assets: dict[str, Asset] = {}
 
 
 def dummy_citation(chunk: Chunk, score: float) -> Citation:
+    """Build a Citation pointing at a chunk, quoting its first 80 characters.
+
+    Args:
+        chunk: The chunk to cite.
+        score: Similarity score to attach to the citation.
+
+    Returns:
+        A Citation with the chunk's id, source and location.
+    """
     return Citation(chunk_id=chunk.id, source_id=chunk.source_id, location=chunk.location,
                     quote=chunk.text[:80], score=score)

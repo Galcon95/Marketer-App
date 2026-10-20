@@ -6,18 +6,29 @@ import type { ComponentPropsWithRef, ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { AlertTriangle, ChevronDown, ChevronsUpDown, FolderOpen, Megaphone, RefreshCw, Search } from "lucide-react";
 
+/**
+ * Join CSS class names, skipping falsy values, so classes can be added conditionally.
+ * @param parts Class names, or false/null/undefined for classes that should not apply.
+ * @returns The space-separated class string, e.g. cx("a", cond && "b") → "a b" or "a".
+ */
 export function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
 /* ---------- Button ---------- */
 type ButtonVariant = "primary" | "secondary" | "ghost" | "success" | "danger";
+/** Props of Button: all native <button> props plus the styling options below. */
 interface ButtonProps extends ComponentPropsWithRef<"button"> {
-  variant?: ButtonVariant;
-  size?: "md" | "sm";
-  icon?: LucideIcon;
-  loading?: boolean;
+  variant?: ButtonVariant; // color scheme, default "primary"
+  size?: "md" | "sm"; // default "md"
+  icon?: LucideIcon; // optional icon shown before the label
+  loading?: boolean; // shows a spinner instead of the icon and disables the button
 }
+/**
+ * Styled button. Defaults to type="button" so it never submits a form by accident; pass
+ * type="submit" explicitly for form buttons. Disabled while `loading`.
+ * @param props See ButtonProps; remaining props (onClick, ref, aria-*, ...) go to the <button>.
+ */
 export function Button({ variant = "primary", size = "md", icon: Icon, loading, className, children, disabled, ...rest }: ButtonProps) {
   const iconSize = size === "sm" ? 14 : 16;
   return (
@@ -35,6 +46,14 @@ export function Button({ variant = "primary", size = "md", icon: Icon, loading, 
 
 /* ---------- Badge ---------- */
 type Tone = "neutral" | "accent" | "success" | "warning" | "danger";
+/**
+ * Small inline label for statuses, ids and counts.
+ * @param tone Color, default "neutral".
+ * @param mono Use the monospace font (for ids and numbers).
+ * @param dot Show a status dot before the text; `pulse` animates it.
+ * @param icon Optional icon before the text.
+ * @param children Badge text.
+ */
 export function Badge({ tone = "neutral", mono, dot, pulse, icon: Icon, children }: { tone?: Tone; mono?: boolean; dot?: boolean; pulse?: boolean; icon?: LucideIcon; children?: ReactNode }) {
   return (
     <span className={cx("bc-badge", tone !== "neutral" && `bc-badge-${tone}`, mono && "bc-badge-mono")}>
@@ -46,6 +65,17 @@ export function Badge({ tone = "neutral", mono, dot, pulse, icon: Icon, children
 }
 
 /* ---------- Card ---------- */
+/**
+ * Bordered content panel with an optional header. The header is rendered only when
+ * `title` or `actions` is given.
+ * @param title Header title.
+ * @param icon Icon before the title.
+ * @param meta Content after the title, e.g. a count badge.
+ * @param actions Header buttons.
+ * @param flush Drop the body padding (for tables that run edge to edge).
+ * @param className Extra classes for the outer <section>.
+ * @param children Card body.
+ */
 export function Card({ title, icon: Icon, meta, actions, flush, className, children }: { title?: string; icon?: LucideIcon; meta?: ReactNode; actions?: ReactNode; flush?: boolean; className?: string; children?: ReactNode }) {
   return (
     <section className={cx("bc-card", className)}>
@@ -63,17 +93,23 @@ export function Card({ title, icon: Icon, meta, actions, flush, className, child
 }
 
 /* ---------- Field ---------- */
+/** Props of Field. Fields are uncontrolled: read their values from the form with FormData via `name`. */
 interface FieldProps {
-  label?: string;
-  name?: string;
-  as?: "input" | "textarea" | "select" | "search";
-  options?: Array<string | { value: string; label: string }>;
-  rows?: number;
+  label?: string; // visible label above the control
+  name?: string; // form field name, also used to build the element id
+  as?: "input" | "textarea" | "select" | "search"; // which control to render, default "input"
+  options?: Array<string | { value: string; label: string }>; // choices for as="select"
+  rows?: number; // height of as="textarea", default 3
   placeholder?: string;
   defaultValue?: string;
   required?: boolean;
-  hint?: string;
+  hint?: string; // small help text below the control
 }
+/**
+ * Labeled form control: text input, textarea, select box or search input.
+ * Derives a stable element id from name/label/placeholder to link the <label> to the control.
+ * @param props See FieldProps.
+ */
 export function Field({ label, name, as = "input", options = [], rows = 3, placeholder, defaultValue, required, hint }: FieldProps) {
   const id = `f-${(name ?? label ?? placeholder ?? "field").replace(/\W+/g, "-").toLowerCase()}`;
   const base = { id, name, placeholder, defaultValue, required };
@@ -109,7 +145,14 @@ export function Field({ label, name, as = "input", options = [], rows = 3, place
 }
 
 /* ---------- Tabs ---------- */
+/** One tab: `id` is the value reported on click, `kicker` a small line above the label. */
 export interface TabItem<T extends string = string> { id: T; kicker?: string; label: string; icon: LucideIcon }
+/**
+ * Horizontal tab bar (controlled).
+ * @param items Tabs to show, in order.
+ * @param value Id of the selected tab.
+ * @param onChange Called with the id of the clicked tab.
+ */
 export function Tabs<T extends string>({ items, value, onChange }: { items: TabItem<T>[]; value: T; onChange: (id: T) => void }) {
   return (
     <div className="bc-tabs" role="tablist">
@@ -124,8 +167,17 @@ export function Tabs<T extends string>({ items, value, onChange }: { items: TabI
 }
 
 /* ---------- Sidebar ---------- */
+/** A titled group of sidebar links; `count` shows a number badge next to a link. */
 export interface NavGroup { title: string; items: { id: string; icon: LucideIcon; label: string; count?: number }[] }
 
+/**
+ * One line of the sidebar's system status block, e.g. "API ● Connected".
+ * @param icon Icon of the service.
+ * @param label Service name.
+ * @param value Status text.
+ * @param ok True shows a pulsing dot; false colors the value as a warning.
+ * @param title Tooltip with extra detail.
+ */
 export function StatusRow({ icon: Icon, label, value, ok, title }: { icon: LucideIcon; label: string; value: string; ok: boolean; title?: string }) {
   return (
     <div className="bc-status-r" title={title}>
@@ -139,6 +191,16 @@ export function StatusRow({ icon: Icon, label, value, ok, title }: { icon: Lucid
   );
 }
 
+/**
+ * Left app sidebar: logo, current project, navigation groups and the system status block.
+ * The project switcher button is not wired up yet.
+ * @param nav Navigation groups to render.
+ * @param active Id of the active link (marked with aria-current="page").
+ * @param onNavigate Called with the id of a clicked link.
+ * @param status Content of the status block (usually StatusRow elements).
+ * @param project Name of the current project.
+ * @param projectMeta Small line under the project name, e.g. counts.
+ */
 export function Sidebar({ nav, active, onNavigate, status, project, projectMeta }: { nav: NavGroup[]; active: string; onNavigate: (id: string) => void; status: ReactNode; project: string; projectMeta: string }) {
   return (
     <aside className="bc-side" aria-label="Main">
@@ -182,6 +244,13 @@ export function Sidebar({ nav, active, onNavigate, status, project, projectMeta 
 }
 
 /* ---------- Section heading + placeholder ---------- */
+/**
+ * Heading for a page section with an icon and optional count badge.
+ * @param icon Icon before the title.
+ * @param title Heading text.
+ * @param count Number shown in a badge after the title.
+ * @param children Extra content at the end of the row, e.g. buttons.
+ */
 export function SectionHeading({ icon: Icon, title, count, children }: { icon: LucideIcon; title: string; count?: ReactNode; children?: ReactNode }) {
   return (
     <div className="bc-sec-h">
@@ -193,6 +262,11 @@ export function SectionHeading({ icon: Icon, title, count, children }: { icon: L
   );
 }
 
+/**
+ * Dashed empty-state box, used for "nothing here yet", loading text and unbuilt features.
+ * @param icon Icon shown above the text.
+ * @param children Message.
+ */
 export function Placeholder({ icon: Icon, children }: { icon: LucideIcon; children: ReactNode }) {
   return (
     <div className="bc-empty bc-placeholder">
@@ -203,6 +277,10 @@ export function Placeholder({ icon: Icon, children }: { icon: LucideIcon; childr
 }
 
 /* ---------- Progress, scores, errors ---------- */
+/**
+ * Horizontal progress bar; switches to its "done" style at 100.
+ * @param value Progress in percent, 0-100.
+ */
 export function ProgressBar({ value }: { value: number }) {
   return (
     <div className="bc-bar" data-done={value >= 100} role="progressbar" aria-valuenow={value} aria-valuemin={0} aria-valuemax={100}>
@@ -211,12 +289,21 @@ export function ProgressBar({ value }: { value: number }) {
   );
 }
 
-/** Shared score scale: ≥0.85 emerald, ≥0.70 amber, below that muted. */
+/**
+ * Colored score chip, e.g. "sim 0.94".
+ * Shared score scale: ≥0.85 emerald, ≥0.70 amber, below that muted.
+ * @param label Short prefix such as "sim".
+ * @param value Score between 0 and 1, shown with two decimals.
+ */
 export function Score({ label, value }: { label: string; value: number }) {
   const tier = value >= 0.85 ? "hi" : value >= 0.7 ? "md" : "lo";
   return <span className={`bc-score bc-score-${tier}`}>{label} {value.toFixed(2)}</span>;
 }
 
+/**
+ * Inline error message with a warning icon; announced to screen readers (role="alert").
+ * @param children Error text.
+ */
 export function ErrorNote({ children }: { children: ReactNode }) {
   return (
     <div className="bc-check" data-ok="false" role="alert">

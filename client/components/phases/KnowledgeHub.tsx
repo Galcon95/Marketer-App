@@ -1,42 +1,82 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type SubmitEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type SubmitEvent } from "react";
 import { Check, Database, FileText, Film, Library, Search, Sparkles, Trash2, Upload, X } from "lucide-react";
-import { api, ASSET_TYPES, errorMessage, locationLabel, type AssetType, type Chunk, type Source } from "@/lib/api";
+import {
+  api, ASSET_TYPES, errorMessage, locationLabel, MAX_UPLOAD_BYTES, PROCESSING_STATUSES, UPLOAD_EXTENSIONS,
+  type AssetType, type Chunk, type Source,
+} from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import AssetCard from "../AssetCard";
 import { Badge, Button, Card, ErrorNote, Field, Placeholder, ProgressBar, Score, SectionHeading } from "../ui";
 
+/** Props every phase view gets from AppShell: `refresh` reloads data, `onChange` triggers a global refresh. */
 type Props = { refresh: number; onChange: () => void };
 
+/**
+ * Format a byte count for display.
+ * @param n Number of bytes.
+ * @returns e.g. "512 B", "12.3 KB", "4.0 MB".
+ */
 function formatBytes(n: number) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 ** 2).toFixed(1)} MB`;
 }
 
-/* ---------- Upload + ingestion progress ---------- */
+/**
+ * Client-side check before sending; the server validates again.
+ * Checks extension (UPLOAD_EXTENSIONS), maximum size and that the file is not empty.
+ * @param file File picked by the user.
+ * @returns An error message, or null when the file may be uploaded.
+ */
+function validateFile(file: File): string | null {
+  const ext = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+  if (!UPLOAD_EXTENSIONS.includes(ext)) return `Unsupported file type. Allowed: ${UPLOAD_EXTENSIONS.join(", ")}`;
+  if (file.size > MAX_UPLOAD_BYTES) return `File is larger than ${formatBytes(MAX_UPLOAD_BYTES)}`;
+  if (file.size === 0) return "File is empty";
+  return null;
+}
+
+/* ---------- Upload (+ ingestion progress, once ingestion exists) ---------- */
+/**
+ * Upload box: a "Choose PDF" button, the upload progress of the file being sent, and afterwards
+ * the state of the created source. Shows one of three states: idle (accepted formats), sending
+ * (upload percentage), or the last uploaded source (status and size).
+ * @param onChange Called after a successful upload and when ingestion finishes, to refresh the app.
+ */
 function UploadPanel({ onChange }: { onChange: () => void }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [source, setSource] = useState<Source | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null); // hidden file input opened by the button
+  const [source, setSource] = useState<Source | null>(null); // last uploaded source
+  const [sending, setSending] = useState<{ name: string; size: number; percent: number } | null>(null); // upload in flight
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Validate a file locally, then upload it with progress updates.
+   * On success the new source is shown and the app refreshed; on failure the error is shown.
+   * @param file The file chosen in the file dialog.
+   */
   async function upload(file: File) {
-    setUploading(true);
+    const invalid = validateFile(file);
+    if (invalid) {
+      setError(`${file.name}: ${invalid}`);
+      return;
+    }
     setError(null);
+    setSource(null);
+    setSending({ name: file.name, size: file.size, percent: 0 });
     try {
-      setSource(await api.uploadSource(file));
+      setSource(await api.uploadSource(file, (percent) => setSending((s) => s && { ...s, percent })));
       onChange();
     } catch (e) {
-      setError(errorMessage(e));
+      setError(`${file.name}: ${errorMessage(e)}`);
     } finally {
-      setUploading(false);
+      setSending(null);
     }
   }
 
-  // Poll GET /sources/{id} until ingestion finishes.
-  const pollingId = source && source.status !== "ready" && source.status !== "failed" ? source.id : null;
+  // Poll GET /sources/{id} while ingestion runs (not triggered yet: uploads stop at "uploaded").
+  const pollingId = source && PROCESSING_STATUSES.includes(source.status) ? source.id : null;
   useEffect(() => {
     if (!pollingId) return;
     const timer = setInterval(async () => {
@@ -51,47 +91,73 @@ function UploadPanel({ onChange }: { onChange: () => void }) {
     return () => clearInterval(timer);
   }, [pollingId, onChange]);
 
-  const done = source?.status === "ready";
+  // Pick title, badge, progress and meta line for the current state (sending / uploaded source / idle).
+  let title: string;
+  let badge: ReactNode = null;
+  let progress: number | null = null;
+  let meta: string[];
+  if (sending) {
+    title = sending.name;
+    badge = <Badge tone="accent" dot pulse>Uploading {sending.percent}%</Badge>;
+    progress = sending.percent;
+    meta = [formatBytes(sending.size), "sending to server…"];
+  } else if (source) {
+    title = source.filename;
+    badge = source.status === "ready" ? <Badge tone="success" icon={Check}>Indexed</Badge>
+      : source.status === "uploaded" ? <Badge tone="success" icon={Check}>Uploaded</Badge>
+      : <Badge tone="accent" dot pulse>{source.status} {source.progress}%</Badge>;
+    progress = source.progress;
+    meta = [formatBytes(source.size_bytes), source.id, source.status === "uploaded" ? "stored on server · not indexed yet" : `${source.chunk_count} chunks`];
+  } else {
+    title = "Upload a book";
+    meta = [`${UPLOAD_EXTENSIONS.join(" · ").toUpperCase()} · max ${formatBytes(MAX_UPLOAD_BYTES)}`];
+  }
+
   return (
     <div className="bc-up">
-      <span className="bc-up-ico">{done ? <Database size={20} aria-hidden /> : <Upload size={20} aria-hidden />}</span>
+      <span className="bc-up-ico">{source?.status === "ready" ? <Database size={20} aria-hidden /> : <Upload size={20} aria-hidden />}</span>
       <div className="bc-up-main">
-        <div className="bc-up-t">
-          {source?.filename ?? "Upload content to index"}
-          {source && (done
-            ? <Badge tone="success" icon={Check}>Indexed</Badge>
-            : <Badge tone="accent" dot pulse>{source.status} {source.progress}%</Badge>)}
-        </div>
-        {source && <ProgressBar value={source.progress} />}
-        <div className="bc-up-meta">
-          {source
-            ? [source.kind, formatBytes(source.size_bytes), `${source.chunk_count} chunks`, source.id].map((m) => <span key={m}>{m}</span>)
-            : <span>PDF · EPUB · DOCX · TXT · MP4 · MP3 — dummy ingestion takes ~10 s</span>}
-        </div>
+        <div className="bc-up-t">{title}{badge}</div>
+        {progress !== null && <ProgressBar value={progress} />}
+        <div className="bc-up-meta">{meta.map((m) => <span key={m}>{m}</span>)}</div>
         {error && <ErrorNote>{error}</ErrorNote>}
       </div>
       <input
         ref={inputRef}
         type="file"
         hidden
-        accept=".pdf,.epub,.docx,.txt,.md,.mp4,.mov,.webm,.mp3,.wav,.m4a"
+        accept={UPLOAD_EXTENSIONS.join(",")}
         onChange={(e) => {
           const file = e.target.files?.[0];
-          e.target.value = "";
+          e.target.value = ""; // reset so choosing the same file again fires onChange
           if (file) upload(file);
         }}
       />
-      <Button variant="secondary" icon={Upload} loading={uploading} onClick={() => inputRef.current?.click()}>Upload file</Button>
+      <Button variant="secondary" icon={Upload} loading={sending !== null} onClick={() => inputRef.current?.click()}>
+        {sending ? "Uploading…" : "Choose PDF"}
+      </Button>
     </div>
   );
 }
 
 /* ---------- Sources table ---------- */
+/**
+ * Table of the project's sources with status, chunk count, size and per-row actions
+ * (browse chunks — only for ready sources — and delete).
+ * @param sources Sources to list.
+ * @param error Error from loading the sources, shown instead of the table.
+ * @param onBrowse Called with a source when its "Chunks" button is clicked.
+ * @param onChange Called after a successful delete to refresh the app.
+ */
 function SourcesCard({ sources, error, onBrowse, onChange }: {
   sources: Source[]; error?: string; onBrowse: (source: Source) => void; onChange: () => void;
 }) {
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  /**
+   * Delete a source on the server (file and chunks) and refresh the app.
+   * @param id Id of the source to delete.
+   */
   async function remove(id: string) {
     setDeleteError(null);
     try {
@@ -121,8 +187,8 @@ function SourcesCard({ sources, error, onBrowse, onChange }: {
                   <tr key={s.id}>
                     <td><span className="bc-src"><Icon size={14} aria-hidden />{s.filename}</span></td>
                     <td>
-                      {s.status === "ready"
-                        ? <Badge tone="success" icon={Check}>ready</Badge>
+                      {s.status === "ready" ? <Badge tone="success" icon={Check}>ready</Badge>
+                        : s.status === "uploaded" ? <Badge icon={Check}>uploaded · not indexed</Badge>
                         : <Badge tone={s.status === "failed" ? "danger" : "accent"} dot>{s.status} {s.progress}%</Badge>}
                     </td>
                     <td className="bc-mono">{s.chunk_count}</td>
@@ -143,6 +209,11 @@ function SourcesCard({ sources, error, onBrowse, onChange }: {
 }
 
 /* ---------- Chunks ---------- */
+/**
+ * Display one chunk: id, location, token count, optional similarity score and its text.
+ * @param chunk The chunk to show.
+ * @param score Similarity score, shown only for search results.
+ */
 function ChunkCard({ chunk, score }: { chunk: Chunk; score?: number }) {
   return (
     <div className="bc-chunk" style={{ cursor: "default" }}>
@@ -157,7 +228,13 @@ function ChunkCard({ chunk, score }: { chunk: Chunk; score?: number }) {
   );
 }
 
-/** Slide-out panel listing a source's chunks: a developer view for checking ingestion. */
+/**
+ * Slide-out panel listing a source's chunks: a developer view for checking ingestion.
+ * Loads the first 100 chunks, focuses the close button on open, and closes on Escape
+ * or a click on the backdrop.
+ * @param source The source whose chunks to show.
+ * @param onClose Called to close the drawer; should be stable (useCallback) to avoid re-binding keys.
+ */
 function SourceChunksDrawer({ source, onClose }: { source: Source; onClose: () => void }) {
   const chunks = useApi(`chunks:${source.id}`, () => api.listChunks(source.id, 0, 100));
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -196,10 +273,16 @@ function SourceChunksDrawer({ source, onClose }: { source: Source; onClose: () =
 }
 
 /* ---------- Search ---------- */
+/**
+ * Search box over the project's chunks. Submitting stores the query, which triggers the
+ * search request through useApi; the hits are listed as ChunkCards with their scores.
+ * Clearing the query (empty submit or the X button) hides the results.
+ */
 function ContentSearch() {
-  const [query, setQuery] = useState<string | null>(null);
+  const [query, setQuery] = useState<string | null>(null); // submitted query; null = no search
   const search = useApi(query ? `search:${query}` : null, () => api.search(query!));
 
+  /** Form submit: read the trimmed query from the form and start the search (empty → clear). */
   function submit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
     const q = String(new FormData(e.currentTarget).get("q") ?? "").trim();
@@ -230,11 +313,17 @@ function ContentSearch() {
 }
 
 /* ---------- Grounded generation ---------- */
+/**
+ * Form for grounded (RAG) generation plus the list of grounded assets, newest first.
+ * @param refresh Changing it reloads the asset list.
+ * @param onChange Called after generating to refresh the app.
+ */
 function GroundedGenerator({ refresh, onChange }: Props) {
   const assets = useApi(`assets:${refresh}`, api.listAssets);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /** Form submit: request a grounded asset of the chosen type from the brief. */
   async function submit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -250,6 +339,7 @@ function GroundedGenerator({ refresh, onChange }: Props) {
     }
   }
 
+  // The server returns assets oldest first; show only grounded ones, newest on top.
   const grounded = (assets.data ?? []).filter((a) => a.grounded).reverse();
 
   return (
@@ -275,9 +365,15 @@ function GroundedGenerator({ refresh, onChange }: Props) {
 }
 
 /* ---------- Phase 2 ---------- */
+/**
+ * Phase 2: the knowledge hub for retrieval-augmented generation. Combines upload, the sources
+ * table, content search and grounded generation, and opens the chunk drawer for a source.
+ * @param refresh Changing it reloads sources and assets.
+ * @param onChange Called after any change (upload, delete, generate) to refresh the app.
+ */
 export default function KnowledgeHub({ refresh, onChange }: Props) {
   const sources = useApi(`sources:${refresh}`, api.listSources);
-  const [browsing, setBrowsing] = useState<Source | null>(null);
+  const [browsing, setBrowsing] = useState<Source | null>(null); // source shown in the drawer, null = closed
   const closeDrawer = useCallback(() => setBrowsing(null), []);
 
   return (

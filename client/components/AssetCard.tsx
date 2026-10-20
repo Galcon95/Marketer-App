@@ -5,13 +5,19 @@ import { AlertTriangle, Check, ShieldCheck, Sparkles } from "lucide-react";
 import { api, assetTypeLabel, errorMessage, locationLabel, type Asset, type VerifyItem } from "@/lib/api";
 import { Badge, Button, ErrorNote, Score } from "./ui";
 
-/** A generated asset with its citations and an on-demand verification (POST /verify). */
+/**
+ * A generated asset with its citations and an on-demand verification (POST /verify).
+ * Shows the asset text, its retrieved sources (if grounded), a word/citation count, and a
+ * Verify button that checks each sentence against the project's sources and lists the results.
+ * @param asset The asset to display.
+ */
 export default function AssetCard({ asset }: { asset: Asset }) {
-  const [checks, setChecks] = useState<VerifyItem[] | null>(null);
+  const [checks, setChecks] = useState<VerifyItem[] | null>(null); // null until Verify was pressed
   const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const words = asset.text.trim().split(/\s+/).filter(Boolean).length;
 
+  /** Send the asset text to POST /verify and store the per-claim results (or the error). */
   async function verify() {
     setVerifying(true);
     setError(null);

@@ -2,3 +2,6 @@
 __pycache__/
 *.pyc
 .env
+
+# User uploads (sample books in assets/books stay tracked)
+assets/uploads/
