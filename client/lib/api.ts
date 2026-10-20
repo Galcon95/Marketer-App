@@ -37,6 +37,7 @@ export interface Project {
   source_count: number; // computed by the server on every read
   chunk_count: number;
   asset_count: number;
+  token_count: number; // LLM tokens used by all generated assets of the project
 }
 
 /** One uploaded file in a project, plus its ingestion state. */
@@ -76,6 +77,7 @@ export interface Asset {
   text: string;
   citations: Citation[];
   created_at: string; // ISO 8601 timestamp (UTC)
+  tokens: number; // LLM tokens (prompt + completion) used to generate it
 }
 /** Body of POST /generate. `k` = number of chunks to retrieve as context (server default 5). */
 export interface GenerateRequest { asset_type: AssetType; brief: string; grounded: boolean; k?: number }
@@ -84,6 +86,56 @@ export interface GenerateRequest { asset_type: AssetType; brief: string; grounde
 export interface VerifyItem { claim: string; status: "verified" | "not_found"; chunk_id: string | null; score: number | null }
 /** Response of POST /verify: one item per claim, in text order. */
 export interface VerifyResponse { items: VerifyItem[] }
+
+/** Response of POST /ask: an answer written from the books, with its cited and all retrieved passages. */
+export interface AskResponse {
+  question: string;
+  answer: string; // plain text with [n] markers matching `citations`
+  citations: Citation[];
+  passages: SearchHit[]; // all retrieved passages, best first
+  model: string;
+  tokens: number;
+}
+
+/** One logged model call with its tokens and costs in USD (server/usage.py). */
+export interface UsageRecord {
+  timestamp: string; // ISO 8601 (UTC)
+  operation: string; // e.g. "ask/answer", "generate_blurb/generate", "embed_chunks"
+  kind: "chat" | "embedding";
+  model: string;
+  input_tokens: number; // sent to the model
+  output_tokens: number; // received from the model
+  input_cost: number;
+  output_cost: number;
+  cost: number;
+  cost_source: "provider" | "estimate"; // provider = exact cost reported by OpenRouter
+  project_id: string | null;
+  source_id: string | null;
+}
+/** Sums over a set of model calls (costs in USD). */
+export interface UsageTotals { calls: number; input_tokens: number; output_tokens: number; input_cost: number; output_cost: number; cost: number }
+/** Response of GET /usage: totals so far, per operation (highest cost first), and the latest calls (newest first). */
+export interface UsageReport { totals: UsageTotals; by_operation: Record<string, UsageTotals>; recent: UsageRecord[] }
+
+/** Short summary of one chapter of a book. */
+export interface ChapterSummary { chapter: string | null; first_page: number | null; last_page: number | null; summary: string }
+/** Summary of a whole book (map-reduce over its chapters): overview, key themes and chapter summaries. */
+export interface BookSummary {
+  source_id: string;
+  summary: string; // what the book is about, about two paragraphs
+  themes: string[];
+  chapters: ChapterSummary[]; // content chapters in reading order
+  model: string; // chat model that wrote it
+  tokens: number; // LLM tokens used to create it
+  created_at: string; // ISO 8601 timestamp (UTC)
+}
+
+/** Error from a non-2xx API response; `status` lets callers handle e.g. 404 specially. */
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
 
 /** Asset types with their display labels, in the order shown in select boxes. */
 export const ASSET_TYPES: { value: AssetType; label: string }[] = [
@@ -123,7 +175,7 @@ export function locationLabel(loc: ChunkLocation) {
  * @param path API path starting with "/", appended to API_URL.
  * @param init Optional fetch options (method, headers, body).
  * @returns The parsed response body typed as T.
- * @throws Error with a user-presentable message.
+ * @throws ApiError (non-2xx response, with its status) or Error (server unreachable), with a user-presentable message.
  */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
@@ -134,7 +186,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    throw new Error(typeof body?.detail === "string" ? body.detail : `API error ${res.status}`);
+    throw new ApiError(typeof body?.detail === "string" ? body.detail : `API error ${res.status}`, res.status);
   }
   return (res.status === 204 ? undefined : await res.json()) as T;
 }
@@ -151,6 +203,11 @@ function postJson(body: unknown): RequestInit {
 export const api = {
   /** GET /health: status of the API and its services. */
   health: () => request<Health>("/health"),
+  /**
+   * GET /usage: tokens and costs of all model calls so far.
+   * @param limit Number of latest calls to include (default 50).
+   */
+  usage: (limit = 50) => request<UsageReport>(`/usage?limit=${limit}`),
   /** GET /projects/{id}: the current project with its counts. */
   getProject: () => request<Project>(`/projects/${PROJECT_ID}`),
 
@@ -159,11 +216,11 @@ export const api = {
   /** GET /sources/{sourceId}: one source, used to poll ingestion status. */
   getSource: (sourceId: string) => request<Source>(`/sources/${sourceId}`),
   /**
-   * POST /projects/{id}/sources: upload a file as a new source.
+   * POST /projects/{id}/sources: upload a file as a new source; the server then processes it into chunks.
    * Multipart upload via XMLHttpRequest, because fetch() cannot report upload progress.
    * @param file The file to upload (sent as form field "file").
    * @param onProgress Optional callback receiving the sent percentage (0-100).
-   * @returns The created Source; rejects with the server's error detail on failure.
+   * @returns The created Source (status "queued"); rejects with the server's error detail on failure.
    */
   uploadSource: (file: File, onProgress?: (percent: number) => void) =>
     new Promise<Source>((resolve, reject) => {
@@ -185,6 +242,25 @@ export const api = {
       form.append("file", file);
       xhr.send(form);
     }),
+  /**
+   * POST /sources/{sourceId}/ingest: (re)build a source's chunks in the background (Process / Re-index / Retry).
+   * @returns The source with status "queued"; poll it to follow the progress.
+   */
+  ingestSource: (sourceId: string) => request<Source>(`/sources/${sourceId}/ingest`, { method: "POST" }),
+  /**
+   * GET /sources/{sourceId}/summary: the saved book summary.
+   * @returns The summary, or null if none has been created yet (404).
+   */
+  getSummary: async (sourceId: string): Promise<BookSummary | null> => {
+    try {
+      return await request<BookSummary>(`/sources/${sourceId}/summary`);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
+  },
+  /** POST /sources/{sourceId}/summary: create (or recreate) the book summary; takes some seconds. */
+  createSummary: (sourceId: string) => request<BookSummary>(`/sources/${sourceId}/summary`, { method: "POST" }),
   /** DELETE /sources/{sourceId}: remove a source, its stored file and its chunks. */
   deleteSource: (sourceId: string) => request<void>(`/sources/${sourceId}`, { method: "DELETE" }),
 
@@ -202,6 +278,12 @@ export const api = {
    * @param k Number of hits to return (default 5).
    */
   search: (query: string, k = 5) => request<SearchResponse>(`/projects/${PROJECT_ID}/search`, postJson({ query, k })),
+  /**
+   * POST /projects/{id}/ask: answer a question from the books (NotebookLM-style), with citations.
+   * @param question Natural-language question.
+   * @param k Number of passages to retrieve as context (default 6).
+   */
+  ask: (question: string, k = 6) => request<AskResponse>(`/projects/${PROJECT_ID}/ask`, postJson({ question, k })),
 
   /** POST /projects/{id}/generate: generate and store a new asset from a brief. */
   generate: (body: GenerateRequest) => request<Asset>(`/projects/${PROJECT_ID}/generate`, postJson(body)),

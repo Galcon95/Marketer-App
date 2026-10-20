@@ -5,3 +5,12 @@ __pycache__/
 
 # User uploads (sample books in assets/books stay tracked)
 assets/uploads/
+
+# Vector database (rebuilt by re-indexing sources)
+assets/chroma/
+
+# Generated marketing assets (user data)
+assets/generated/
+
+# Usage and cost log of model calls
+assets/usage/

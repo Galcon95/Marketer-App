@@ -9,6 +9,7 @@ import { api, API_URL, PROJECT_ID } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import ContentGenerator from "./phases/ContentGenerator";
 import KnowledgeHub from "./phases/KnowledgeHub";
+import UsageDrawer, { formatTokens, formatUsd } from "./UsagePanel";
 import { Badge, Button, Card, ErrorNote, Placeholder, SectionHeading, Sidebar, StatusRow, Tabs, type NavGroup, type TabItem } from "./ui";
 
 /** Id of one of the four pipeline phases (tabs). */
@@ -115,6 +116,11 @@ export default function AppShell() {
 
   const health = useApi(`health:${refresh}`, api.health);
   const project = useApi(`project:${refresh}`, api.getProject);
+  // Usage totals for the top bar (reloaded on every change); the panel loads its own data when opened.
+  const usage = useApi(`usage:${refresh}`, () => api.usage(1));
+  const [usageOpen, setUsageOpen] = useState(0); // > 0 while the usage panel is open; increases per opening
+  const closeUsage = useCallback(() => setUsageOpen(0), []);
+  const totals = usage.data?.totals;
   const p = project.data;
   const View = VIEWS[tab];
 
@@ -177,7 +183,10 @@ export default function AppShell() {
             <div className="bc-crumb">{PROJECT_ID} / {TITLES[tab][1]}</div>
             <h1>{TITLES[tab][0]}</h1>
           </div>
-          <Badge mono icon={Cpu}>tokens 0 / 200k</Badge>
+          <Button variant="success" size="sm" icon={Cpu} onClick={() => setUsageOpen((n) => n + 1)}
+            title={totals ? `All model calls so far: input ${totals.input_tokens.toLocaleString()} tokens (${formatUsd(totals.input_cost)}), output ${totals.output_tokens.toLocaleString()} tokens (${formatUsd(totals.output_cost)}). Click for details.` : "LLM usage and costs"}>
+            <span className="bc-mono">{totals ? `${formatUsd(totals.cost)} · ${formatTokens(totals.input_tokens + totals.output_tokens)} tok` : "usage"}</span>
+          </Button>
           <Button variant="secondary" size="sm" icon={FileText} disabled>Export</Button>
         </div>
         <div className="bc-tabs-wrap">
@@ -189,6 +198,7 @@ export default function AppShell() {
           <View refresh={refresh} onChange={onChange} />
         </div>
       </main>
+      {usageOpen > 0 && <UsageDrawer openCount={usageOpen} onClose={closeUsage} />}
       <Button variant="secondary" size="sm" icon={SunMoon} className="theme-toggle" onClick={toggleTheme}>Theme</Button>
     </div>
   );

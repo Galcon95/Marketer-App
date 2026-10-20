@@ -2,9 +2,9 @@
  * Minimal React UI kit following the design guide in app-design-system/.
  * Markup and class names mirror its bundle so app/styles/bookcraft.css styles them.
  */
-import type { ComponentPropsWithRef, ReactNode } from "react";
+import { useEffect, useRef, type ComponentPropsWithRef, type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
-import { AlertTriangle, ChevronDown, ChevronsUpDown, FolderOpen, Megaphone, RefreshCw, Search } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronsUpDown, FolderOpen, Megaphone, RefreshCw, Search, X } from "lucide-react";
 
 /**
  * Join CSS class names, skipping falsy values, so classes can be added conditionally.
@@ -291,12 +291,13 @@ export function ProgressBar({ value }: { value: number }) {
 
 /**
  * Colored score chip, e.g. "sim 0.94".
- * Shared score scale: ≥0.85 emerald, ≥0.70 amber, below that muted.
+ * Shared score scale: ≥0.55 emerald, ≥0.40 amber, below that muted. Tuned for cosine similarity
+ * with text-embedding-3-large, where strong matches score about 0.55-0.65 and unrelated text below 0.1.
  * @param label Short prefix such as "sim".
  * @param value Score between 0 and 1, shown with two decimals.
  */
 export function Score({ label, value }: { label: string; value: number }) {
-  const tier = value >= 0.85 ? "hi" : value >= 0.7 ? "md" : "lo";
+  const tier = value >= 0.55 ? "hi" : value >= 0.4 ? "md" : "lo";
   return <span className={`bc-score bc-score-${tier}`}>{label} {value.toFixed(2)}</span>;
 }
 
@@ -310,5 +311,44 @@ export function ErrorNote({ children }: { children: ReactNode }) {
       <AlertTriangle size={14} className="bc-ico" aria-hidden />
       <span>{children}</span>
     </div>
+  );
+}
+
+/* ---------- Drawer ---------- */
+/**
+ * Slide-out side panel (dialog): header with icon, title, meta and close button, scrollable body.
+ * Focuses the close button on open and closes on Escape or a click on the backdrop.
+ * @param icon Icon before the title.
+ * @param title Header title.
+ * @param label Accessible name of the dialog.
+ * @param meta Header content after the title, e.g. a count badge.
+ * @param onClose Called to close the drawer; should be stable (useCallback) to avoid re-binding keys.
+ * @param children Body content.
+ */
+export function Drawer({ icon: Icon, title, label, meta, onClose, children }: {
+  icon: LucideIcon; title: string; label: string; meta?: ReactNode; onClose: () => void; children: ReactNode;
+}) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    closeRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <>
+      <div className="drawer-backdrop" onClick={onClose} />
+      <aside className="drawer" role="dialog" aria-modal="true" aria-label={label}>
+        <header className="drawer-head">
+          <Icon size={16} className="bc-ico" aria-hidden />
+          <h3>{title}</h3>
+          {meta}
+          <Button ref={closeRef} variant="ghost" size="sm" icon={X} aria-label="Close" onClick={onClose} />
+        </header>
+        <div className="drawer-body">{children}</div>
+      </aside>
+    </>
   );
 }

@@ -1,19 +1,33 @@
-"""Marketer App API. Uploads are stored for real (storage.py); everything else returns dummy data
-(see dummy_data.py)."""
+"""Marketer App API. Uploads are stored (storage.py), processed into chunks and embedded into the
+Chroma vector store (ingestion.py, vectorstore.py, all LangChain); search, citations and verification
+use real similarity search; assets (generation.py), answers to questions (qa.py) and book summaries
+(summary.py) are written by an LLM via LangGraph graphs,
+traced in LangSmith when enabled."""
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+import re
+
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 import dummy_data as db
+import generation
+import ingestion
 import storage
+import qa
+import summary
+import usage
+import vectorstore
 from schemas import (
-    Asset, Chunk, ChunkPage, GenerateRequest, Health, Project, ProjectCreate, SearchHit,
-    SearchRequest, SearchResponse, ServiceStatus, Source, VerifyItem,
+    AskRequest, AskResponse, Asset, BookSummary, Chunk, ChunkPage, GenerateRequest, Health, Project, ProjectCreate, SearchHit,
+    SearchRequest, SearchResponse, ServiceStatus, Source, UsageReport, VerifyItem,
     VerifyRequest, VerifyResponse,
 )
 
-# Restore uploaded sources from disk so they survive server restarts (listed after the demo sources).
-db.sources.update(storage.load_sources())
+# Restore uploaded sources (with their chunks) and generated assets from disk, so they survive
+# server restarts.
+ingestion.restore_sources()
+db.assets.update(storage.load_assets())
+usage.load()  # totals of all model calls so far (usage.jsonl)
 
 app = FastAPI(title="Marketer App API")
 
@@ -64,7 +78,7 @@ def get_source_or_404(source_id: str) -> Source:
 
 
 def with_counts(project: Project) -> Project:
-    """Return a copy of a project with source_count, chunk_count and asset_count filled in.
+    """Return a copy of a project with source_count, chunk_count, asset_count and token_count filled in.
 
     Counts are computed on every call by scanning the in-memory stores, so they are always
     current; the stored project itself is not modified.
@@ -80,26 +94,38 @@ def with_counts(project: Project) -> Project:
         "source_count": len(source_ids),
         "chunk_count": sum(1 for c in db.chunks.values() if c.source_id in source_ids),
         "asset_count": sum(1 for a in db.assets.values() if a.project_id == project.id),
+        "token_count": sum(a.tokens for a in db.assets.values() if a.project_id == project.id)
+                       + sum(s.tokens for sid, s in db.summaries.items() if sid in source_ids),
     })
 
 
-def project_chunks(project_id: str, source_ids: list[str] | None = None) -> list[Chunk]:
-    """Collect all chunks of a project, optionally limited to some of its sources.
+# Minimum similarity for a claim to count as verified by a source chunk (cosine similarity, 0-1).
+VERIFY_MIN_SCORE = 0.5
 
-    Builds the set of the project's source ids, intersects it with source_ids when given
-    (so ids from other projects are ignored), and returns the chunks of those sources.
+
+def retrieve(project_id: str, query: str, k: int, source_ids: list[str] | None = None,
+             operation: str = "search") -> list[tuple[Chunk, float]]:
+    """Find the project's chunks most similar to a query (vector search in Chroma).
+
+    Wraps generation.retrieve_chunks and turns vector store errors into HTTP errors.
 
     Args:
-        project_id: Project whose chunks to return.
-        source_ids: Optional filter; None or an empty list means all sources of the project.
+        project_id: Project to search in.
+        query: Natural-language query.
+        k: Maximum number of results.
+        source_ids: Optional filter: only search these sources.
+        operation: What the search is for, for the usage log (e.g. "search", "verify").
 
     Returns:
-        The matching chunks in storage order.
+        (chunk, similarity) pairs, best first.
+
+    Raises:
+        HTTPException: 503 if no embedding API key is configured, 502 if the search fails.
     """
-    allowed = {s.id for s in db.sources.values() if s.project_id == project_id}
-    if source_ids:
-        allowed &= set(source_ids)
-    return [c for c in db.chunks.values() if c.source_id in allowed]
+    try:
+        return generation.retrieve_chunks(project_id, query, k, source_ids, operation=operation)
+    except vectorstore.VectorStoreError as e:
+        raise HTTPException(503 if not vectorstore.is_configured() else 502, str(e)) from e
 
 
 # ---------- Basic ----------
@@ -119,15 +145,31 @@ def test():
 def health():
     """Report the status of the API and its dependencies.
 
-    The vector database and LLM are not connected yet, so they are always reported as down;
-    overall `ok` reflects only the API itself.
+    The vector database is reported with its vector count and embedding model, the LLM with its
+    model and whether LangSmith tracing is on (both down if no API key is set). Overall `ok`
+    reflects only the API itself.
     """
+    vector_ok, vector_detail = vectorstore.health()
+    llm_ok, llm_detail = generation.health()
     services = [
         ServiceStatus(name="api", ok=True, detail="running"),
-        ServiceStatus(name="vector_db", ok=False, detail="dummy · not connected"),
-        ServiceStatus(name="llm", ok=False, detail="dummy · not connected"),
+        ServiceStatus(name="vector_db", ok=vector_ok, detail=vector_detail),
+        ServiceStatus(name="llm", ok=llm_ok, detail=llm_detail),
     ]
     return Health(ok=services[0].ok, services=services)
+
+
+@app.get("/usage", response_model=UsageReport)
+def get_usage(limit: int = Query(50, ge=1, le=1000)):
+    """Tokens and costs of all model calls so far (see usage.py).
+
+    Args:
+        limit: Number of latest calls to include (query parameter, 1-1000).
+
+    Returns:
+        Totals (input/output tokens and costs, all costs), totals per operation, latest calls.
+    """
+    return usage.report(limit)
 
 
 # ---------- Projects ----------
@@ -164,19 +206,21 @@ def get_project(project_id: str):
 
 # ---------- Sources (content upload & ingestion) ----------
 @app.post("/projects/{project_id}/sources", response_model=Source, status_code=201)
-def upload_source(project_id: str, file: UploadFile = File(...)):
-    """Store an uploaded file on disk. Ingestion (parse → chunk → embed) is not implemented yet.
+def upload_source(project_id: str, background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    """Store an uploaded file on disk and start processing it into chunks in the background.
 
     Sanitizes the file name, streams the file to disk via storage.save_upload (which validates
-    type, signature and size), then registers a Source with status "uploaded" and saves its record
-    next to the file so it is restored after a server restart.
+    type, signature and size), then registers a Source with status "queued", saves its record
+    next to the file so it is restored after a server restart, and schedules ingestion.ingest_source
+    to run after the response is sent. Poll GET /sources/{id} to follow the progress.
 
     Args:
         project_id: Project to add the source to (path parameter). 404 if unknown.
+        background_tasks: Injected by FastAPI; runs the ingestion after the response.
         file: The uploaded file (multipart/form-data field "file").
 
     Returns:
-        The new Source record.
+        The new Source record (status "queued").
 
     Raises:
         HTTPException: 404 for an unknown project; 400/413/415 when storage rejects the file;
@@ -195,8 +239,8 @@ def upload_source(project_id: str, file: UploadFile = File(...)):
         filename=filename,
         kind=storage.detect_kind(filename),
         size_bytes=size,
-        status="uploaded",
-        progress=100,
+        status="queued",
+        progress=0,
         chunk_count=0,
         created_at=db.now(),
     )
@@ -206,6 +250,39 @@ def upload_source(project_id: str, file: UploadFile = File(...)):
         storage.delete_source_files(project_id, source_id)
         raise HTTPException(500, "Could not save the uploaded file's record") from e
     db.sources[source.id] = source
+    background_tasks.add_task(ingestion.ingest_source, source.id)
+    return source
+
+
+@app.post("/sources/{source_id}/ingest", response_model=Source, status_code=202)
+def ingest_source(source_id: str, background_tasks: BackgroundTasks):
+    """(Re)build the chunks of an uploaded source in the background: Process / Re-index / Retry.
+
+    Sets the source to "queued" and schedules ingestion.ingest_source. Existing chunks stay
+    available until the new ones are ready.
+
+    Args:
+        source_id: Id of the source (path parameter). 404 if unknown.
+        background_tasks: Injected by FastAPI; runs the ingestion after the response.
+
+    Returns:
+        The source with status "queued".
+
+    Raises:
+        HTTPException: 409 if it is already being processed or its stored file is missing.
+    """
+    source = get_source_or_404(source_id)
+    if source.status in ingestion.PROCESSING_STATUSES:
+        raise HTTPException(409, f"'{source.filename}' is already being processed")
+    if not storage.source_file_path(source).is_file():
+        raise HTTPException(409, f"'{source.filename}' has no stored file to process. Delete it and upload it again.")
+    source = source.model_copy(update={"status": "queued", "progress": 0, "error": None})
+    try:
+        storage.write_source_meta(source)
+    except OSError as e:
+        raise HTTPException(500, "Could not save the source's record") from e
+    db.sources[source_id] = source
+    background_tasks.add_task(ingestion.ingest_source, source_id)
     return source
 
 
@@ -232,16 +309,16 @@ def get_source(source_id: str):
 
 @app.delete("/sources/{source_id}", status_code=204)
 def delete_source(source_id: str):
-    """Delete a source together with its stored files and all of its chunks.
+    """Delete a source with its stored files, chunks and vectors (also while it is processing).
 
     Args:
         source_id: Id of the source (path parameter). 404 if unknown.
     """
     source = get_source_or_404(source_id)
+    # Remove the record first, so a running ingestion sees the deletion and stops writing.
+    db.sources.pop(source_id, None)
+    ingestion.delete_source_data(source)
     storage.delete_source_files(source.project_id, source_id)
-    del db.sources[source_id]
-    for chunk_id in [c.id for c in db.chunks.values() if c.source_id == source_id]:
-        del db.chunks[chunk_id]
 
 
 # ---------- Chunks & search (RAG retrieval) ----------
@@ -262,12 +339,84 @@ def list_chunks(source_id: str, offset: int = Query(0, ge=0), limit: int = Query
     return ChunkPage(items=items[offset:offset + limit], total=len(items), offset=offset, limit=limit)
 
 
+@app.get("/sources/{source_id}/summary", response_model=BookSummary)
+def get_summary(source_id: str):
+    """Return the saved summary of a book.
+
+    Args:
+        source_id: Id of the source (path parameter). 404 if unknown.
+
+    Raises:
+        HTTPException: 404 if the source is unknown or has no summary yet.
+    """
+    get_source_or_404(source_id)
+    found = db.summaries.get(source_id)
+    if found is None:
+        raise HTTPException(404, "No summary yet")
+    return found
+
+
+@app.post("/sources/{source_id}/summary", response_model=BookSummary, status_code=201)
+def create_summary(source_id: str):
+    """Create (or recreate) the summary of a processed book: chapter summaries + book overview.
+
+    Runs the LangGraph map-reduce in summary.py over all of the book's chunks, which takes some
+    seconds (one model call per chapter, in parallel, plus one to combine). The result is saved and
+    then used as background in grounded generation.
+
+    Args:
+        source_id: Id of the source (path parameter). 404 if unknown.
+
+    Returns:
+        The new summary.
+
+    Raises:
+        HTTPException: 409 if the book is not processed ("ready"); 503 if no API key is configured;
+            502 if a model call fails.
+    """
+    source = get_source_or_404(source_id)
+    if source.status != "ready":
+        raise HTTPException(409, f"'{source.filename}' must be processed (status ready) before it can be summarized")
+    try:
+        return summary.summarize_source(source)
+    except generation.GenerationError as e:
+        raise HTTPException(e.status_code, str(e)) from e
+    except OSError as e:
+        raise HTTPException(500, "The summary was created but could not be saved") from e
+
+
+@app.post("/projects/{project_id}/ask", response_model=AskResponse)
+def ask(project_id: str, body: AskRequest):
+    """Answer a question from the project's books, NotebookLM-style.
+
+    Runs the LangGraph in qa.py: the k passages most similar to the question are retrieved, and the
+    LLM writes an answer from those passages only (plus the book summary as background), citing
+    them as [n]. Says so when the passages do not answer the question.
+
+    Args:
+        project_id: Id of the project (path parameter). 404 if unknown.
+        body: The question, number of passages k and optional source filter.
+
+    Returns:
+        The answer with its cited passages, all retrieved passages and token usage.
+
+    Raises:
+        HTTPException: 409 if there is nothing to search; 503 if no API key is configured;
+            502 if retrieval or the model call fails.
+    """
+    get_project_or_404(project_id)
+    try:
+        return qa.answer_question(project_id, body.question, body.k, body.source_ids)
+    except generation.GenerationError as e:
+        raise HTTPException(e.status_code, str(e)) from e
+
+
 @app.post("/projects/{project_id}/search", response_model=SearchResponse)
 def search(project_id: str, body: SearchRequest):
-    """Search a project's chunks for passages relevant to a query (dummy implementation).
+    """Find the passages of a project's sources that best match a query (semantic vector search).
 
-    Currently returns the first k chunks of the project with made-up, decreasing scores;
-    the query text is not used yet.
+    The query is embedded and compared with the chunk vectors in Chroma; scores are cosine
+    similarities (about 0-1, higher is better).
 
     Args:
         project_id: Id of the project (path parameter). 404 if unknown.
@@ -275,45 +424,54 @@ def search(project_id: str, body: SearchRequest):
 
     Returns:
         The query and up to k hits, best first.
+
+    Raises:
+        HTTPException: 503 if no embedding API key is configured, 502 if the search fails.
     """
     get_project_or_404(project_id)
-    candidates = project_chunks(project_id, body.source_ids)[: body.k]
-    # Dummy scores: descending from 0.94, no real similarity yet.
-    hits = [SearchHit(chunk=c, score=round(0.94 - i * 0.07, 2)) for i, c in enumerate(candidates)]
+    hits = [SearchHit(chunk=c, score=score) for c, score in retrieve(project_id, body.query, body.k, body.source_ids)]
     return SearchResponse(query=body.query, hits=hits)
 
 
 # ---------- Generation & assets ----------
 @app.post("/projects/{project_id}/generate", response_model=Asset, status_code=201)
 def generate(project_id: str, body: GenerateRequest):
-    """Generate a marketing asset from a brief and store it in the project (dummy implementation).
+    """Generate a marketing asset from a brief with the LLM and store it in the project.
 
-    When grounded, cites up to two of the project's chunks (at most k); otherwise no citations.
-    The text is a placeholder that echoes the asset type, mode and brief; no LLM is called yet.
+    Runs the LangGraph in generation.py. Grounded (RAG): the brief retrieves the k most similar
+    chunks, which go into the prompt as numbered excerpts; the model cites them, and the cited ones
+    become the asset's citations. Zero-shot: the model writes from the brief alone.
 
     Args:
         project_id: Id of the project (path parameter). 404 if unknown.
         body: Asset type, brief, grounded flag and number of context chunks k.
 
     Returns:
-        The newly created Asset.
+        The newly created Asset, also saved to disk (storage.write_asset).
+
+    Raises:
+        HTTPException: 503 if no API key is configured; 502 if retrieval or the model call fails.
     """
     get_project_or_404(project_id)
-    citations = []
-    if body.grounded:
-        citations = [db.dummy_citation(c, round(0.94 - i * 0.07, 2))
-                     for i, c in enumerate(project_chunks(project_id)[: min(body.k, 2)])]
-    mode = "grounded (RAG)" if body.grounded else "zero-shot"
+    try:
+        text, citations, tokens = generation.generate_asset(project_id, body.asset_type, body.brief, body.grounded, body.k)
+    except generation.GenerationError as e:
+        raise HTTPException(e.status_code, str(e)) from e
     asset = Asset(
         id=db.new_id("ast"),
         project_id=project_id,
         asset_type=body.asset_type,
         grounded=body.grounded,
         brief=body.brief,
-        text=f"Dummy {body.asset_type.replace('_', ' ')} generated {mode} from the brief: \"{body.brief}\".",
+        text=text,
         citations=citations,
         created_at=db.now(),
+        tokens=tokens,
     )
+    try:
+        storage.write_asset(asset)
+    except OSError as e:
+        raise HTTPException(500, "The asset was generated but could not be saved") from e
     db.assets[asset.id] = asset
     return asset
 
@@ -348,10 +506,11 @@ def get_asset(asset_id: str):
 # ---------- Verification ----------
 @app.post("/projects/{project_id}/verify", response_model=VerifyResponse)
 def verify(project_id: str, body: VerifyRequest):
-    """Check each claim of a text against the project's sources (dummy implementation).
+    """Check each claim (sentence) of a text against the project's sources.
 
-    Splits the text into sentences at "." and marks a sentence as verified when it contains a
-    quotation mark; all others are "not_found". No real retrieval is done yet.
+    Splits the text into sentences and searches the best-matching chunk for each one. A sentence
+    counts as verified when that chunk's similarity reaches VERIFY_MIN_SCORE. This finds claims that
+    are backed by a similar passage; it does not judge whether the claim is logically entailed.
 
     Args:
         project_id: Id of the project (path parameter). 404 if unknown.
@@ -359,15 +518,19 @@ def verify(project_id: str, body: VerifyRequest):
 
     Returns:
         One VerifyItem per sentence, in text order.
+
+    Raises:
+        HTTPException: 503 if no embedding API key is configured, 502 if the search fails.
     """
     get_project_or_404(project_id)
-    # Dummy: split into sentences; mark sentences containing a quote as verified.
-    sentences = [s.strip() for s in body.text.replace("\n", " ").split(".") if s.strip()]
-    items = [
-        VerifyItem(claim=s, status="verified", chunk_id="chk_0002", score=0.94) if '"' in s or "“" in s
-        else VerifyItem(claim=s, status="not_found")
-        for s in sentences
-    ]
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", body.text.replace("\n", " ")) if s.strip()]
+    items = []
+    for sentence in sentences:
+        best = retrieve(project_id, sentence, k=1, operation="verify")
+        if best and best[0][1] >= VERIFY_MIN_SCORE:
+            items.append(VerifyItem(claim=sentence, status="verified", chunk_id=best[0][0].id, score=best[0][1]))
+        else:
+            items.append(VerifyItem(claim=sentence, status="not_found"))
     return VerifyResponse(items=items)
 
 

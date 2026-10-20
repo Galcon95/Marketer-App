@@ -57,6 +57,7 @@ class Project(BaseModel):
     source_count: int = 0  # number of uploaded sources in the project
     chunk_count: int = 0  # number of chunks across all sources of the project
     asset_count: int = 0  # number of generated assets in the project
+    token_count: int = 0  # LLM tokens (prompt + completion) used by the project's generated assets and book summaries
 
 
 # ---------- Sources ----------
@@ -160,6 +161,90 @@ class Asset(BaseModel):
     text: str  # the generated content
     citations: list[Citation]  # supporting chunks; empty when not grounded
     created_at: datetime  # generation time in UTC
+    tokens: int = 0  # LLM tokens (prompt + completion) used to generate it
+
+
+# ---------- Questions & answers ----------
+class AskRequest(BaseModel):
+    """Request body for POST /projects/{id}/ask: a question about the project's books."""
+
+    question: str  # natural-language question
+    k: int = Field(default=6, ge=1, le=20)  # number of passages to retrieve as context (1-20)
+    source_ids: list[str] | None = None  # restrict to these sources; None = all sources
+
+
+class AskResponse(BaseModel):
+    """Response of POST /projects/{id}/ask: an answer written from the books, with its evidence."""
+
+    question: str  # echo of the question
+    answer: str  # answer based only on the retrieved passages, with [n] citation markers
+    citations: list[Citation]  # the passages cited in the answer, numbered like the markers
+    passages: list[SearchHit]  # all retrieved passages, best first (what the answer could draw on)
+    model: str  # chat model that wrote the answer
+    tokens: int  # LLM tokens (prompt + completion) used
+
+
+# ---------- Usage & costs ----------
+class UsageRecord(BaseModel):
+    """One logged model call (chat or embedding) with its tokens and costs in USD (see usage.py)."""
+
+    timestamp: datetime  # when the call finished (UTC)
+    operation: str  # what it was for, e.g. "generate_blurb/generate", "ask/embed_query", "embed_chunks"
+    kind: Literal["chat", "embedding"]
+    model: str
+    input_tokens: int  # tokens sent to the model ("upload")
+    output_tokens: int  # tokens received from the model ("download"); 0 for embeddings
+    input_cost: float  # USD for the input tokens
+    output_cost: float  # USD for the output tokens
+    cost: float  # USD for the whole call
+    cost_source: Literal["provider", "estimate"]  # provider = exact cost reported by OpenRouter; estimate = price list
+    project_id: str | None = None
+    source_id: str | None = None
+
+
+class UsageTotals(BaseModel):
+    """Sums over a set of model calls."""
+
+    calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    input_cost: float = 0.0  # USD
+    output_cost: float = 0.0  # USD
+    cost: float = 0.0  # USD, all costs
+
+
+class UsageReport(BaseModel):
+    """Response of GET /usage: totals so far, totals per operation, and the latest calls."""
+
+    totals: UsageTotals
+    by_operation: dict[str, UsageTotals]  # sorted by cost, highest first
+    recent: list[UsageRecord]  # newest first
+
+
+# ---------- Book summaries ----------
+class ChapterSummary(BaseModel):
+    """Short summary of one chapter (or section) of a book."""
+
+    chapter: str | None  # chapter title from the table of contents; None for text before the first chapter
+    first_page: int | None  # page where the chapter starts
+    last_page: int | None  # page where the chapter ends
+    summary: str  # 2-4 sentences
+
+
+class BookSummary(BaseModel):
+    """Summary of a whole book, made by map-reduce over its chapters (see summary.py).
+
+    Saved next to the book (.summary.json) and loaded on startup, so it is created only once; kept
+    when the book is re-indexed (same content), removed when the book is deleted.
+    """
+
+    source_id: str  # the book (source) it summarizes
+    summary: str  # what the book is about, in about two paragraphs
+    themes: list[str]  # 4-6 key themes as short phrases
+    chapters: list[ChapterSummary]  # content chapters in reading order (front/back matter skipped)
+    model: str  # chat model that wrote it
+    tokens: int  # LLM tokens (prompt + completion) used to create it
+    created_at: datetime  # creation time in UTC
 
 
 # ---------- Verification ----------

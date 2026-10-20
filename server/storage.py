@@ -1,6 +1,8 @@
-"""File storage for uploaded sources: server/assets/uploads/{project_id}/{source_id}/{filename}.
+"""File storage for uploaded sources: server/assets/uploads/{project_id}/{source_id}/{filename},
+and for generated assets: server/assets/generated/{project_id}/{asset_id}.json.
 
-Each source directory also holds META_FILENAME, the source's record as JSON. The upload directory
+Each source directory also holds META_FILENAME, the source's record as JSON, and after ingestion
+CHUNKS_FILENAME with its chunks. The upload directory
 is the single source of truth: load_sources() rebuilds all source records from it on startup, and
 deleting a source deletes its directory, so the GUI and the files on disk always match.
 """
@@ -14,15 +16,21 @@ from typing import BinaryIO
 
 from pydantic import ValidationError
 
-from schemas import Source, SourceKind
+from schemas import Asset, BookSummary, Chunk, Source, SourceKind
 
 logger = logging.getLogger(__name__)
 
 UPLOAD_DIR = Path(__file__).parent / "assets" / "uploads"
+# Generated marketing assets: assets/generated/{project_id}/{asset_id}.json
+GENERATED_DIR = Path(__file__).parent / "assets" / "generated"
 
 # Source record stored next to the uploaded file. It starts with "." and safe_filename strips
 # leading dots from uploads, so it can never collide with an uploaded file.
 META_FILENAME = ".source.json"
+# Chunks produced by ingestion, one JSON object per line (same dot-prefix reasoning as above).
+CHUNKS_FILENAME = ".chunks.jsonl"
+# Book summary (summary.py), created on demand.
+SUMMARY_FILENAME = ".summary.json"
 
 ALLOWED_EXTENSIONS = {".pdf"}  # widen when other formats get an ingestion path (EPUB, DOCX, video, ...)
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
@@ -121,7 +129,7 @@ def delete_source_files(project_id: str, source_id: str) -> None:
     """Delete the stored file(s) of a source by removing its whole upload directory.
 
     Missing directories are ignored, so it is safe to call for sources that have no files
-    (e.g. the dummy demo sources).
+    (e.g. after an interrupted upload).
 
     Args:
         project_id: Project the source belongs to.
@@ -166,6 +174,108 @@ def write_source_meta(source: Source) -> None:
     tmp = source_dir / f"{META_FILENAME}.tmp"
     tmp.write_text(source.model_dump_json(indent=2), encoding="utf-8")
     tmp.replace(source_dir / META_FILENAME)
+
+
+def source_file_path(source: Source) -> Path:
+    """Path of the uploaded file of a source (the file may be missing, e.g. if deleted by hand).
+
+    Args:
+        source: The source whose file path to build.
+    """
+    return UPLOAD_DIR / source.project_id / source.id / source.filename
+
+
+def write_chunks(source: Source, chunks: list[Chunk]) -> None:
+    """Save the chunks of a source in its upload directory, replacing any previous chunks.
+
+    Written to a temporary file first and then renamed, like write_source_meta.
+
+    Args:
+        source: The source the chunks belong to; its directory must already exist.
+        chunks: All chunks of the source, in reading order.
+
+    Raises:
+        OSError: If the file cannot be written.
+    """
+    source_dir = UPLOAD_DIR / source.project_id / source.id
+    tmp = source_dir / f"{CHUNKS_FILENAME}.tmp"
+    tmp.write_text("".join(c.model_dump_json() + "\n" for c in chunks), encoding="utf-8")
+    tmp.replace(source_dir / CHUNKS_FILENAME)
+
+
+def load_chunks(source: Source) -> list[Chunk] | None:
+    """Read the saved chunks of a source.
+
+    Args:
+        source: The source whose chunks to read.
+
+    Returns:
+        The chunks in reading order, or None if the file is missing or cannot be parsed.
+    """
+    path = UPLOAD_DIR / source.project_id / source.id / CHUNKS_FILENAME
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        return [Chunk.model_validate_json(line) for line in lines if line.strip()]
+    except (OSError, ValidationError):
+        return None
+
+
+def write_summary(source: Source, summary: BookSummary) -> None:
+    """Save the summary of a book in its upload directory, replacing any previous one.
+
+    Args:
+        source: The book the summary belongs to; its directory must already exist.
+        summary: The summary to save.
+
+    Raises:
+        OSError: If the file cannot be written.
+    """
+    source_dir = UPLOAD_DIR / source.project_id / source.id
+    tmp = source_dir / f"{SUMMARY_FILENAME}.tmp"
+    tmp.write_text(summary.model_dump_json(indent=2), encoding="utf-8")
+    tmp.replace(source_dir / SUMMARY_FILENAME)
+
+
+def load_summary(source: Source) -> BookSummary | None:
+    """Read the saved summary of a book, or None if there is none (or it cannot be parsed)."""
+    try:
+        return BookSummary.model_validate_json((UPLOAD_DIR / source.project_id / source.id / SUMMARY_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, ValidationError):
+        return None
+
+
+def write_asset(asset: Asset) -> None:
+    """Save a generated asset as JSON so it survives server restarts.
+
+    Written to a temporary file first and then renamed, like write_source_meta.
+
+    Args:
+        asset: The asset to save.
+
+    Raises:
+        OSError: If the file cannot be written.
+    """
+    target_dir = GENERATED_DIR / asset.project_id
+    target_dir.mkdir(parents=True, exist_ok=True)
+    tmp = target_dir / f".{asset.id}.json.tmp"
+    tmp.write_text(asset.model_dump_json(indent=2), encoding="utf-8")
+    tmp.replace(target_dir / f"{asset.id}.json")
+
+
+def load_assets() -> dict[str, Asset]:
+    """Read all saved generated assets (called once on server startup); unreadable files are skipped.
+
+    Returns:
+        Assets by id, oldest first.
+    """
+    assets: list[Asset] = []
+    for path in GENERATED_DIR.glob("*/*.json"):
+        try:
+            assets.append(Asset.model_validate_json(path.read_text(encoding="utf-8")))
+        except (OSError, ValidationError):
+            logger.warning("Skipping unreadable asset file %s", path)
+    assets.sort(key=lambda a: a.created_at)
+    return {a.id: a for a in assets}
 
 
 def load_sources() -> dict[str, Source]:
