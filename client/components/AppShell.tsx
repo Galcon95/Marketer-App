@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { api, API_URL, PROJECT_ID } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
-import ContentGenerator from "./phases/ContentGenerator";
+import CampaignBuilder from "./phases/CampaignBuilder";
 import KnowledgeHub from "./phases/KnowledgeHub";
 import UsageDrawer, { formatTokens, formatUsd } from "./UsagePanel";
 import { Badge, Button, Card, ErrorNote, Placeholder, SectionHeading, Sidebar, StatusRow, Tabs, type NavGroup, type TabItem } from "./ui";
@@ -19,16 +19,16 @@ type PhaseProps = { refresh: number; onChange: () => void };
 
 /** Tab bar entries, one per phase. */
 const TABS: TabItem<PhaseId>[] = [
-  { id: "p1", kicker: "PHASE 1", label: "Content Generator", icon: Sparkles },
-  { id: "p2", kicker: "PHASE 2", label: "Knowledge Hub", icon: Database },
+  { id: "p1", kicker: "PHASE 1", label: "Knowledge Hub", icon: Database },
+  { id: "p2", kicker: "PHASE 2", label: "Campaign Builder", icon: Sparkles },
   { id: "p3", kicker: "PHASE 3", label: "Market Intelligence", icon: Network },
   { id: "p4", kicker: "PHASE 4", label: "Agent Workspace", icon: Cpu },
 ];
 
 /** Page title and breadcrumb subtitle shown in the top bar for each phase. */
 const TITLES: Record<PhaseId, [title: string, crumb: string]> = {
-  p1: ["Content generator", "Zero-shot prompts · no grounding"],
-  p2: ["Knowledge hub", "Retrieval-augmented generation over your content"],
+  p1: ["Knowledge hub", "Retrieval-augmented generation over your content"],
+  p2: ["Campaign builder", "Zero-shot prompts · no grounding"],
   p3: ["Market intelligence", "Live tool calls via Model Context Protocol"],
   p4: ["Agent workspace", "Strategist → Copywriter → Auditor → You"],
 };
@@ -94,8 +94,8 @@ function AgentWorkspace() {
 
 /** Component rendered for each phase tab. */
 const VIEWS: Record<PhaseId, (props: PhaseProps) => JSX.Element> = {
-  p1: ContentGenerator,
-  p2: KnowledgeHub,
+  p1: KnowledgeHub,
+  p2: CampaignBuilder,
   p3: MarketIntelligence,
   p4: AgentWorkspace,
 };
@@ -128,7 +128,7 @@ export default function AppShell() {
   const nav: NavGroup[] = [
     {
       title: "Pipeline",
-      items: TABS.map(({ id, label, icon }) => ({ id, label, icon, count: id === "p2" ? p?.chunk_count : undefined })),
+      items: TABS.map(({ id, label, icon }) => ({ id, label, icon, count: id === "p1" ? p?.chunk_count : undefined })),
     },
     {
       title: "Library",

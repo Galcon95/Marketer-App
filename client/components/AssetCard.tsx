@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, Check, Copy, Pencil, ShieldCheck, Sparkles, Trash2, UserCheck, X } from "lucide-react";
-import { api, assetTypeLabel, cleanText, errorMessage, humanizeLabel, locationLabel, PLATFORMS, type Asset, type Citation, type VerifyItem } from "@/lib/api";
+import { AlertTriangle, Check, Copy, Pencil, ShieldCheck, Sparkles, Trash2, UserCheck, Users, X } from "lucide-react";
+import { api, assetTypeLabel, cleanText, errorMessage, hasCharLimit, humanizeLabel, locationLabel, PLATFORMS, type Asset, type Citation, type VerifyItem } from "@/lib/api";
 import { PageLink } from "./BookCover";
 import { Badge, Button, ErrorNote, Score } from "./ui";
 
@@ -71,7 +71,7 @@ export default function AssetCard({ asset, onChange }: { asset: Asset; onChange:
   const publishable = cleanText(asset.text);
   const words = publishable.split(/\s+/).filter(Boolean).length;
   const platform = PLATFORMS.find((p) => p.value === asset.platform);
-  const limit = platform && (asset.asset_type === "social_reply" ? platform.replyLimit : platform.postLimit);
+  const limit = platform && hasCharLimit(asset.asset_type) ? (asset.asset_type === "social_reply" ? platform.replyLimit : platform.postLimit) : undefined;
   const overLimit = limit != null && publishable.length > limit;
 
   /** Send the publishable text to POST /verify and store the per-claim results (or the error). */
@@ -134,6 +134,8 @@ export default function AssetCard({ asset, onChange }: { asset: Asset; onChange:
           ? <Badge tone="success" icon={ShieldCheck}>Grounded</Badge>
           : <Badge icon={Sparkles}>Zero-shot</Badge>}
         {platform && <Badge>{platform.label}</Badge>}
+        {asset.angle && <Badge tone="accent">{asset.angle}</Badge>}
+        {asset.persona && <Badge icon={Users}>for {asset.persona}</Badge>}
         {asset.tone !== "neutral" && <Badge>{asset.tone}</Badge>}
         {!platform && asset.length !== "standard" && <Badge>{asset.length}</Badge>}
         {asset.edited && <Badge tone="warning" icon={Pencil}>edited</Badge>}

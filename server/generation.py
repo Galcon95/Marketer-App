@@ -57,6 +57,16 @@ ASSET_INSTRUCTIONS: dict[AssetType, str] = {
                     "first, then add the book's perspective; sound like a person taking part in the conversation, "
                     "not like an advertisement. Mention the book (title and author) naturally at most once. "
                     "Use hashtags only if they are usual for this platform's replies.",
+    "video_script": "a script for a short vertical video {platform}, 30-60 seconds long, about the book. "
+                    "Structure it as: HOOK (first 3 seconds, spoken), then 3-5 numbered SCENES, each with "
+                    "\"Visual:\" (what is shown), \"Voice-over:\" (what is said) and \"On-screen text:\" (a few words), "
+                    "then a CTA (call to action), then a caption with fitting hashtags. Use plain labels (HOOK, "
+                    "SCENE 1, ..., CTA, CAPTION) without emojis; keep the on-screen text calm, without exclamation marks.",
+    "youtube_video": "the YouTube page for a video about the book, in exactly these four sections with these "
+                     "headings: \"Title options:\" with 3 numbered titles (each under 70 characters, curiosity without "
+                     "clickbait); \"Description:\" of {size} words whose first two lines work as the preview; "
+                     "\"Chapters:\" with 3-6 timestamps (e.g. \"0:00 Intro\") for a 6-10 minute video; "
+                     "\"Tags:\" with 10-15 comma-separated tags.",
     "newsletter": "a newsletter section of {size} words: a subject line on the first line "
                   "(\"Subject: ...\"), then an engaging introduction to the book and a call to action.",
     "ad_copy": "three short ad variants. Each has a headline (max 8 words) and a body of {size} words.",
@@ -69,6 +79,7 @@ ASSET_INSTRUCTIONS: dict[AssetType, str] = {
 # The {size} per asset type and length (short, standard, long).
 SIZES: dict[str, tuple[str, str, str]] = {
     "blurb": ("50-80", "120-180", "220-300"),
+    "youtube_video": ("80-120", "150-250", "300-400"),
     "newsletter": ("120-160", "220-280", "380-450"),
     "ad_copy": ("8-15", "15-30", "30-50"),
     "lead_magnet": ("3", "5", "8"),
@@ -85,12 +96,25 @@ PLATFORM_POST: dict[Platform, str] = {
                  "after the caption add one line starting with \"Image idea:\" that describes a fitting picture",
     "facebook": "for Facebook: conversational, 40-120 words, ending with a question that invites comments, "
                 "0-2 hashtags",
+    "tiktok": "as a TikTok caption: at most 150 characters, casual, a hook first, 3-5 hashtags",
+    "youtube": "as a YouTube community post: 30-100 words, personal, ending with a question or a poll idea",
 }
 PLATFORM_REPLY: dict[Platform, str] = {
     "x": "on X (Twitter), at most 280 characters in total",
     "linkedin": "as a LinkedIn comment of 40-120 words, professional and constructive",
     "instagram": "as an Instagram comment of 1-3 short sentences, warm; an emoji is fine",
     "facebook": "as a Facebook comment of 30-100 words, conversational",
+    "tiktok": "as a TikTok comment of at most 150 characters, casual",
+    "youtube": "as a YouTube comment of 20-80 words, friendly and on topic",
+}
+# Short video scripts: where the video is published.
+PLATFORM_VIDEO: dict[Platform, str] = {
+    "x": "for X (Twitter) video",
+    "linkedin": "for LinkedIn video (professional, subtitled because most people watch muted)",
+    "instagram": "for Instagram Reels",
+    "facebook": "for Facebook Reels",
+    "tiktok": "for TikTok (fast cuts, trend-aware, casual)",
+    "youtube": "for YouTube Shorts",
 }
 TONES: dict[Tone, str] = {
     "neutral": "",
@@ -134,11 +158,13 @@ GROUNDED_SYSTEM = (
     "a book only by the source name in the excerpt headers (or the brief). If the excerpts do not cover "
     "something, leave it out. The book background (a summary of the whole book, if given) helps you "
     "understand what the book is about overall; specific facts and quotes must come from the excerpts "
-    "and be cited. Reply with the asset text only.\n\n{style}"
+    "and be cited. Reply with the asset text only. Write plain text that can be pasted anywhere: "
+    "no Markdown (no ** or #).\n\n{style}"
 )
 ZERO_SHOT_SYSTEM = (
     "You are an expert book marketer. Write {instructions}\n\n"
-    "Base it on the request only. Reply with the asset text only.\n\n{style}"
+    "Base it on the request only. Reply with the asset text only. Write plain text that can be pasted "
+    "anywhere: no Markdown (no ** or #).\n\n{style}"
 )
 
 GROUNDED_PROMPT = ChatPromptTemplate.from_messages([
@@ -291,6 +317,8 @@ def build_instructions(req: GenerateRequest) -> str:
         text = template.format(platform=PLATFORM_POST[req.platform])
     elif req.asset_type == "social_reply":
         text = template.format(platform=PLATFORM_REPLY[req.platform])
+    elif req.asset_type == "video_script":
+        text = template.format(platform=PLATFORM_VIDEO[req.platform])
     else:
         text = template.format(size=SIZES[req.asset_type][LENGTH_INDEX[req.length]])
     if TONES[req.tone]:
@@ -308,17 +336,29 @@ def style_guidance(humanize: int) -> str:
     return guidance
 
 
-def find_ai_tells(text: str) -> list[str]:
-    """AI-typical phrases and patterns in a text: listed clichés, many exclamation marks, emojis or em dashes."""
+def find_ai_tells(text: str, emojis_expected: bool = False) -> list[str]:
+    """AI-typical phrases and patterns in a text: listed clichés, many exclamation marks, emojis or em dashes.
+
+    Args:
+        text: The text to check.
+        emojis_expected: Skip the emoji count for formats where emojis are normal (see emojis_are_normal).
+    """
     lower = text.lower()
     found = [t for t in AI_TELLS if re.search(rf"\b{re.escape(t)}\b", lower)]
     if text.count("!") > 2:
         found.append("many exclamation marks")
-    if len(re.findall(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]", text)) > 3:
+    if not emojis_expected and len(re.findall(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]", text)) > 3:
         found.append("many emojis")
     if text.count("—") > 2:
         found.append("many em dashes")
     return found
+
+
+def emojis_are_normal(req: GenerateRequest) -> bool:
+    """True for formats where several emojis are normal: Instagram and TikTok posts/replies, and short video scripts."""
+    if req.asset_type == "video_script":
+        return True
+    return req.asset_type in ("social_post", "social_reply") and req.platform in ("instagram", "tiktok")
 
 
 def temperature_for(humanize: int) -> float:
@@ -399,9 +439,9 @@ def _retrieve(state: GenerationState) -> GenerationState:
     """
     req = state["req"]
     query = state.get("query") or req.brief
-    context = retrieve_chunks(state["project_id"], query, req.k, operation=f"generate_{req.asset_type}")
+    context = retrieve_chunks(state["project_id"], query, req.k, req.source_ids, operation=f"generate_{req.asset_type}")
     if not context:
-        raise GenerationError(502, "No searchable sources in this project yet. Upload and process a book first.")
+        raise GenerationError(502, "No searchable passages found. Upload and process a book first (or check the selected book).")
     return {"query": query, "context": context}
 
 
@@ -432,7 +472,7 @@ def _generate(state: GenerationState) -> GenerationState:
 
 def _check_style(state: GenerationState) -> GenerationState:
     """Style check node: find AI-typical clichés in the draft (no model call)."""
-    return {"ai_tells": find_ai_tells(state["draft"])}
+    return {"ai_tells": find_ai_tells(state["draft"], emojis_are_normal(state["req"]))}
 
 
 def _needs_rewrite(state: GenerationState) -> str:
@@ -459,7 +499,7 @@ def _finalize(state: GenerationState) -> GenerationState:
         result = keep_cited(draft, state["context"], also_cited=state.get("used", []))
     else:
         result = {"text": draft, "citations": []}
-    return {**result, "ai_tells": find_ai_tells(result["text"])}
+    return {**result, "ai_tells": find_ai_tells(result["text"], emojis_are_normal(state["req"]))}
 
 
 def format_background(context: list[tuple[Chunk, float]]) -> str:

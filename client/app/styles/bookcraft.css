@@ -267,3 +267,6 @@ html, body { background: var(--bg); color: var(--ink); font-family: var(--font-s
   .bc-view { padding: var(--space-4); }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .001s !important; animation-iteration-count: 1 !important; transition: none !important; } }
+
+/* Book card of the book being worked on (Knowledge Hub "Work on this book") */
+.bc-card.book-selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }

@@ -28,10 +28,10 @@ BookCraft AI is a marketing operating system for authors: it turns a manuscript 
 
 ## The product pipeline
 
-The four tabs are a progression of capability, always shown in this order with a mono kicker:
+The four tabs follow the author's workflow, always shown in this order with a mono kicker:
 
-1. **Phase 1 — Simple Generator.** Zero-shot prompts. Brief `Card` of `Field`s → `OutputCard`s.
-2. **Phase 2 — RAG Knowledge Hub.** `UploadZone`, `ChunkCard` explorer, `CitationCard` with its source drawer.
+1. **Phase 1 — RAG Knowledge Hub.** Upload the books first. `UploadZone`, `ChunkCard` explorer, `CitationCard` with its source drawer.
+2. **Phase 2 — Campaign Builder.** Zero-shot prompts, no grounding: one brief → a campaign kit (3 personas, 5 posts, 1 blurb) as `OutputCard`s.
 3. **Phase 3 — MCP Market Intelligence.** `McpServerCard` grid and the `LeadsTable`.
 4. **Phase 4 — Autonomous Multi-Agent Workspace.** `AgentGraph`, `AgentConsole`, `ReviewPanel`.
 

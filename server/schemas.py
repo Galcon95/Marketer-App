@@ -17,11 +17,13 @@ SourceKind = Literal["document", "video", "audio", "text"]
 # ready = chunks are searchable; failed = ingestion stopped, see Source.error.
 SourceStatus = Literal["uploaded", "queued", "transcribing", "chunking", "embedding", "ready", "failed"]
 # Kinds of marketing content the generator can produce.
-AssetType = Literal["blurb", "social_post", "social_reply", "newsletter", "ad_copy", "lead_magnet", "persona"]
+AssetType = Literal["blurb", "social_post", "social_reply", "video_script", "youtube_video", "newsletter",
+                    "ad_copy", "lead_magnet", "persona"]
 # Writing style options for generated assets (see generation.py for what each one means).
 Tone = Literal["neutral", "inspiring", "friendly", "professional", "punchy", "literary"]
 Length = Literal["short", "standard", "long"]  # ignored for social posts and replies (the platform decides)
-Platform = Literal["x", "linkedin", "instagram", "facebook"]  # for social posts and replies
+# For social posts, replies and short video scripts.
+Platform = Literal["x", "linkedin", "instagram", "facebook", "tiktok", "youtube"]
 
 
 # ---------- Health ----------
@@ -152,6 +154,7 @@ class GenerateRequest(BaseModel):
     platform: Platform = "x"  # used for social posts and replies
     reply_to: str = ""  # the post to reply to (social_reply only)
     humanize: int = Field(default=60, ge=0, le=100)  # how human it should sound: 0 = polished marketing, 100 = casual person
+    source_ids: list[str] | None = None  # the book(s) to work on; None = all books of the project
 
     @model_validator(mode="after")
     def _check_inputs(self) -> "GenerateRequest":
@@ -192,8 +195,40 @@ class Asset(BaseModel):
     reply_to: str = ""  # the post it replies to (social_reply only)
     search_query: str = ""  # what was searched in the books: the brief, or for replies the planned query
     humanize: int = 60  # the "how human" setting it was generated with (0-100)
+    source_ids: list[str] = []  # the book(s) it was generated for; empty = all books of the project
     ai_tells: list[str] = []  # AI-typical phrases still found in the final text (empty = none)
     edited: bool = False  # True once the user changed the text
+    campaign_id: str = ""  # set for assets made together by POST /campaigns (personas, posts, blurb)
+    persona: str = ""  # campaign posts: name of the persona the post is written for
+    angle: str = ""  # campaign posts: "hook", "teaser", "question", "behind the scenes" or "call to action"
+
+
+class CampaignRequest(BaseModel):
+    """Request body for POST /projects/{id}/campaigns: a short book brief for a zero-shot campaign kit.
+
+    The model sees only this brief (no excerpts). The GUI pre-fills it from the library (title and
+    author from the file name, themes and hook from the book summary); the author can edit everything.
+    """
+
+    title: str = Field(min_length=1)  # book title
+    author: str = ""  # author or pen name
+    genre: str = ""  # genre / subgenre, e.g. "cozy mystery"
+    themes: list[str] = []  # key themes to build on
+    premise: str = Field(min_length=1)  # hook / premise: what the book is about, in a few sentences
+    comparables: str = ""  # "for fans of ...": comparable authors or books
+    audience: str = ""  # optional audience focus for the personas, e.g. "book clubs"
+    humanize: int = Field(default=60, ge=0, le=100)  # how human it should sound (see GenerateRequest)
+    source_id: str | None = None  # the book in the library, if it is one (links the assets to it)
+
+
+class CampaignResponse(BaseModel):
+    """Response of POST /projects/{id}/campaigns: the stored assets of one campaign kit."""
+
+    campaign_id: str  # shared by all assets of the kit, e.g. "cmp_1a2b3c4d"
+    personas: list[Asset]  # 3 reader personas
+    posts: list[Asset]  # 5 social posts, each written for one persona
+    blurb: Asset  # back-cover / store description
+    tokens: int  # LLM tokens used by the whole kit
 
 
 class AssetUpdate(BaseModel):

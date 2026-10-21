@@ -21,11 +21,13 @@ export const PROCESSING_STATUSES: SourceStatus[] = ["queued", "transcribing", "c
 export const UPLOAD_EXTENSIONS = [".pdf"];
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 /** Kinds of marketing content the generator can produce. */
-export type AssetType = "blurb" | "social_post" | "social_reply" | "newsletter" | "ad_copy" | "lead_magnet" | "persona";
+export type AssetType =
+  | "blurb" | "social_post" | "social_reply" | "video_script" | "youtube_video"
+  | "newsletter" | "ad_copy" | "lead_magnet" | "persona";
 /** Writing style options for generated assets (mirror server/schemas.py). */
 export type Tone = "neutral" | "inspiring" | "friendly" | "professional" | "punchy" | "literary";
 export type Length = "short" | "standard" | "long"; // not used for social posts and replies (the platform decides)
-export type Platform = "x" | "linkedin" | "instagram" | "facebook"; // for social posts and replies
+export type Platform = "x" | "linkedin" | "instagram" | "facebook" | "tiktok" | "youtube"; // for posts, replies, video scripts
 
 /** Status of one backend dependency (API, vector DB, LLM); `detail` is a human-readable note. */
 export interface ServiceStatus { name: string; ok: boolean; detail: string }
@@ -91,6 +93,10 @@ export interface Asset {
   edited: boolean; // true once the user changed the text
   humanize: number; // the "how human" setting it was generated with (0-100)
   ai_tells: string[]; // AI-typical phrases still found in the final text (empty = none)
+  source_ids: string[]; // the book(s) it was generated for; empty = all books
+  campaign_id: string; // set for assets of a campaign kit (POST /campaigns), "" otherwise
+  persona: string; // campaign posts: the persona the post is written for
+  angle: string; // campaign posts: hook, teaser, question, behind the scenes or call to action
 }
 /** Body of POST /generate. `k` = number of chunks to retrieve as context (server default 5). */
 /**
@@ -108,7 +114,23 @@ export interface GenerateRequest {
   platform?: Platform;
   reply_to?: string;
   humanize?: number; // 0-100: how human it should sound (default 60)
+  source_ids?: string[]; // the book(s) to work on; omitted = all books
 }
+
+/** Body of POST /campaigns: a short book brief for a zero-shot campaign kit (the model sees only this). */
+export interface CampaignRequest {
+  title: string;
+  author?: string;
+  genre?: string;
+  themes?: string[];
+  premise: string; // hook / premise
+  comparables?: string; // "for fans of ..."
+  audience?: string; // optional audience focus for the personas
+  humanize?: number; // 0-100 (default 60)
+  source_id?: string | null; // the book in the library, if it is one
+}
+/** Response of POST /campaigns: the stored assets of one kit. */
+export interface CampaignResponse { campaign_id: string; personas: Asset[]; posts: Asset[]; blurb: Asset; tokens: number }
 
 /** Verification result for one claim (sentence); chunk_id/score are set only when verified. */
 export interface VerifyItem { claim: string; status: "verified" | "not_found"; chunk_id: string | null; score: number | null }
@@ -170,6 +192,8 @@ export const ASSET_TYPES: { value: AssetType; label: string }[] = [
   { value: "blurb", label: "Blurb / product description" },
   { value: "social_post", label: "Social post" },
   { value: "social_reply", label: "Reply to a post" },
+  { value: "video_script", label: "Short video script (Reels · TikTok · Shorts)" },
+  { value: "youtube_video", label: "YouTube video page (titles · description · tags)" },
   { value: "newsletter", label: "Newsletter" },
   { value: "ad_copy", label: "Ad copy" },
   { value: "lead_magnet", label: "Lead magnet" },
@@ -202,10 +226,17 @@ export const PLATFORMS: { value: Platform; label: string; postLimit: number; rep
   { value: "linkedin", label: "LinkedIn", postLimit: 3000, replyLimit: 1250 },
   { value: "instagram", label: "Instagram", postLimit: 2200, replyLimit: 2200 },
   { value: "facebook", label: "Facebook", postLimit: 63206, replyLimit: 8000 },
+  { value: "tiktok", label: "TikTok", postLimit: 4000, replyLimit: 150 },
+  { value: "youtube", label: "YouTube", postLimit: 5000, replyLimit: 10000 },
 ];
 
-/** True for asset types written for a social platform (a platform is chosen instead of a length). */
-export function isSocial(type: AssetType) {
+/** True for asset types made for a platform (a platform is chosen instead of a length): posts, replies, video scripts. */
+export function usesPlatform(type: AssetType) {
+  return type === "social_post" || type === "social_reply" || type === "video_script";
+}
+
+/** True for asset types whose text is checked against the platform's character limit (posts and replies). */
+export function hasCharLimit(type: AssetType) {
   return type === "social_post" || type === "social_reply";
 }
 
@@ -387,11 +418,15 @@ export const api = {
    * POST /projects/{id}/ask: answer a question from the books (NotebookLM-style), with citations.
    * @param question Natural-language question.
    * @param k Number of passages to retrieve as context (default 6).
+   * @param sourceIds Optional: only use these books (omitted = all books).
    */
-  ask: (question: string, k = 6) => request<AskResponse>(`/projects/${PROJECT_ID}/ask`, postJson({ question, k })),
+  ask: (question: string, k = 6, sourceIds?: string[]) =>
+    request<AskResponse>(`/projects/${PROJECT_ID}/ask`, postJson({ question, k, source_ids: sourceIds })),
 
   /** POST /projects/{id}/generate: generate and store a new asset from a brief. */
   generate: (body: GenerateRequest) => request<Asset>(`/projects/${PROJECT_ID}/generate`, postJson(body)),
+  /** POST /projects/{id}/campaigns: generate a zero-shot campaign kit (3 personas, 5 posts, 1 blurb); takes some seconds. */
+  createCampaign: (body: CampaignRequest) => request<CampaignResponse>(`/projects/${PROJECT_ID}/campaigns`, postJson(body)),
   /** GET /projects/{id}/assets: all generated assets of the current project, oldest first. */
   listAssets: () => request<Asset[]>(`/projects/${PROJECT_ID}/assets`),
   /** PATCH /assets/{assetId}: replace an asset's text with the user's edited version. */

@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode, type SubmitEvent } from "react";
-import { AlertTriangle, BookOpen, Check, Database, FileText, Film, Library, MessageSquare, Play, RotateCcw, Sparkles, Trash2, Upload, X } from "lucide-react";
+import { AlertTriangle, BookOpen, Check, ChevronDown, Database, FileText, Film, Library, MessageSquare, Play, RotateCcw, Sparkles, Target, Trash2, Upload, X } from "lucide-react";
 import {
-  api, ASSET_TYPES, bookTitle, errorMessage, humanizeLabel, isSocial, LENGTHS, locationLabel, MAX_UPLOAD_BYTES, PLATFORMS, PROCESSING_STATUSES,
-  TONES, UPLOAD_EXTENSIONS,
+  api, ASSET_TYPES, bookTitle, errorMessage, humanizeLabel, LENGTHS, locationLabel, MAX_UPLOAD_BYTES, PLATFORMS, PROCESSING_STATUSES,
+  TONES, UPLOAD_EXTENSIONS, usesPlatform,
   type AssetType, type BookSummary, type Chunk, type ChunkPage, type Length, type Platform, type Source, type Tone,
 } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
@@ -157,21 +157,57 @@ function firstSentences(text: string, max: number) {
 /**
  * "Your books": one card per processed book (cover, title, stats, a summary teaser and key themes),
  * the visual overview at the top of the Knowledge Hub. Hidden until a book is processed.
- * @param sources All sources of the project (only ready documents are shown).
+ * @param books The processed books (see readyBooks).
  * @param refresh Changing it reloads the summaries (e.g. after one was created).
+ * @param selected Id of the book being worked on, or null for all books.
+ * @param onSelect Called with a book's id (or null to clear) when "Work on this book" is clicked.
  * @param onBrowse Opens the summary or chunks panel of a book.
  */
-function BookShelf({ sources, refresh, onBrowse }: {
-  sources: Source[]; refresh: number; onBrowse: (source: Source, view: DrawerView) => void;
+function BookShelf({ books, refresh, selected, onSelect, onBrowse }: {
+  books: Source[]; refresh: number; selected: string | null;
+  onSelect: (id: string | null) => void; onBrowse: (source: Source, view: DrawerView) => void;
 }) {
-  const books = sources.filter((s) => s.status === "ready" && s.kind === "document");
   if (books.length === 0) return null;
   return (
     <div>
       <SectionHeading icon={Library} title="Your books" count={books.length} />
       <div className="bc-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(420px, 100%), 1fr))" }}>
-        {books.map((book) => <BookCard key={book.id} source={book} refresh={refresh} onBrowse={onBrowse} />)}
+        {books.map((book) => (
+          <BookCard key={book.id} source={book} refresh={refresh} selected={selected === book.id}
+            onSelect={() => onSelect(selected === book.id ? null : book.id)} onBrowse={onBrowse} />
+        ))}
       </div>
+    </div>
+  );
+}
+
+/** The processed books of a project (ready PDFs and other documents), in upload order. */
+function readyBooks(sources: Source[]) {
+  return sources.filter((s) => s.status === "ready" && s.kind === "document");
+}
+
+/**
+ * "Working on" bar above Ask and Generate: choose one book or all books. Ask your book, the
+ * generator and the generated-assets list then only use that book.
+ * @param books The processed books.
+ * @param selected Id of the selected book, or null for all books.
+ * @param onSelect Called with the chosen book's id, or null for all books.
+ */
+function BookPicker({ books, selected, onSelect }: { books: Source[]; selected: string | null; onSelect: (id: string | null) => void }) {
+  if (books.length === 0) return null;
+  const book = books.find((b) => b.id === selected);
+  return (
+    <div className="bc-card" style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", flexWrap: "wrap" }}>
+      {book ? <BookCover sourceId={book.id} title={bookTitle(book.filename)} width={26} link /> : <Library size={18} className="bc-ico" aria-hidden />}
+      <strong>Working on</strong>
+      <div className="bc-select-wrap" style={{ minWidth: 260, flex: "0 1 420px" }}>
+        <select className="bc-select" aria-label="Book to work on" value={selected ?? ""} onChange={(e) => onSelect(e.target.value || null)}>
+          <option value="">All books ({books.length})</option>
+          {books.map((b) => <option key={b.id} value={b.id}>{bookTitle(b.filename)}</option>)}
+        </select>
+        <ChevronDown size={16} className="bc-ico" aria-hidden />
+      </div>
+      <span className="bc-hint">Ask your book, the generator and the asset list use {book ? "only this book" : "all books"}.</span>
     </div>
   );
 }
@@ -179,18 +215,21 @@ function BookShelf({ sources, refresh, onBrowse }: {
 /**
  * One book on the shelf: cover (click: opens the PDF), title, chunk/chapter/size badges, the first sentences of its summary
  * and up to four key themes, with buttons to open the summary (or create it) and the chunks.
+ * The book being worked on is highlighted with an accent border.
  * @param source The book.
  * @param refresh Changing it reloads the summary.
+ * @param selected True if this is the book being worked on.
+ * @param onSelect Toggles this book as the one being worked on.
  * @param onBrowse Opens the summary or chunks panel.
  */
-function BookCard({ source, refresh, onBrowse }: {
-  source: Source; refresh: number; onBrowse: (source: Source, view: DrawerView) => void;
+function BookCard({ source, refresh, selected, onSelect, onBrowse }: {
+  source: Source; refresh: number; selected: boolean; onSelect: () => void; onBrowse: (source: Source, view: DrawerView) => void;
 }) {
   const summary = useApi(`book-summary:${source.id}:${refresh}`, () => api.getSummary(source.id));
   const s = summary.data;
   const title = bookTitle(source.filename);
   return (
-    <Card>
+    <Card className={selected ? "book-selected" : undefined}>
       <div style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
         <BookCover sourceId={source.id} title={title} width={120} link />
         <div className="bc-stack" style={{ gap: 10, minWidth: 0, flex: 1 }}>
@@ -216,6 +255,10 @@ function BookCard({ source, refresh, onBrowse }: {
               {s ? "Summary" : "Create summary"}
             </Button>
             <Button size="sm" variant="ghost" icon={Database} onClick={() => onBrowse(source, "chunks")}>Chunks</Button>
+            <Button size="sm" variant={selected ? "primary" : "ghost"} icon={selected ? Check : Target} onClick={onSelect}
+              title={selected ? "Stop working on only this book" : "Ask and generate for this book only"}>
+              {selected ? "Working on this book" : "Work on this book"}
+            </Button>
           </div>
         </div>
       </div>
@@ -510,11 +553,13 @@ function SummaryDrawer({ source, onClose, onChange }: { source: Source; onClose:
  * passages numbered to match, and — collapsed — all retrieved passages with their scores, so the
  * evidence can be checked. Submitting stores the question, which triggers the request through
  * useApi; clearing it (empty submit or the X button) hides the result.
+ * @param bookId Only use this book; null = all books.
  * @param onChange Called after each answer, so the usage totals in the top bar update.
  */
-function AskBook({ onChange }: { onChange: () => void }) {
+function AskBook({ bookId, onChange }: { bookId: string | null; onChange: () => void }) {
   const [question, setQuestion] = useState<string | null>(null); // submitted question; null = nothing asked
-  const ask = useApi(question ? `ask:${question}` : null, () => api.ask(question!));
+  const ask = useApi(question ? `ask:${bookId ?? "all"}:${question}` : null,
+    () => api.ask(question!, 6, bookId ? [bookId] : undefined));
   const answered = ask.data;
   useEffect(() => {
     if (answered) onChange();
@@ -568,6 +613,8 @@ const BRIEF_EXAMPLES: Record<AssetType, string> = {
   blurb: "e.g. Why this book still matters today; use the strongest quote",
   social_post: "e.g. Make people curious about the book's central idea, with a short quote",
   social_reply: "e.g. Agree partly, but add the book's view that both sides can be combined",
+  video_script: "e.g. Why this old book still answers today's problem; end with a question to comment on",
+  youtube_video: "e.g. A 8-minute video explaining the book's central idea for beginners",
   newsletter: "e.g. Introduce the book to readers interested in housing and city life; call to action: read chapter I",
   ad_copy: "e.g. Ads for people frustrated with expensive city rents",
   lead_magnet: "e.g. A free guide with 5 ideas from the book for better neighbourhoods",
@@ -576,13 +623,15 @@ const BRIEF_EXAMPLES: Record<AssetType, string> = {
 
 /**
  * Form for grounded (RAG) generation plus the list of grounded assets, newest first.
- * Options adapt to the asset type: social posts and replies choose a platform (which decides
- * length and style), other types a length; replies take the post to answer plus an optional angle,
- * all other types a brief (with an example that fits the type).
+ * Options adapt to the asset type: social posts, replies and video scripts choose a platform (which
+ * decides length and style), other types a length; replies take the post to answer plus an optional
+ * angle, all other types a brief (with an example that fits the type). With a book selected, it
+ * generates from that book only and lists only that book's assets.
  * @param refresh Changing it reloads the asset list.
+ * @param bookId Only use (and list assets of) this book; null = all books.
  * @param onChange Called after generating (and after editing or deleting an asset) to refresh the app.
  */
-function GroundedGenerator({ refresh, onChange }: Props) {
+function GroundedGenerator({ refresh, bookId, onChange }: Props & { bookId: string | null }) {
   const assets = useApi(`assets:${refresh}`, api.listAssets);
   const [assetType, setAssetType] = useState<AssetType>("blurb"); // decides which fields are shown
   const [pending, setPending] = useState(false);
@@ -604,7 +653,8 @@ function GroundedGenerator({ refresh, onChange }: Props) {
         tone: (get("tone") || "neutral") as Tone,
         audience: get("audience"),
         humanize: Number(get("humanize") || 60),
-        ...(isSocial(assetType) ? { platform: get("platform") as Platform } : { length: get("length") as Length }),
+        ...(bookId ? { source_ids: [bookId] } : {}),
+        ...(usesPlatform(assetType) ? { platform: get("platform") as Platform } : { length: get("length") as Length }),
         ...(isReply ? { reply_to: get("reply_to") } : {}),
       });
       onChange();
@@ -615,8 +665,10 @@ function GroundedGenerator({ refresh, onChange }: Props) {
     }
   }
 
-  // The server returns assets oldest first; show only grounded ones, newest on top.
-  const grounded = (assets.data ?? []).filter((a) => a.grounded).reverse();
+  // The server returns assets oldest first; show only grounded ones (of the selected book), newest on top.
+  const grounded = (assets.data ?? [])
+    .filter((a) => a.grounded && (!bookId || a.source_ids.includes(bookId)))
+    .reverse();
 
   return (
     <div className="bc-stack" style={{ gap: 16 }}>
@@ -627,7 +679,7 @@ function GroundedGenerator({ refresh, onChange }: Props) {
             onChange={(value) => setAssetType(value as AssetType)} />
           <div className="bc-row" style={{ gap: 12, alignItems: "flex-start" }}>
             <div style={{ flex: 1, minWidth: 140 }}>
-              {isSocial(assetType)
+              {usesPlatform(assetType)
                 ? <Field name="platform" as="select" label="Platform" options={PLATFORMS} />
                 : <Field name="length" as="select" label="Length" options={LENGTHS} defaultValue="standard" />}
             </div>
@@ -661,9 +713,9 @@ function GroundedGenerator({ refresh, onChange }: Props) {
   );
 }
 
-/* ---------- Phase 2 ---------- */
+/* ---------- Phase 1 ---------- */
 /**
- * Phase 2: the knowledge hub for retrieval-augmented generation. Combines upload, the book shelf, the sources
+ * Phase 1: the knowledge hub for retrieval-augmented generation. Combines upload, the book shelf, the sources
  * table, "Ask your book" (questions answered from the books) and grounded generation, and opens the chunk drawer for a source.
  * While any source is being processed, the sources list is reloaded every second so the upload
  * panel and the table show live progress; when processing ends, the whole app is refreshed once
@@ -679,6 +731,10 @@ export default function KnowledgeHub({ refresh, onChange }: Props) {
   const openDrawer = useCallback((source: Source, view: DrawerView) => setBrowsing({ source, view }), []);
 
   const list = sources.data ?? [];
+  const books = readyBooks(list);
+  // Book being worked on (null = all books); forgotten when that book disappears (deleted, re-indexing).
+  const [selectedBook, setSelectedBook] = useState<string | null>(null);
+  const bookId = selectedBook && books.some((b) => b.id === selectedBook) ? selectedBook : null;
   const processing = list.some(isProcessing);
   const { reload } = sources;
   useEffect(() => {
@@ -693,11 +749,12 @@ export default function KnowledgeHub({ refresh, onChange }: Props) {
   return (
     <>
       <UploadPanel sources={list} sourcesLoading={sources.loading} onChange={onChange} />
-      <BookShelf sources={list} refresh={refresh} onBrowse={openDrawer} />
+      <BookShelf books={books} refresh={refresh} selected={bookId} onSelect={setSelectedBook} onBrowse={openDrawer} />
       <SourcesCard sources={list} error={sources.error} onBrowse={openDrawer} onChange={onChange} />
+      <BookPicker books={books} selected={bookId} onSelect={setSelectedBook} />
       <div className="bc-split">
-        <AskBook onChange={onChange} />
-        <GroundedGenerator refresh={refresh} onChange={onChange} />
+        <AskBook bookId={bookId} onChange={onChange} />
+        <GroundedGenerator refresh={refresh} bookId={bookId} onChange={onChange} />
       </div>
       {browsing?.view === "chunks" && <SourceChunksDrawer source={browsing.source} onClose={closeDrawer} />}
       {browsing?.view === "summary" && <SummaryDrawer source={browsing.source} onClose={closeDrawer} onChange={onChange} />}
