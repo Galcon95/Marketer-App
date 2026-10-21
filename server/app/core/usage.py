@@ -19,7 +19,6 @@ import threading
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from functools import cache
-from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -28,9 +27,10 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 from pydantic import ValidationError
 
-from schemas import UsageRecord, UsageReport, UsageTotals
+from app.core.config import DATA_DIR
+from app.core.schemas import UsageRecord, UsageReport, UsageTotals
 
-USAGE_FILE = Path(__file__).parent / "assets" / "usage" / "usage.jsonl"
+USAGE_FILE = DATA_DIR / "usage" / "usage.jsonl"
 
 # USD per 1 million tokens (input, output), by model name without provider prefix. Used for
 # embeddings and when the provider reports no cost. Source: OpenAI price list (= OpenRouter prices).
@@ -162,7 +162,7 @@ class UsageCallbackHandler(BaseCallbackHandler):
         ))
 
 
-handler = UsageCallbackHandler()  # attached to the chat model in generation.chat_model()
+handler = UsageCallbackHandler()  # attached to the chat model in llm.chat_model()
 
 
 # ---------- Reading ----------

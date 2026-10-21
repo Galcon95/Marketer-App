@@ -29,10 +29,10 @@ from langchain_core.document_loaders import BaseLoader
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-import dummy_data as db
-import storage
-import vectorstore
-from schemas import Chunk, ChunkLocation, Source
+from app.core import state as db
+from app.core import storage
+from app.core.schemas import Chunk, ChunkLocation, Source
+from app.rag import vectorstore
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,6 @@ _chunks_lock = threading.Lock()
 
 class IngestionError(Exception):
     """A processing problem whose message is shown to the user as the source's error."""
-
 
 class _Cancelled(Exception):
     """Raised when the source was deleted while it was being processed."""

@@ -19,12 +19,11 @@ from typing import TypedDict
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, START, StateGraph
 
-import vectorstore
-from generation import (
-    LLM_MODEL, GenerationError, chat_model, format_background, format_context, is_configured, keep_cited,
-    retrieve_chunks, tokens_used,
-)
-from schemas import AskResponse, Chunk, Citation, SearchHit
+from app.core.config import LLM_MODEL
+from app.core.llm import GenerationError, chat_model, is_configured, tokens_used
+from app.core.schemas import AskResponse, Chunk, Citation, SearchHit
+from app.rag import vectorstore
+from app.rag.retrieval import format_background, format_context, keep_cited, retrieve_chunks
 
 logger = logging.getLogger(__name__)
 

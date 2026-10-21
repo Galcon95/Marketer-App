@@ -8,8 +8,8 @@
     posts     brief + personas → 5 posts, each written for one persona on a platform where that
               persona is reached, in five angles (hook, teaser, question, behind the scenes, call to action)
     blurb     brief + personas → a back-cover / store description aimed at the strongest persona
-    polish    finds AI-typical clichés in posts and blurb (generation.find_ai_tells) and, from
-              humanize 60 on, rewrites just those parts once (generation.REWRITE_PROMPT)
+    polish    finds AI-typical clichés in posts and blurb (core/style.find_ai_tells) and, from
+              humanize 60 on, rewrites just those parts once (core/style.REWRITE_PROMPT)
 
 posts and blurb run in parallel, both after personas, so the whole kit targets the same readers.
 Zero-shot: the model sees only the brief, never excerpts from the book, so nothing is cited. The
@@ -27,11 +27,10 @@ from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
-from generation import (
-    LLM_MODEL, PLATFORM_POST, REWRITE_FROM, REWRITE_PROMPT, GenerationError, chat_model, find_ai_tells,
-    is_configured, style_guidance, temperature_for, tokens_used,
-)
-from schemas import CampaignRequest, Platform
+from app.core.config import LLM_MODEL
+from app.core.llm import GenerationError, chat_model, is_configured, tokens_used
+from app.core.schemas import CampaignRequest, Platform
+from app.core.style import PLATFORM_POST, REWRITE_FROM, REWRITE_PROMPT, find_ai_tells, style_guidance, temperature_for
 
 logger = logging.getLogger(__name__)
 

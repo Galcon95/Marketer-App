@@ -1,4 +1,4 @@
-"""In-memory stores of the app, keyed by id (the name is historical: it started as dummy data).
+"""In-memory stores of the app, keyed by id (formerly dummy_data.py; imported as `db`).
 
 The module-level dicts (projects, sources, chunks, summaries, assets) are the working copy the API
 reads from. Sources, chunks, summaries and assets are persisted on disk by storage.py and loaded into these dicts on
@@ -8,7 +8,7 @@ startup; projects are not persisted yet, so only the fixed demo project exists.
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from schemas import Asset, BookSummary, Chunk, Project, Source
+from app.core.schemas import Asset, BookSummary, Chunk, Project, Source
 
 DEFAULT_PROJECT_ID = "demo-campaign"
 

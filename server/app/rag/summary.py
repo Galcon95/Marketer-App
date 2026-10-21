@@ -22,10 +22,12 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 from pydantic import BaseModel, Field
 
-import dummy_data as db
-import storage
-from generation import GenerationError, LLM_MODEL, chat_model, is_configured, source_name, tokens_used
-from schemas import BookSummary, Chunk, ChapterSummary, Source
+from app.core import state as db
+from app.core import storage
+from app.core.config import LLM_MODEL
+from app.core.llm import GenerationError, chat_model, is_configured, tokens_used
+from app.core.schemas import BookSummary, ChapterSummary, Chunk, Source
+from app.rag.retrieval import source_name
 
 logger = logging.getLogger(__name__)
 

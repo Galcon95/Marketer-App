@@ -16,13 +16,14 @@ from typing import BinaryIO
 
 from pydantic import ValidationError
 
-from schemas import Asset, BookSummary, Chunk, Source, SourceKind
+from app.core.config import DATA_DIR
+from app.core.schemas import Asset, BookSummary, Chunk, Source, SourceKind
 
 logger = logging.getLogger(__name__)
 
-UPLOAD_DIR = Path(__file__).parent / "assets" / "uploads"
+UPLOAD_DIR = DATA_DIR / "uploads"
 # Generated marketing assets: assets/generated/{project_id}/{asset_id}.json
-GENERATED_DIR = Path(__file__).parent / "assets" / "generated"
+GENERATED_DIR = DATA_DIR / "generated"
 
 # Source record stored next to the uploaded file. It starts with "." and safe_filename strips
 # leading dots from uploads, so it can never collide with an uploaded file.

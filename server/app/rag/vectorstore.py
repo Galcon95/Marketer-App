@@ -9,47 +9,31 @@ files (.chunks.jsonl) stay the source of truth: the vectors can always be rebuil
 re-indexing a source. The collection name contains the embedding model, because vectors of
 different models cannot be compared: after switching models, sources must be re-indexed.
 
-Configuration (server/.env), first match wins:
-    OPENROUTER_API_KEY  → embeddings via OpenRouter, default model "openai/text-embedding-3-large"
-    OPENAI_API_KEY      → embeddings via OpenAI directly, default model "text-embedding-3-large"
-    EMBEDDING_MODEL     → optional, overrides the default model
+Provider, API key and embedding model come from core/config.py (OPENROUTER_API_KEY or
+OPENAI_API_KEY, optional EMBEDDING_MODEL).
 """
 
 import logging
-import os
 import re
 from collections.abc import Callable
 from functools import cache
-from pathlib import Path
 
 import chromadb
-from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 
-import usage
-from schemas import Chunk
-
-load_dotenv(Path(__file__).parent / ".env")
+from app.core import usage
+from app.core.config import API_KEY, BASE_URL, DATA_DIR, EMBEDDING_MODEL, PROVIDER
+from app.core.schemas import Chunk
 
 logger = logging.getLogger(__name__)
 
-CHROMA_DIR = Path(__file__).parent / "assets" / "chroma"
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+CHROMA_DIR = DATA_DIR / "chroma"
 EMBED_BATCH = 64  # chunks per embedding request; also the step size of the progress updates
-
-if os.getenv("OPENROUTER_API_KEY"):
-    PROVIDER, API_KEY, BASE_URL = "openrouter", os.getenv("OPENROUTER_API_KEY"), OPENROUTER_BASE_URL
-    EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "openai/text-embedding-3-large")
-else:
-    PROVIDER, API_KEY, BASE_URL = "openai", os.getenv("OPENAI_API_KEY"), None
-    EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
-
 
 class VectorStoreError(Exception):
     """A vector store problem whose message can be shown to the user (missing key, API error, ...)."""
-
 
 # ---------- Public API ----------
 def is_configured() -> bool:

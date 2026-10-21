@@ -13,39 +13,38 @@
     rewrite                  at humanize ≥ 60: rephrases just those parts once, keeping facts, quotes and markers
     finalize                 turns the [n] markers into citations and records the clichés that remain
 
-The "humanize" setting (0-100) adds style guidance to the prompt (see HUMAN_LEVELS) and raises the
+The "humanize" setting (0-100) adds style guidance to the prompt (see core/style.py) and raises the
 temperature slightly, so higher values read less like typical AI marketing copy.
 
 The book summaries (summary.py) of the excerpts' sources are added as background. Only the excerpts
 the model actually cites become the asset's citations, renumbered [1], [2], ... in order (the GUI
 copies the text without the markers). Runs are traced in LangSmith when LANGSMITH_TRACING=true and
 LANGSMITH_API_KEY are set (LangChain/LangGraph pick these up automatically).
-
-Configuration: OPENROUTER_API_KEY (or OPENAI_API_KEY, see vectorstore.py); LLM_MODEL optional
-(default "openai/gpt-4o-mini" via OpenRouter, "gpt-4o-mini" via OpenAI).
+Retrieval, prompt context and citations live in retrieval.py; the model and its configuration in
+core/llm.py and core/config.py.
 """
 
 import logging
-import os
 import re
 from functools import cache
 from typing import TypedDict
 
 from langchain_core.messages import AIMessage
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
-import dummy_data as db
-import usage
-import vectorstore
-from schemas import AssetType, Chunk, Citation, GenerateRequest, Length, Platform, Tone
+from app.core.config import LLM_MODEL
+from app.core.llm import GenerationError, chat_model, is_configured, tokens_used
+from app.core.schemas import AssetType, Chunk, Citation, GenerateRequest, Length
+from app.core.style import (
+    PLATFORM_POST, PLATFORM_REPLY, PLATFORM_VIDEO, REWRITE_FROM, REWRITE_PROMPT, TONES, find_ai_tells,
+    style_guidance, temperature_for,
+)
+from app.rag import vectorstore
+from app.rag.retrieval import format_background, format_context, keep_cited, retrieve_chunks
 
 logger = logging.getLogger(__name__)
-
-LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-4o-mini" if vectorstore.PROVIDER == "openrouter" else "gpt-4o-mini")
-LLM_TEMPERATURE = 0.7  # some creativity for marketing copy; facts are constrained by the prompt
 
 # What to write, per asset type; {size} is filled from SIZES by the chosen length, {platform} from
 # PLATFORM_POST / PLATFORM_REPLY (inserted into the system prompt).
@@ -87,68 +86,6 @@ SIZES: dict[str, tuple[str, str, str]] = {
 }
 LENGTH_INDEX: dict[Length, int] = {"short": 0, "standard": 1, "long": 2}
 
-# Social posts and replies: the platform decides length and style.
-PLATFORM_POST: dict[Platform, str] = {
-    "x": "for X (Twitter): at most 280 characters in total, a strong hook, 1-2 fitting hashtags",
-    "linkedin": "for LinkedIn: 80-200 words, a strong first line, short paragraphs, professional and thoughtful, "
-                "3-5 hashtags at the end",
-    "instagram": "for Instagram: an engaging caption with line breaks and a few emojis, ending with 5-10 hashtags; "
-                 "after the caption add one line starting with \"Image idea:\" that describes a fitting picture",
-    "facebook": "for Facebook: conversational, 40-120 words, ending with a question that invites comments, "
-                "0-2 hashtags",
-    "tiktok": "as a TikTok caption: at most 150 characters, casual, a hook first, 3-5 hashtags",
-    "youtube": "as a YouTube community post: 30-100 words, personal, ending with a question or a poll idea",
-}
-PLATFORM_REPLY: dict[Platform, str] = {
-    "x": "on X (Twitter), at most 280 characters in total",
-    "linkedin": "as a LinkedIn comment of 40-120 words, professional and constructive",
-    "instagram": "as an Instagram comment of 1-3 short sentences, warm; an emoji is fine",
-    "facebook": "as a Facebook comment of 30-100 words, conversational",
-    "tiktok": "as a TikTok comment of at most 150 characters, casual",
-    "youtube": "as a YouTube comment of 20-80 words, friendly and on topic",
-}
-# Short video scripts: where the video is published.
-PLATFORM_VIDEO: dict[Platform, str] = {
-    "x": "for X (Twitter) video",
-    "linkedin": "for LinkedIn video (professional, subtitled because most people watch muted)",
-    "instagram": "for Instagram Reels",
-    "facebook": "for Facebook Reels",
-    "tiktok": "for TikTok (fast cuts, trend-aware, casual)",
-    "youtube": "for YouTube Shorts",
-}
-TONES: dict[Tone, str] = {
-    "neutral": "",
-    "inspiring": "inspiring and hopeful",
-    "friendly": "warm and friendly",
-    "professional": "professional and credible",
-    "punchy": "punchy, bold and energetic",
-    "literary": "elegant and literary",
-}
-
-# Style guidance per "humanize" level (lower bound → text added to the system prompt).
-HUMAN_LEVELS: list[tuple[int, str]] = [
-    (0, "Style: polished, persuasive marketing copy is fine."),
-    (25, "Style: clear and engaging; avoid the most worn-out marketing clichés."),
-    (50, "Style: write like a thoughtful human copywriter, not like an AI: vary sentence length, use contractions "
-         "and concrete details, at most one exclamation mark, no clichés, no rhetorical-question opener, no "
-         "'not just X, but Y', no lists of three adjectives."),
-    (75, "Style: sound like a real person writing it themselves, e.g. a reader who loved the book: plain everyday "
-         "words, first person where it fits, a genuine opinion, short and specific, slightly informal is fine. "
-         "No marketing clichés, no hype words, no exclamation-mark chains, emojis and hashtags only as many as "
-         "the platform strictly needs, no em dashes."),
-]
-
-# Phrases and patterns that make text sound AI-generated ("AI slop"); avoided in the prompt from
-# humanize 50 on, detected after generation, and rewritten from humanize 60 on.
-AI_TELLS: list[str] = [
-    "imagine a world", "in today's fast-paced world", "in a world where", "dive into", "delve into", "unlock",
-    "unleash", "embark on", "journey", "game-changer", "game changer", "revolutionary", "transformative",
-    "groundbreaking", "join the movement", "are you ready", "ready to explore", "look no further",
-    "harmonious", "vibrant", "tapestry", "elevate", "embrace", "testament to", "a must-read", "timeless",
-    "discover how", "the future is", "let's dive", "buckle up", "not just", "seamlessly", "synergy",
-]
-REWRITE_FROM = 60  # humanize level from which found AI clichés are rewritten (one extra model call)
-
 GROUNDED_SYSTEM = (
     "You are an expert book marketer. Write {instructions}\n\n"
     "Use ONLY facts from the numbered source excerpts. Cite every excerpt you use with its number in "
@@ -184,16 +121,6 @@ PLAN_QUERY_PROMPT = ChatPromptTemplate.from_messages([
 ])
 
 
-REWRITE_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You edit marketing text so that it sounds like a real person wrote it, not an AI. Rephrase or remove these "
-     "AI-typical phrases and patterns: {tells}. Keep the meaning, the facts, any quotes, the format and roughly "
-     "the length. Keep every citation marker like [2] exactly as it is, attached to the statement it supports. "
-     "Reply with the edited text only.\n\n{style}"),
-    ("human", "{text}"),
-])
-
-
 class GeneratedText(BaseModel):
     """Structured output of a grounded generation call: the text plus the excerpts it is based on.
 
@@ -203,14 +130,6 @@ class GeneratedText(BaseModel):
 
     text: str = Field(description="The asset text, with [n] citation markers after statements that use an excerpt.")
     used_sources: list[int] = Field(description="Numbers of all source excerpts the text draws on (facts, ideas or quotes).")
-
-
-class GenerationError(Exception):
-    """Generation failed; status_code is the HTTP status the API should return (502 or 503)."""
-
-    def __init__(self, status_code: int, detail: str):
-        super().__init__(detail)
-        self.status_code = status_code
 
 
 class GenerationState(TypedDict, total=False):
@@ -234,11 +153,6 @@ class GenerationState(TypedDict, total=False):
 
 
 # ---------- Public API ----------
-def is_configured() -> bool:
-    """True if an API key for the chat model is set (the same key as for embeddings)."""
-    return vectorstore.is_configured()
-
-
 def generate_asset(project_id: str, req: GenerateRequest) -> GenerationState:
     """Run the generation graph for one asset.
 
@@ -274,38 +188,6 @@ def generate_asset(project_id: str, req: GenerateRequest) -> GenerationState:
     return state
 
 
-def retrieve_chunks(project_id: str, query: str, k: int, source_ids: list[str] | None = None,
-                    operation: str = "search") -> list[tuple[Chunk, float]]:
-    """Find the project's chunks most similar to a query (vector search in Chroma).
-
-    Looks the hits up in the in-memory chunks; hits whose chunk no longer exists (e.g. deleted
-    source) are skipped.
-
-    Args:
-        project_id: Project to search in.
-        query: Natural-language query.
-        k: Maximum number of results.
-        source_ids: Optional filter: only search these sources.
-        operation: What the search is for, for the usage log (e.g. "ask", "verify").
-
-    Returns:
-        (chunk, similarity) pairs, best first.
-
-    Raises:
-        vectorstore.VectorStoreError: If no API key is configured or the search fails.
-    """
-    hits = vectorstore.search(project_id, query, k, source_ids, operation=operation)
-    return [(db.chunks[chunk_id], round(score, 3)) for chunk_id, score in hits if chunk_id in db.chunks]
-
-
-def health() -> tuple[bool, str]:
-    """Status of the language model for GET /health: (ok, detail with model, provider and LangSmith tracing)."""
-    tracing = "LangSmith tracing on" if _tracing_enabled() else "LangSmith tracing off"
-    if not is_configured():
-        return False, f"{LLM_MODEL} · no API key · {tracing}"
-    return True, f"{LLM_MODEL} via {vectorstore.PROVIDER} · {tracing}"
-
-
 def build_instructions(req: GenerateRequest) -> str:
     """The "what to write" part of the system prompt, from asset type, length/platform, tone and audience.
 
@@ -328,42 +210,11 @@ def build_instructions(req: GenerateRequest) -> str:
     return text
 
 
-def style_guidance(humanize: int) -> str:
-    """Style guidance for a "humanize" level (0-100), plus the list of AI clichés to avoid from level 50 on."""
-    guidance = next(text for bound, text in reversed(HUMAN_LEVELS) if humanize >= bound)
-    if humanize >= 50:
-        guidance += " Never use these AI-typical phrases: " + ", ".join(f'"{t}"' for t in AI_TELLS) + "."
-    return guidance
-
-
-def find_ai_tells(text: str, emojis_expected: bool = False) -> list[str]:
-    """AI-typical phrases and patterns in a text: listed clichés, many exclamation marks, emojis or em dashes.
-
-    Args:
-        text: The text to check.
-        emojis_expected: Skip the emoji count for formats where emojis are normal (see emojis_are_normal).
-    """
-    lower = text.lower()
-    found = [t for t in AI_TELLS if re.search(rf"\b{re.escape(t)}\b", lower)]
-    if text.count("!") > 2:
-        found.append("many exclamation marks")
-    if not emojis_expected and len(re.findall(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]", text)) > 3:
-        found.append("many emojis")
-    if text.count("—") > 2:
-        found.append("many em dashes")
-    return found
-
-
 def emojis_are_normal(req: GenerateRequest) -> bool:
     """True for formats where several emojis are normal: Instagram and TikTok posts/replies, and short video scripts."""
     if req.asset_type == "video_script":
         return True
     return req.asset_type in ("social_post", "social_reply") and req.platform in ("instagram", "tiktok")
-
-
-def temperature_for(humanize: int) -> float:
-    """Model temperature for a humanize level: 0.5 (polished) to 1.0 (very human), in steps of 0.1."""
-    return round(0.5 + 0.5 * humanize / 100, 1)
 
 
 def build_request(req: GenerateRequest) -> str:
@@ -375,19 +226,6 @@ def build_request(req: GenerateRequest) -> str:
 
 
 # ---------- Graph ----------
-@cache
-def chat_model(temperature: float = LLM_TEMPERATURE) -> ChatOpenAI:
-    """The chat model, via OpenRouter or OpenAI (same key and endpoint as the embeddings).
-
-    One cached instance per temperature. usage.handler logs every call with its tokens and costs (usage.py).
-
-    Args:
-        temperature: Sampling temperature; higher = more varied wording.
-    """
-    return ChatOpenAI(model=LLM_MODEL, api_key=vectorstore.API_KEY, base_url=vectorstore.BASE_URL,
-                      temperature=temperature, callbacks=[usage.handler])
-
-
 @cache
 def _graph():
     """Build and compile the LangGraph:
@@ -500,71 +338,3 @@ def _finalize(state: GenerationState) -> GenerationState:
     else:
         result = {"text": draft, "citations": []}
     return {**result, "ai_tells": find_ai_tells(result["text"], emojis_are_normal(state["req"]))}
-
-
-def format_background(context: list[tuple[Chunk, float]]) -> str:
-    """Summaries of the books the excerpts come from, e.g. "Garden Cities — Ebenezer Howard: <summary>".
-
-    Returns "(none)" if no summary has been created for these books yet.
-    """
-    parts = []
-    for source_id in dict.fromkeys(chunk.source_id for chunk, _ in context):  # unique, in order
-        if summary := db.summaries.get(source_id):
-            parts.append(f"{source_name(source_id)}: {summary.summary}")
-    return "\n\n".join(parts) or "(none)"
-
-
-def tokens_used(reply: AIMessage) -> int:
-    """Total tokens (prompt + completion) of a model reply, 0 if the provider reported no usage."""
-    return (reply.usage_metadata or {}).get("total_tokens", 0)
-
-
-def format_context(context: list[tuple[Chunk, float]]) -> str:
-    """Numbered excerpts for the prompt, each with its source, chapter and page, e.g.
-    "[1] (Garden Cities of To Morrow — Ebenezer Howard · CHAPTER II. THE REVENUE… · p. 13)\\n<text>".
-    """
-    parts = []
-    for n, (chunk, _) in enumerate(context, start=1):
-        header = (source_name(chunk.source_id), chunk.location.chapter, chunk.location.page and f"p. {chunk.location.page}")
-        parts.append(f"[{n}] ({' · '.join(x for x in header if x)})\n{chunk.text}")
-    return "\n\n".join(parts)
-
-
-def source_name(source_id: str) -> str | None:
-    """Readable name of a source from its file name: "Garden-Cities_Ebenezer-Howard.pdf" → "Garden Cities — Ebenezer Howard"."""
-    source = db.sources.get(source_id)
-    if source is None:
-        return None
-    return re.sub(r"\s+", " ", source.filename.rsplit(".", 1)[0].replace("_", " — ").replace("-", " ")).strip()
-
-
-def keep_cited(text: str, context: list[tuple[Chunk, float]], also_cited: list[int] | None = None) -> GenerationState:
-    """Turn the excerpts cited as [n] into Citations and renumber the markers 1, 2, ... in the order
-    they first appear in the text.
-
-    Markers that point to no excerpt are removed. Excerpts listed in also_cited (the model's
-    used_sources) but without a marker in the text are appended as further citations. If nothing is
-    cited at all, no citations are kept.
-
-    Args:
-        text: The generated text with the model's [n] markers.
-        context: The numbered excerpts that were in the prompt.
-        also_cited: Optional further excerpt numbers the text is based on.
-    """
-    cited: list[int] = []  # original excerpt numbers, in order of first appearance
-    for n in [*map(int, re.findall(r"\[(\d+)\]", text)), *(also_cited or [])]:
-        if 1 <= n <= len(context) and n not in cited:
-            cited.append(n)
-    new_number = {old: new for new, old in enumerate(cited, start=1)}
-    text = re.sub(r"\[(\d+)\]", lambda m: f"[{new_number[int(m.group(1))]}]" if int(m.group(1)) in new_number else "", text)
-    citations = [
-        Citation(chunk_id=chunk.id, source_id=chunk.source_id, location=chunk.location, quote=chunk.text[:240], score=score)
-        for chunk, score in (context[n - 1] for n in cited)
-    ]
-    return {"text": re.sub(r"[ \t]+([.,;:!?])", r"\1", text), "citations": citations}
-
-
-def _tracing_enabled() -> bool:
-    """True if LangSmith tracing is switched on and has an API key (also accepts the older LANGCHAIN_* names)."""
-    on = (os.getenv("LANGSMITH_TRACING") or os.getenv("LANGCHAIN_TRACING_V2") or "").lower() == "true"
-    return on and bool(os.getenv("LANGSMITH_API_KEY") or os.getenv("LANGCHAIN_API_KEY"))
