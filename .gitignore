@@ -6,3 +6,7 @@ Thumbs.db
 
 # Personal Claude Code settings
 .claude/settings.local.json
+
+# Books (PDFs) are never committed: user content, can be large or copyrighted
+/*.pdf
+commit-msg.txt
