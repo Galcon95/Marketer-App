@@ -47,6 +47,7 @@ class _QAState(TypedDict, total=False):
     question: str
     k: int
     source_ids: list[str] | None
+    operation: str  # name in the usage log, e.g. "ask" (GUI) or "mcp_ask_book" (MCP)
     context: list[tuple[Chunk, float]]  # retrieved passages with similarity, best first
     answer: str
     citations: list[Citation]
@@ -54,7 +55,8 @@ class _QAState(TypedDict, total=False):
 
 
 # ---------- Public API ----------
-def answer_question(project_id: str, question: str, k: int, source_ids: list[str] | None = None) -> AskResponse:
+def answer_question(project_id: str, question: str, k: int, source_ids: list[str] | None = None,
+                    operation: str = "ask") -> AskResponse:
     """Answer a question from the project's books.
 
     Args:
@@ -62,6 +64,7 @@ def answer_question(project_id: str, question: str, k: int, source_ids: list[str
         question: The user's question.
         k: Number of passages to retrieve as context.
         source_ids: Optional filter: only use these sources.
+        operation: Name of the caller in the usage log ("ask" for the GUI, "mcp_ask_book" for MCP).
 
     Returns:
         The answer with its cited passages, all retrieved passages and token usage.
@@ -74,9 +77,9 @@ def answer_question(project_id: str, question: str, k: int, source_ids: list[str
         raise GenerationError(503, "No API key set. Add OPENROUTER_API_KEY (or OPENAI_API_KEY) and restart the server.")
     try:
         state = _graph().invoke(
-            {"project_id": project_id, "question": question, "k": k, "source_ids": source_ids},
+            {"project_id": project_id, "question": question, "k": k, "source_ids": source_ids, "operation": operation},
             config={"run_name": "answer_question", "tags": ["qa"],
-                    "metadata": {"project_id": project_id, "llm_model": LLM_MODEL, "operation": "ask"}},
+                    "metadata": {"project_id": project_id, "llm_model": LLM_MODEL, "operation": operation}},
         )
     except GenerationError:
         raise
@@ -114,7 +117,8 @@ def _retrieve(state: _QAState) -> _QAState:
     Raises:
         GenerationError: 409 if the project has no searchable passages.
     """
-    context = retrieve_chunks(state["project_id"], state["question"], state["k"], state.get("source_ids"), operation="ask")
+    context = retrieve_chunks(state["project_id"], state["question"], state["k"], state.get("source_ids"),
+                              operation=state.get("operation", "ask"))
     if not context:
         raise GenerationError(409, "No searchable books in this project yet. Upload and process a book first.")
     return {"context": context}

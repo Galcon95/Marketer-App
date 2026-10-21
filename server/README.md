@@ -36,8 +36,30 @@ server/
 │   │   └── generation.py   single assets, grounded or zero-shot (LangGraph)
 │   ├── campaign/       Phase 2 Campaign Builder
 │   │   └── kit.py      zero-shot kit: personas → posts + blurb (LangGraph)
-│   ├── market/         Phase 3 Market Intelligence (MCP), not built yet
+│   ├── market/         Phase 3 Market Intelligence (MCP)
+│   │   └── book_server.py  mcp-book-knowledge: the books as MCP tools (mounted at /mcp)
 │   ├── agents/         Phase 4 Agent Workspace, not built yet
 │   └── api/            FastAPI routers: health, projects, sources, knowledge, assets, campaigns (+ deps.py)
 └── assets/             data (not committed): uploads, chroma, generated, usage
 ```
+
+## MCP server: mcp-book-knowledge
+
+While the API runs, the Knowledge Hub's books are also available as an MCP server (Streamable HTTP,
+official `mcp` SDK) at `http://127.0.0.1:8000/mcp`:
+
+| Tool | Returns | Model call |
+|---|---|---|
+| `list_books` | book ids, titles, authors, themes, whether a summary exists | none |
+| `search_book(query, book_id?, k=5)` | best passages with chapter, page and similarity | embedding |
+| `get_book_summary(book_id)` | overview, themes, chapter summaries | none |
+| `ask_book(question, book_id?)` | an answer with [n] citations | embedding + LLM |
+
+Try it:
+
+```sh
+npx @modelcontextprotocol/inspector                    # Transport "Streamable HTTP", URL http://127.0.0.1:8000/mcp
+claude mcp add --transport http book-knowledge http://127.0.0.1:8000/mcp   # use the books from Claude Code
+```
+
+Local use only: no authentication; only localhost Host/Origin headers are accepted.
