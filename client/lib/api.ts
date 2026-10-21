@@ -21,7 +21,11 @@ export const PROCESSING_STATUSES: SourceStatus[] = ["queued", "transcribing", "c
 export const UPLOAD_EXTENSIONS = [".pdf"];
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 /** Kinds of marketing content the generator can produce. */
-export type AssetType = "blurb" | "social_post" | "newsletter" | "ad_copy" | "lead_magnet" | "persona";
+export type AssetType = "blurb" | "social_post" | "social_reply" | "newsletter" | "ad_copy" | "lead_magnet" | "persona";
+/** Writing style options for generated assets (mirror server/schemas.py). */
+export type Tone = "neutral" | "inspiring" | "friendly" | "professional" | "punchy" | "literary";
+export type Length = "short" | "standard" | "long"; // not used for social posts and replies (the platform decides)
+export type Platform = "x" | "linkedin" | "instagram" | "facebook"; // for social posts and replies
 
 /** Status of one backend dependency (API, vector DB, LLM); `detail` is a human-readable note. */
 export interface ServiceStatus { name: string; ok: boolean; detail: string }
@@ -78,9 +82,33 @@ export interface Asset {
   citations: Citation[];
   created_at: string; // ISO 8601 timestamp (UTC)
   tokens: number; // LLM tokens (prompt + completion) used to generate it
+  tone: Tone;
+  length: Length;
+  audience: string;
+  platform: Platform | null; // set for social posts and replies
+  reply_to: string; // the post it replies to (social_reply only)
+  search_query: string; // what was searched in the books ("" when zero-shot)
+  edited: boolean; // true once the user changed the text
+  humanize: number; // the "how human" setting it was generated with (0-100)
+  ai_tells: string[]; // AI-typical phrases still found in the final text (empty = none)
 }
 /** Body of POST /generate. `k` = number of chunks to retrieve as context (server default 5). */
-export interface GenerateRequest { asset_type: AssetType; brief: string; grounded: boolean; k?: number }
+/**
+ * Body of POST /generate. For "social_reply", reply_to (the post) is required and brief is an optional
+ * angle; for all other types brief is required. Options not given use the server defaults.
+ */
+export interface GenerateRequest {
+  asset_type: AssetType;
+  brief: string;
+  grounded: boolean;
+  k?: number;
+  tone?: Tone;
+  length?: Length;
+  audience?: string;
+  platform?: Platform;
+  reply_to?: string;
+  humanize?: number; // 0-100: how human it should sound (default 60)
+}
 
 /** Verification result for one claim (sentence); chunk_id/score are set only when verified. */
 export interface VerifyItem { claim: string; status: "verified" | "not_found"; chunk_id: string | null; score: number | null }
@@ -141,6 +169,7 @@ export class ApiError extends Error {
 export const ASSET_TYPES: { value: AssetType; label: string }[] = [
   { value: "blurb", label: "Blurb / product description" },
   { value: "social_post", label: "Social post" },
+  { value: "social_reply", label: "Reply to a post" },
   { value: "newsletter", label: "Newsletter" },
   { value: "ad_copy", label: "Ad copy" },
   { value: "lead_magnet", label: "Lead magnet" },
@@ -152,6 +181,55 @@ export const ASSET_TYPES: { value: AssetType; label: string }[] = [
  * @param type The asset type value.
  * @returns Its label from ASSET_TYPES, or the raw value if it is unknown.
  */
+/** Tone options with display labels. */
+export const TONES: { value: Tone; label: string }[] = [
+  { value: "neutral", label: "Neutral" },
+  { value: "inspiring", label: "Inspiring" },
+  { value: "friendly", label: "Friendly" },
+  { value: "professional", label: "Professional" },
+  { value: "punchy", label: "Punchy" },
+  { value: "literary", label: "Literary" },
+];
+/** Length options with display labels (sizes depend on the asset type, see server/generation.py). */
+export const LENGTHS: { value: Length; label: string }[] = [
+  { value: "short", label: "Short" },
+  { value: "standard", label: "Standard" },
+  { value: "long", label: "Long" },
+];
+/** Social platforms with display labels and character limits of posts and replies. */
+export const PLATFORMS: { value: Platform; label: string; postLimit: number; replyLimit: number }[] = [
+  { value: "x", label: "X (Twitter)", postLimit: 280, replyLimit: 280 },
+  { value: "linkedin", label: "LinkedIn", postLimit: 3000, replyLimit: 1250 },
+  { value: "instagram", label: "Instagram", postLimit: 2200, replyLimit: 2200 },
+  { value: "facebook", label: "Facebook", postLimit: 63206, replyLimit: 8000 },
+];
+
+/** True for asset types written for a social platform (a platform is chosen instead of a length). */
+export function isSocial(type: AssetType) {
+  return type === "social_post" || type === "social_reply";
+}
+
+/**
+ * Publishable version of a generated text: the [n] citation markers removed, with no stray space left
+ * before punctuation. Used for copying and for character counts.
+ * @param text Generated text with markers.
+ */
+export function cleanText(text: string) {
+  return text.replace(/[ \t]*\[\d+\]/g, "").replace(/[ \t]+([.,;:!?])/g, "$1").trim();
+}
+
+/**
+ * Name of a "humanize" level (0-100), matching the style levels in server/generation.py.
+ * @param value Humanize setting.
+ */
+export function humanizeLabel(value: number) {
+  if (value < 25) return "Polished marketing";
+  if (value < 50) return "Balanced";
+  if (value < 75) return "Natural, human";
+  return "Very human, casual";
+}
+
+
 export function assetTypeLabel(type: AssetType) {
   return ASSET_TYPES.find((t) => t.value === type)?.label ?? type;
 }
@@ -162,6 +240,33 @@ export function assetTypeLabel(type: AssetType) {
  * @param loc The chunk location.
  * @returns "ch_04 · p.112" for documents, "00:12:34–00:13:20" for media.
  */
+/**
+ * URL of a book's cover image (PNG, extracted from the PDF by the server on first request).
+ * @param sourceId The book (source).
+ */
+export function coverUrl(sourceId: string) {
+  return `${API_URL}/sources/${sourceId}/cover`;
+}
+
+/**
+ * URL of a source's uploaded file (the PDF), opened in the browser's viewer; with a page, the viewer
+ * jumps to it (#page=N is understood by the PDF viewers of Chrome, Edge, Firefox and Safari).
+ * @param sourceId The source.
+ * @param page Optional 1-based page to open at.
+ */
+export function fileUrl(sourceId: string, page?: number | null) {
+  return `${API_URL}/sources/${sourceId}/file${page ? `#page=${page}` : ""}`;
+}
+
+/**
+ * Readable book title from a file name, like the server's source_name:
+ * "Garden-Cities-of-To-Morrow_Ebenezer-Howard.pdf" → "Garden Cities of To Morrow — Ebenezer Howard".
+ * @param filename Stored file name of the source.
+ */
+export function bookTitle(filename: string) {
+  return filename.replace(/\.[^.]+$/, "").replace(/_/g, " — ").replace(/-/g, " ").replace(/\s+/g, " ").trim();
+}
+
 export function locationLabel(loc: ChunkLocation) {
   if (loc.start_time) return loc.end_time ? `${loc.start_time}–${loc.end_time}` : loc.start_time;
   return [loc.chapter, loc.page != null && `p.${loc.page}`].filter(Boolean).join(" · ");
@@ -289,6 +394,11 @@ export const api = {
   generate: (body: GenerateRequest) => request<Asset>(`/projects/${PROJECT_ID}/generate`, postJson(body)),
   /** GET /projects/{id}/assets: all generated assets of the current project, oldest first. */
   listAssets: () => request<Asset[]>(`/projects/${PROJECT_ID}/assets`),
+  /** PATCH /assets/{assetId}: replace an asset's text with the user's edited version. */
+  updateAsset: (assetId: string, text: string) =>
+    request<Asset>(`/assets/${assetId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }),
+  /** DELETE /assets/{assetId}: delete a generated asset. */
+  deleteAsset: (assetId: string) => request<void>(`/assets/${assetId}`, { method: "DELETE" }),
 
   /** POST /projects/{id}/verify: check each claim of `text` against the project's sources. */
   verify: (text: string) => request<VerifyResponse>(`/projects/${PROJECT_ID}/verify`, postJson({ text })),

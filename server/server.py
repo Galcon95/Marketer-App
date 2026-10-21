@@ -7,6 +7,7 @@ traced in LangSmith when enabled."""
 import re
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 import dummy_data as db
@@ -18,7 +19,7 @@ import summary
 import usage
 import vectorstore
 from schemas import (
-    AskRequest, AskResponse, Asset, BookSummary, Chunk, ChunkPage, GenerateRequest, Health, Project, ProjectCreate, SearchHit,
+    AskRequest, AskResponse, Asset, AssetUpdate, BookSummary, Chunk, ChunkPage, GenerateRequest, Health, Project, ProjectCreate, SearchHit,
     SearchRequest, SearchResponse, ServiceStatus, Source, UsageReport, VerifyItem,
     VerifyRequest, VerifyResponse,
 )
@@ -339,6 +340,43 @@ def list_chunks(source_id: str, offset: int = Query(0, ge=0), limit: int = Query
     return ChunkPage(items=items[offset:offset + limit], total=len(items), offset=offset, limit=limit)
 
 
+@app.get("/sources/{source_id}/file", response_class=FileResponse)
+def get_source_file(source_id: str):
+    """Return the uploaded file itself (e.g. the PDF), for viewing in the browser (not as a download).
+
+    Browsers' PDF viewers accept a page in the link, e.g. /sources/{id}/file#page=13, which the GUI
+    uses to open a citation at its page.
+
+    Args:
+        source_id: Id of the source (path parameter). 404 if unknown.
+
+    Raises:
+        HTTPException: 404 if the source is unknown or its file is missing.
+    """
+    source = get_source_or_404(source_id)
+    path = storage.source_file_path(source)
+    if not path.is_file():
+        raise HTTPException(404, "The file of this source is missing")
+    media_type = "application/pdf" if path.suffix.lower() == ".pdf" else None
+    return FileResponse(path, media_type=media_type, filename=source.filename, content_disposition_type="inline")
+
+
+@app.get("/sources/{source_id}/cover", response_class=FileResponse)
+def get_cover(source_id: str):
+    """Return the cover image (PNG) of a book, creating it on first request if needed.
+
+    Args:
+        source_id: Id of the source (path parameter). 404 if unknown.
+
+    Raises:
+        HTTPException: 404 if the source is unknown or no cover can be made (no stored PDF).
+    """
+    source = get_source_or_404(source_id)
+    if not storage.source_file_path(source).is_file() or not ingestion.make_cover(source):
+        raise HTTPException(404, "No cover available")
+    return FileResponse(storage.cover_path(source), media_type="image/png")
+
+
 @app.get("/sources/{source_id}/summary", response_model=BookSummary)
 def get_summary(source_id: str):
     """Return the saved summary of a book.
@@ -454,7 +492,7 @@ def generate(project_id: str, body: GenerateRequest):
     """
     get_project_or_404(project_id)
     try:
-        text, citations, tokens = generation.generate_asset(project_id, body.asset_type, body.brief, body.grounded, body.k)
+        result = generation.generate_asset(project_id, body)
     except generation.GenerationError as e:
         raise HTTPException(e.status_code, str(e)) from e
     asset = Asset(
@@ -463,10 +501,18 @@ def generate(project_id: str, body: GenerateRequest):
         asset_type=body.asset_type,
         grounded=body.grounded,
         brief=body.brief,
-        text=text,
-        citations=citations,
+        text=result["text"],
+        citations=result.get("citations", []),
         created_at=db.now(),
-        tokens=tokens,
+        tokens=result.get("tokens", 0),
+        tone=body.tone,
+        length=body.length,
+        audience=body.audience,
+        platform=body.platform if body.asset_type in ("social_post", "social_reply") else None,
+        reply_to=body.reply_to,
+        search_query=result.get("query", ""),
+        humanize=body.humanize,
+        ai_tells=result.get("ai_tells", []),
     )
     try:
         storage.write_asset(asset)
@@ -501,6 +547,45 @@ def get_asset(asset_id: str):
     if asset is None:
         raise HTTPException(404, f"Asset '{asset_id}' not found")
     return asset
+
+
+@app.patch("/assets/{asset_id}", response_model=Asset)
+def update_asset(asset_id: str, body: AssetUpdate):
+    """Replace the text of a generated asset with the user's edited version (citations are kept).
+
+    Args:
+        asset_id: Id of the asset (path parameter).
+        body: The new text.
+
+    Raises:
+        HTTPException: 404 when no asset has this id; 500 if it cannot be saved.
+    """
+    asset = db.assets.get(asset_id)
+    if asset is None:
+        raise HTTPException(404, f"Asset '{asset_id}' not found")
+    asset = asset.model_copy(update={"text": body.text, "edited": True})
+    try:
+        storage.write_asset(asset)
+    except OSError as e:
+        raise HTTPException(500, "The edited asset could not be saved") from e
+    db.assets[asset_id] = asset
+    return asset
+
+
+@app.delete("/assets/{asset_id}", status_code=204)
+def delete_asset(asset_id: str):
+    """Delete a generated asset (from memory and disk).
+
+    Args:
+        asset_id: Id of the asset (path parameter).
+
+    Raises:
+        HTTPException: 404 when no asset has this id.
+    """
+    asset = db.assets.pop(asset_id, None)
+    if asset is None:
+        raise HTTPException(404, f"Asset '{asset_id}' not found")
+    storage.delete_asset(asset)
 
 
 # ---------- Verification ----------

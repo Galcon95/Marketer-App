@@ -2,7 +2,7 @@
  * Minimal React UI kit following the design guide in app-design-system/.
  * Markup and class names mirror its bundle so app/styles/bookcraft.css styles them.
  */
-import { useEffect, useRef, type ComponentPropsWithRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentPropsWithRef, type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { AlertTriangle, ChevronDown, ChevronsUpDown, FolderOpen, Megaphone, RefreshCw, Search, X } from "lucide-react";
 
@@ -104,15 +104,17 @@ interface FieldProps {
   defaultValue?: string;
   required?: boolean;
   hint?: string; // small help text below the control
+  onChange?: (value: string) => void; // called with the new value on every change
 }
 /**
  * Labeled form control: text input, textarea, select box or search input.
  * Derives a stable element id from name/label/placeholder to link the <label> to the control.
  * @param props See FieldProps.
  */
-export function Field({ label, name, as = "input", options = [], rows = 3, placeholder, defaultValue, required, hint }: FieldProps) {
+export function Field({ label, name, as = "input", options = [], rows = 3, placeholder, defaultValue, required, hint, onChange }: FieldProps) {
   const id = `f-${(name ?? label ?? placeholder ?? "field").replace(/\W+/g, "-").toLowerCase()}`;
-  const base = { id, name, placeholder, defaultValue, required };
+  const handleChange = onChange && ((e: { target: { value: string } }) => onChange(e.target.value));
+  const base = { id, name, placeholder, defaultValue, required, onChange: handleChange };
   let control: ReactNode;
   if (as === "textarea") control = <textarea {...base} rows={rows} className="bc-textarea" />;
   else if (as === "select")
@@ -139,6 +141,38 @@ export function Field({ label, name, as = "input", options = [], rows = 3, place
     <div className="bc-field">
       {label && <label className="bc-label" htmlFor={id}>{label}</label>}
       {control}
+      {hint && <span className="bc-hint">{hint}</span>}
+    </div>
+  );
+}
+
+/* ---------- Range slider ---------- */
+/**
+ * Labeled range slider for forms (uncontrolled: read its value with FormData via `name`). Shows the
+ * current value and an optional description of it next to the label.
+ * @param name Form field name.
+ * @param label Visible label.
+ * @param min Smallest value.
+ * @param max Largest value.
+ * @param step Step size.
+ * @param defaultValue Initial value.
+ * @param describe Optional text for a value, e.g. 80 → "Very human".
+ * @param hint Small help text below the slider.
+ */
+export function RangeField({ name, label, min = 0, max = 100, step = 5, defaultValue, describe, hint }: {
+  name: string; label: string; min?: number; max?: number; step?: number; defaultValue: number;
+  describe?: (value: number) => string; hint?: string;
+}) {
+  const [value, setValue] = useState(defaultValue);
+  const id = `f-${name}`;
+  return (
+    <div className="bc-field">
+      <label className="bc-label" htmlFor={id} style={{ display: "flex", justifyContent: "space-between" }}>
+        <span>{label}</span>
+        <span className="bc-mono">{value}{describe ? ` · ${describe(value)}` : ""}</span>
+      </label>
+      <input id={id} name={name} type="range" min={min} max={max} step={step} value={value}
+        onChange={(e) => setValue(Number(e.target.value))} style={{ width: "100%", accentColor: "var(--accent)" }} />
       {hint && <span className="bc-hint">{hint}</span>}
     </div>
   );

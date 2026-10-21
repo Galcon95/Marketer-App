@@ -31,6 +31,8 @@ META_FILENAME = ".source.json"
 CHUNKS_FILENAME = ".chunks.jsonl"
 # Book summary (summary.py), created on demand.
 SUMMARY_FILENAME = ".summary.json"
+# Cover image of the book (ingestion.make_cover), shown in the GUI.
+COVER_FILENAME = ".cover.png"
 
 ALLOWED_EXTENSIONS = {".pdf"}  # widen when other formats get an ingestion path (EPUB, DOCX, video, ...)
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
@@ -176,6 +178,11 @@ def write_source_meta(source: Source) -> None:
     tmp.replace(source_dir / META_FILENAME)
 
 
+def cover_path(source: Source) -> Path:
+    """Path of a book's cover image (it may not exist yet, see ingestion.make_cover)."""
+    return UPLOAD_DIR / source.project_id / source.id / COVER_FILENAME
+
+
 def source_file_path(source: Source) -> Path:
     """Path of the uploaded file of a source (the file may be missing, e.g. if deleted by hand).
 
@@ -260,6 +267,11 @@ def write_asset(asset: Asset) -> None:
     tmp = target_dir / f".{asset.id}.json.tmp"
     tmp.write_text(asset.model_dump_json(indent=2), encoding="utf-8")
     tmp.replace(target_dir / f"{asset.id}.json")
+
+
+def delete_asset(asset: Asset) -> None:
+    """Delete the saved file of a generated asset, if any."""
+    (GENERATED_DIR / asset.project_id / f"{asset.id}.json").unlink(missing_ok=True)
 
 
 def load_assets() -> dict[str, Asset]:

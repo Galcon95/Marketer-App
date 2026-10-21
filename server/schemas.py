@@ -8,7 +8,7 @@ Class docstrings also appear as schema descriptions in the generated OpenAPI doc
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # Kind of content a source holds; decides how it will be ingested (parsed vs. transcribed).
 SourceKind = Literal["document", "video", "audio", "text"]
@@ -17,7 +17,11 @@ SourceKind = Literal["document", "video", "audio", "text"]
 # ready = chunks are searchable; failed = ingestion stopped, see Source.error.
 SourceStatus = Literal["uploaded", "queued", "transcribing", "chunking", "embedding", "ready", "failed"]
 # Kinds of marketing content the generator can produce.
-AssetType = Literal["blurb", "social_post", "newsletter", "ad_copy", "lead_magnet", "persona"]
+AssetType = Literal["blurb", "social_post", "social_reply", "newsletter", "ad_copy", "lead_magnet", "persona"]
+# Writing style options for generated assets (see generation.py for what each one means).
+Tone = Literal["neutral", "inspiring", "friendly", "professional", "punchy", "literary"]
+Length = Literal["short", "standard", "long"]  # ignored for social posts and replies (the platform decides)
+Platform = Literal["x", "linkedin", "instagram", "facebook"]  # for social posts and replies
 
 
 # ---------- Health ----------
@@ -132,12 +136,31 @@ class SearchResponse(BaseModel):
 
 # ---------- Generation & assets ----------
 class GenerateRequest(BaseModel):
-    """Request body for POST /projects/{id}/generate: what marketing asset to write and how."""
+    """Request body for POST /projects/{id}/generate: what marketing asset to write and how.
+
+    For "social_reply", reply_to (the post to answer) is required and the brief is an optional
+    angle; for all other types the brief is required.
+    """
 
     asset_type: AssetType  # kind of asset to produce
-    brief: str  # user instructions for the generator (tone, audience, angle, ...)
+    brief: str = ""  # what to write about: topic, angle, message (for replies: optional angle)
     grounded: bool = True  # True = RAG over project chunks with citations; False = zero-shot LLM
     k: int = Field(default=5, ge=1, le=20)  # number of chunks to retrieve as context (1-20)
+    tone: Tone = "neutral"
+    length: Length = "standard"
+    audience: str = ""  # optional target audience, e.g. "urban planners"
+    platform: Platform = "x"  # used for social posts and replies
+    reply_to: str = ""  # the post to reply to (social_reply only)
+    humanize: int = Field(default=60, ge=0, le=100)  # how human it should sound: 0 = polished marketing, 100 = casual person
+
+    @model_validator(mode="after")
+    def _check_inputs(self) -> "GenerateRequest":
+        """Require the post for replies and a brief for everything else."""
+        if self.asset_type == "social_reply" and not self.reply_to.strip():
+            raise ValueError("Paste the post you want to reply to.")
+        if self.asset_type != "social_reply" and not self.brief.strip():
+            raise ValueError("Write a brief.")
+        return self
 
 
 class Citation(BaseModel):
@@ -157,11 +180,26 @@ class Asset(BaseModel):
     project_id: str  # project the asset belongs to
     asset_type: AssetType  # kind of asset
     grounded: bool  # whether it was generated with RAG context
-    brief: str  # the brief it was generated from
-    text: str  # the generated content
+    brief: str  # the brief it was generated from (for replies: the optional angle)
+    text: str  # the generated content, with [n] citation markers (the GUI copies it without them)
     citations: list[Citation]  # supporting chunks; empty when not grounded
     created_at: datetime  # generation time in UTC
     tokens: int = 0  # LLM tokens (prompt + completion) used to generate it
+    tone: Tone = "neutral"
+    length: Length = "standard"
+    audience: str = ""
+    platform: Platform | None = None  # set for social posts and replies
+    reply_to: str = ""  # the post it replies to (social_reply only)
+    search_query: str = ""  # what was searched in the books: the brief, or for replies the planned query
+    humanize: int = 60  # the "how human" setting it was generated with (0-100)
+    ai_tells: list[str] = []  # AI-typical phrases still found in the final text (empty = none)
+    edited: bool = False  # True once the user changed the text
+
+
+class AssetUpdate(BaseModel):
+    """Request body for PATCH /assets/{id}: the user's edited text."""
+
+    text: str = Field(min_length=1)
 
 
 # ---------- Questions & answers ----------

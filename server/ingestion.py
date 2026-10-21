@@ -48,6 +48,9 @@ PROCESSING_STATUSES = {"queued", "transcribing", "chunking", "embedding"}
 
 # PyMuPDF is not thread-safe, so sources are processed one at a time; waiting ones stay "queued".
 _ingest_lock = threading.Lock()
+
+COVER_SEARCH_PAGES = 5  # pages searched for an embedded cover picture
+COVER_MAX_HEIGHT = 900  # px; larger cover images are scaled down
 # Guards replacing db.chunks, which background tasks and requests may do at the same time.
 _chunks_lock = threading.Lock()
 
@@ -83,6 +86,10 @@ def ingest_source(source_id: str) -> None:
                 on_progress=lambda done: _update_progress(source_id, round(done * 90)),
             )
             sections = loader.load()
+            try:
+                _make_cover(source)
+            except Exception:  # a missing cover must never fail the processing
+                logger.warning("Could not create a cover for %s", source_id, exc_info=True)
             pieces = _merge_small_pieces(_splitter().split_documents(sections))
             chunks = [_to_chunk(doc, source_id, n) for n, doc in enumerate(pieces, start=1)]
             if not chunks:
@@ -155,6 +162,61 @@ def replace_source_chunks(source_id: str, chunks: list[Chunk]) -> None:
         if source_id in db.sources:
             kept.update({c.id: c for c in chunks})
         db.chunks = kept
+
+
+def make_cover(source: Source, timeout: float = 10) -> bool:
+    """Create the cover image of a book if it does not exist yet (for books processed before covers existed).
+
+    Waits for the PDF lock, because PyMuPDF must not run in two threads at once.
+
+    Args:
+        source: The book.
+        timeout: Seconds to wait if a book is being processed right now.
+
+    Returns:
+        True if a cover image exists afterwards.
+    """
+    if storage.cover_path(source).is_file():
+        return True
+    if not _ingest_lock.acquire(timeout=timeout):
+        return False
+    try:
+        _make_cover(source)
+    except Exception:
+        logger.warning("Could not create a cover for %s", source.id, exc_info=True)
+    finally:
+        _ingest_lock.release()
+    return storage.cover_path(source).is_file()
+
+
+def _make_cover(source: Source) -> None:
+    """Save the book's cover as storage.cover_path (caller holds _ingest_lock).
+
+    Uses the first large portrait-format picture in the first COVER_SEARCH_PAGES pages (a typical
+    scanned or designed cover; the clearly-taller-than-wide rule skips author portraits and
+    illustrations), scaled down to at most COVER_MAX_HEIGHT px. Without one, the first page that
+    has any content is rendered as the cover.
+    """
+    with pymupdf.open(storage.source_file_path(source)) as doc:
+        pixmap = None
+        for page in list(doc)[:COVER_SEARCH_PAGES]:
+            for image in page.get_images(full=True):
+                xref, width, height = image[0], image[2], image[3]
+                if height >= 300 and height >= 1.3 * width:
+                    pixmap = pymupdf.Pixmap(doc, xref)
+                    break
+            if pixmap:
+                break
+        if pixmap is None:
+            page = next((p for p in doc if p.get_text().strip() or p.get_images()), doc[0])
+            pixmap = page.get_pixmap(matrix=pymupdf.Matrix(0.8, 0.8))
+        if pixmap.n - pixmap.alpha > 3:  # CMYK etc. → RGB, which PNG needs
+            pixmap = pymupdf.Pixmap(pymupdf.csRGB, pixmap)
+        if pixmap.alpha:
+            pixmap = pymupdf.Pixmap(pixmap, 0)  # drop transparency
+        while pixmap.height > COVER_MAX_HEIGHT:
+            pixmap.shrink(1)  # halves width and height
+        pixmap.save(storage.cover_path(source))
 
 
 def delete_source_data(source: Source) -> None:

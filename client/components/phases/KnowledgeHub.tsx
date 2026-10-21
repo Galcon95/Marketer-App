@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type SubmitEvent } from "react";
 import { AlertTriangle, BookOpen, Check, Database, FileText, Film, Library, MessageSquare, Play, RotateCcw, Sparkles, Trash2, Upload, X } from "lucide-react";
 import {
-  api, ASSET_TYPES, errorMessage, locationLabel, MAX_UPLOAD_BYTES, PROCESSING_STATUSES, UPLOAD_EXTENSIONS,
-  type AssetType, type BookSummary, type Chunk, type ChunkPage, type Source,
+  api, ASSET_TYPES, bookTitle, errorMessage, humanizeLabel, isSocial, LENGTHS, locationLabel, MAX_UPLOAD_BYTES, PLATFORMS, PROCESSING_STATUSES,
+  TONES, UPLOAD_EXTENSIONS,
+  type AssetType, type BookSummary, type Chunk, type ChunkPage, type Length, type Platform, type Source, type Tone,
 } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import AssetCard, { CitationList } from "../AssetCard";
-import { Badge, Button, Card, Drawer, ErrorNote, Field, Placeholder, ProgressBar, Score, SectionHeading } from "../ui";
+import BookCover, { PageLink } from "../BookCover";
+import { Badge, Button, Card, Drawer, ErrorNote, Field, Placeholder, ProgressBar, RangeField, Score, SectionHeading } from "../ui";
 
 /** Props every phase view gets from AppShell: `refresh` reloads data, `onChange` triggers a global refresh. */
 type Props = { refresh: number; onChange: () => void };
@@ -136,6 +138,91 @@ function UploadPanel({ sources, sourcesLoading, onChange }: { sources: Source[];
   );
 }
 
+/* ---------- Book shelf ---------- */
+/**
+ * Shortened text: whole sentences up to about `max` characters, with "…" if something was left out.
+ * @param text Text to shorten.
+ * @param max Rough character budget.
+ */
+function firstSentences(text: string, max: number) {
+  const sentences = text.replace(/\s+/g, " ").match(/[^.!?]+[.!?]+["”’]?/g) ?? [text];
+  let out = "";
+  for (const sentence of sentences) {
+    if (out && (out + sentence).length > max) return `${out.trim()} …`;
+    out += sentence;
+  }
+  return out.trim();
+}
+
+/**
+ * "Your books": one card per processed book (cover, title, stats, a summary teaser and key themes),
+ * the visual overview at the top of the Knowledge Hub. Hidden until a book is processed.
+ * @param sources All sources of the project (only ready documents are shown).
+ * @param refresh Changing it reloads the summaries (e.g. after one was created).
+ * @param onBrowse Opens the summary or chunks panel of a book.
+ */
+function BookShelf({ sources, refresh, onBrowse }: {
+  sources: Source[]; refresh: number; onBrowse: (source: Source, view: DrawerView) => void;
+}) {
+  const books = sources.filter((s) => s.status === "ready" && s.kind === "document");
+  if (books.length === 0) return null;
+  return (
+    <div>
+      <SectionHeading icon={Library} title="Your books" count={books.length} />
+      <div className="bc-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(420px, 100%), 1fr))" }}>
+        {books.map((book) => <BookCard key={book.id} source={book} refresh={refresh} onBrowse={onBrowse} />)}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One book on the shelf: cover (click: opens the PDF), title, chunk/chapter/size badges, the first sentences of its summary
+ * and up to four key themes, with buttons to open the summary (or create it) and the chunks.
+ * @param source The book.
+ * @param refresh Changing it reloads the summary.
+ * @param onBrowse Opens the summary or chunks panel.
+ */
+function BookCard({ source, refresh, onBrowse }: {
+  source: Source; refresh: number; onBrowse: (source: Source, view: DrawerView) => void;
+}) {
+  const summary = useApi(`book-summary:${source.id}:${refresh}`, () => api.getSummary(source.id));
+  const s = summary.data;
+  const title = bookTitle(source.filename);
+  return (
+    <Card>
+      <div style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
+        <BookCover sourceId={source.id} title={title} width={120} link />
+        <div className="bc-stack" style={{ gap: 10, minWidth: 0, flex: 1 }}>
+          <h3 style={{ margin: 0, fontSize: 18, lineHeight: 1.3 }}>{title}</h3>
+          <div className="bc-row" style={{ gap: 6 }}>
+            <Badge tone="success" icon={Check}>ready</Badge>
+            <Badge mono>{source.chunk_count} chunks</Badge>
+            {s && <Badge mono>{s.chapters.length} chapters</Badge>}
+            <Badge mono>{formatBytes(source.size_bytes)}</Badge>
+          </div>
+          {s ? (
+            <p style={{ margin: 0, color: "var(--ink-muted)" }}>{firstSentences(s.summary, 260)}</p>
+          ) : !summary.loading && (
+            <span className="bc-hint">No summary yet. Create one to see what the book is about at a glance.</span>
+          )}
+          {s && (
+            <div className="bc-row" style={{ gap: 6 }}>
+              {s.themes.slice(0, 4).map((theme) => <Badge key={theme} tone="accent">{theme}</Badge>)}
+            </div>
+          )}
+          <div className="bc-row" style={{ gap: 8 }}>
+            <Button size="sm" variant={s ? "secondary" : "success"} icon={BookOpen} onClick={() => onBrowse(source, "summary")}>
+              {s ? "Summary" : "Create summary"}
+            </Button>
+            <Button size="sm" variant="ghost" icon={Database} onClick={() => onBrowse(source, "chunks")}>Chunks</Button>
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 /* ---------- Sources table ---------- */
 /** True while the server is processing a source (queued … embedding). */
 function isProcessing(source: Source) {
@@ -234,7 +321,14 @@ function SourcesCard({ sources, error, onBrowse, onChange }: {
                 const Icon = s.kind === "video" || s.kind === "audio" ? Film : FileText;
                 return (
                   <tr key={s.id}>
-                    <td><span className="bc-src"><Icon size={14} aria-hidden />{s.filename}</span></td>
+                    <td>
+                      <span className="bc-src">
+                        {s.kind === "document" && s.status === "ready"
+                          ? <BookCover sourceId={s.id} title={bookTitle(s.filename)} width={22} link />
+                          : <Icon size={14} aria-hidden />}
+                        {s.filename}
+                      </span>
+                    </td>
                     <td><SourceStatusBadge source={s} /></td>
                     <td className="bc-mono">{s.chunk_count}</td>
                     <td className="bc-mono">{formatBytes(s.size_bytes)}</td>
@@ -258,7 +352,7 @@ function SourcesCard({ sources, error, onBrowse, onChange }: {
 
 /* ---------- Chunks ---------- */
 /**
- * Display one chunk: id, location, token count, optional similarity score and its text.
+ * Display one chunk: id, location (click: opens the PDF at that page), token count, optional similarity score and its text.
  * @param chunk The chunk to show.
  * @param score Similarity score, shown only for search results.
  */
@@ -267,7 +361,7 @@ function ChunkCard({ chunk, score }: { chunk: Chunk; score?: number }) {
     <div className="bc-chunk" style={{ cursor: "default" }}>
       <div className="bc-chunk-h">
         <span className="bc-chunk-id">{chunk.id}</span>
-        <Badge mono>{locationLabel(chunk.location)}</Badge>
+        <PageLink sourceId={chunk.source_id} page={chunk.location.page}><Badge mono>{locationLabel(chunk.location)}</Badge></PageLink>
         <Badge mono>{chunk.token_count} tok</Badge>
         {score != null && <Score label="sim" value={score} />}
       </div>
@@ -356,7 +450,7 @@ function SummaryDrawer({ source, onClose, onChange }: { source: Source; onClose:
   }
 
   return (
-    <Drawer icon={BookOpen} title={source.filename} label={`Summary of ${source.filename}`} onClose={onClose}
+    <Drawer icon={BookOpen} title={bookTitle(source.filename)} label={`Summary of ${source.filename}`} onClose={onClose}
       meta={summary ? <Badge mono>{summary.chapters.length} chapters</Badge> : undefined}>
       {loaded.error ? (
         <ErrorNote>{loaded.error}</ErrorNote>
@@ -374,8 +468,13 @@ function SummaryDrawer({ source, onClose, onChange }: { source: Source; onClose:
         )
       ) : (
         <>
-          <div className="bc-label">What the book is about</div>
-          {summary.summary.split(/\n\s*\n/).map((paragraph, i) => <p key={i} style={{ margin: 0 }}>{paragraph}</p>)}
+          <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+            <BookCover sourceId={source.id} title={bookTitle(source.filename)} width={96} link />
+            <div className="bc-stack" style={{ gap: 8, minWidth: 0 }}>
+              <div className="bc-label">What the book is about</div>
+              {summary.summary.split(/\n\s*\n/).map((paragraph, i) => <p key={i} style={{ margin: 0 }}>{paragraph}</p>)}
+            </div>
+          </div>
           <div className="bc-label">Key themes</div>
           <div className="bc-row" style={{ gap: 6 }}>
             {summary.themes.map((theme) => <Badge key={theme} tone="accent">{theme}</Badge>)}
@@ -464,24 +563,50 @@ function AskBook({ onChange }: { onChange: () => void }) {
 }
 
 /* ---------- Grounded generation ---------- */
+/** Example brief per asset type, shown as the brief's placeholder (for replies: the optional angle). */
+const BRIEF_EXAMPLES: Record<AssetType, string> = {
+  blurb: "e.g. Why this book still matters today; use the strongest quote",
+  social_post: "e.g. Make people curious about the book's central idea, with a short quote",
+  social_reply: "e.g. Agree partly, but add the book's view that both sides can be combined",
+  newsletter: "e.g. Introduce the book to readers interested in housing and city life; call to action: read chapter I",
+  ad_copy: "e.g. Ads for people frustrated with expensive city rents",
+  lead_magnet: "e.g. A free guide with 5 ideas from the book for better neighbourhoods",
+  persona: "e.g. The ideal reader of this book among today's professionals",
+};
+
 /**
  * Form for grounded (RAG) generation plus the list of grounded assets, newest first.
+ * Options adapt to the asset type: social posts and replies choose a platform (which decides
+ * length and style), other types a length; replies take the post to answer plus an optional angle,
+ * all other types a brief (with an example that fits the type).
  * @param refresh Changing it reloads the asset list.
- * @param onChange Called after generating to refresh the app.
+ * @param onChange Called after generating (and after editing or deleting an asset) to refresh the app.
  */
 function GroundedGenerator({ refresh, onChange }: Props) {
   const assets = useApi(`assets:${refresh}`, api.listAssets);
+  const [assetType, setAssetType] = useState<AssetType>("blurb"); // decides which fields are shown
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isReply = assetType === "social_reply";
 
-  /** Form submit: request a grounded asset of the chosen type from the brief. */
+  /** Form submit: request a grounded asset with the chosen type, options and brief (or post + angle). */
   async function submit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
+    const get = (k: string) => String(f.get(k) ?? "").trim();
     setPending(true);
     setError(null);
     try {
-      await api.generate({ asset_type: f.get("asset_type") as AssetType, brief: String(f.get("brief") ?? ""), grounded: true });
+      await api.generate({
+        asset_type: assetType,
+        brief: get("brief"),
+        grounded: true,
+        tone: (get("tone") || "neutral") as Tone,
+        audience: get("audience"),
+        humanize: Number(get("humanize") || 60),
+        ...(isSocial(assetType) ? { platform: get("platform") as Platform } : { length: get("length") as Length }),
+        ...(isReply ? { reply_to: get("reply_to") } : {}),
+      });
       onChange();
     } catch (err) {
       setError(errorMessage(err));
@@ -498,16 +623,37 @@ function GroundedGenerator({ refresh, onChange }: Props) {
       <SectionHeading icon={Sparkles} title="Grounded asset generator" count={grounded.length} />
       <Card>
         <form className="bc-stack" onSubmit={submit}>
-          <Field name="asset_type" as="select" label="Asset type" options={ASSET_TYPES} />
-          <Field name="brief" as="textarea" label="Brief" rows={3} placeholder="e.g. A blurb that uses the strongest quote from the manuscript" required />
-          <Button type="submit" icon={Sparkles} loading={pending}>{pending ? "Generating…" : "Generate from sources"}</Button>
+          <Field name="asset_type" as="select" label="Asset type" options={ASSET_TYPES}
+            onChange={(value) => setAssetType(value as AssetType)} />
+          <div className="bc-row" style={{ gap: 12, alignItems: "flex-start" }}>
+            <div style={{ flex: 1, minWidth: 140 }}>
+              {isSocial(assetType)
+                ? <Field name="platform" as="select" label="Platform" options={PLATFORMS} />
+                : <Field name="length" as="select" label="Length" options={LENGTHS} defaultValue="standard" />}
+            </div>
+            <div style={{ flex: 1, minWidth: 140 }}>
+              <Field name="tone" as="select" label="Tone" options={TONES} />
+            </div>
+          </div>
+          <Field name="audience" label="Target audience (optional)" placeholder="e.g. young urban planners" />
+          <RangeField name="humanize" label="How human should it sound?" defaultValue={60} describe={humanizeLabel}
+            hint="Higher = less typical AI wording. From 60 on, AI clichés found in the result are rewritten automatically." />
+          {isReply && (
+            <Field name="reply_to" as="textarea" label="Their post" rows={5} required
+              placeholder="Paste the post you want to reply to" />
+          )}
+          <Field name="brief" as="textarea" label={isReply ? "Your angle (optional)" : "Brief"} rows={3}
+            placeholder={BRIEF_EXAMPLES[assetType]} required={!isReply} />
+          <Button type="submit" icon={Sparkles} loading={pending}>
+            {pending ? "Generating…" : isReply ? "Generate reply from sources" : "Generate from sources"}
+          </Button>
           {error && <ErrorNote>{error}</ErrorNote>}
         </form>
       </Card>
       {assets.error ? (
         <ErrorNote>{assets.error}</ErrorNote>
       ) : grounded.length ? (
-        grounded.map((a) => <AssetCard key={a.id} asset={a} />)
+        grounded.map((a) => <AssetCard key={a.id} asset={a} onChange={onChange} />)
       ) : (
         <Placeholder icon={Sparkles}>{assets.loading ? "Loading…" : "Grounded assets with citations will appear here."}</Placeholder>
       )}
@@ -517,7 +663,7 @@ function GroundedGenerator({ refresh, onChange }: Props) {
 
 /* ---------- Phase 2 ---------- */
 /**
- * Phase 2: the knowledge hub for retrieval-augmented generation. Combines upload, the sources
+ * Phase 2: the knowledge hub for retrieval-augmented generation. Combines upload, the book shelf, the sources
  * table, "Ask your book" (questions answered from the books) and grounded generation, and opens the chunk drawer for a source.
  * While any source is being processed, the sources list is reloaded every second so the upload
  * panel and the table show live progress; when processing ends, the whole app is refreshed once
@@ -547,6 +693,7 @@ export default function KnowledgeHub({ refresh, onChange }: Props) {
   return (
     <>
       <UploadPanel sources={list} sourcesLoading={sources.loading} onChange={onChange} />
+      <BookShelf sources={list} refresh={refresh} onBrowse={openDrawer} />
       <SourcesCard sources={list} error={sources.error} onBrowse={openDrawer} onChange={onChange} />
       <div className="bc-split">
         <AskBook onChange={onChange} />

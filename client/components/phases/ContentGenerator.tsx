@@ -2,10 +2,10 @@
 
 import { useState, type SubmitEvent } from "react";
 import { FileText, Sparkles, Wand2 } from "lucide-react";
-import { api, ASSET_TYPES, errorMessage, PROJECT_ID, type AssetType } from "@/lib/api";
+import { api, ASSET_TYPES, errorMessage, humanizeLabel, PROJECT_ID, type AssetType } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import AssetCard from "../AssetCard";
-import { Button, Card, ErrorNote, Field, Placeholder, SectionHeading } from "../ui";
+import { Button, Card, ErrorNote, Field, Placeholder, RangeField, SectionHeading } from "../ui";
 
 /**
  * Phase 1: zero-shot generation from a brief (POST /generate with grounded: false).
@@ -38,7 +38,7 @@ export default function ContentGenerator({ refresh, onChange }: { refresh: numbe
     setPending(true);
     setError(null);
     try {
-      await api.generate({ asset_type: get("asset_type") as AssetType, brief, grounded: false });
+      await api.generate({ asset_type: get("asset_type") as AssetType, brief, grounded: false, humanize: Number(get("humanize") || 60) });
       onChange();
     } catch (err) {
       setError(errorMessage(err));
@@ -59,7 +59,10 @@ export default function ContentGenerator({ refresh, onChange }: { refresh: numbe
           <Field name="category" label="Category" placeholder="e.g. B2B SaaS · analytics" />
           <Field name="description" as="textarea" label="Short description" rows={4} placeholder="What is it, who is it for, why does it matter?" />
           <Field name="audience" as="select" label="Target audience" options={["General audience", "Small businesses", "Enterprise buyers", "Developers"]} />
-          <Field name="asset_type" as="select" label="Asset type" options={ASSET_TYPES} />
+          {/* Replies need the post to answer, which this form has no field for (see the Knowledge Hub). */}
+          <Field name="asset_type" as="select" label="Asset type" options={ASSET_TYPES.filter((t) => t.value !== "social_reply")} />
+          <RangeField name="humanize" label="How human should it sound?" defaultValue={60} describe={humanizeLabel}
+            hint="Higher = less typical AI wording. From 60 on, AI clichés found in the result are rewritten automatically." />
           <Button type="submit" icon={Sparkles} loading={pending}>{pending ? "Generating…" : "Generate (Zero-Shot)"}</Button>
           <span className="bc-hint">POST /projects/{PROJECT_ID}/generate · grounded: false</span>
           {error && <ErrorNote>{error}</ErrorNote>}
@@ -71,7 +74,7 @@ export default function ContentGenerator({ refresh, onChange }: { refresh: numbe
         {assets.error ? (
           <ErrorNote>{assets.error}</ErrorNote>
         ) : zeroShot.length ? (
-          <div className="bc-stack">{zeroShot.map((a) => <AssetCard key={a.id} asset={a} />)}</div>
+          <div className="bc-stack">{zeroShot.map((a) => <AssetCard key={a.id} asset={a} onChange={onChange} />)}</div>
         ) : (
           <Placeholder icon={Wand2}>{assets.loading ? "Loading…" : "Nothing generated yet. Fill in the brief and press Generate."}</Placeholder>
         )}
