@@ -29,6 +29,7 @@ from app.core import state as db
 from app.core.llm import GenerationError
 from app.core.schemas import Source
 from app.rag import qa, vectorstore
+from app.rag.library import BookInfo, book_info, book_title, known_books, ready_books
 from app.rag.retrieval import retrieve_chunks, source_name
 
 PROJECT_ID = db.DEFAULT_PROJECT_ID  # the project whose books the tools serve
@@ -47,18 +48,7 @@ book_server = MCPServer(
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 
 
-# ---------- Results ----------
-class BookInfo(BaseModel):
-    """One processed book."""
-
-    book_id: str = Field(description="Id to pass to the other tools, e.g. 'src_81a0e753'.")
-    title: str
-    author: str = Field(description="Author from the file name; empty if unknown.")
-    chunks: int = Field(description="Number of searchable passages.")
-    has_summary: bool = Field(description="Whether get_book_summary has a summary for this book.")
-    themes: list[str] = Field(description="Key themes from the summary; empty without a summary.")
-
-
+# ---------- Results (BookInfo comes from rag/library.py) ----------
 class Passage(BaseModel):
     """One passage found by search_book."""
 
@@ -111,7 +101,7 @@ class Answer(BaseModel):
 def list_books() -> list[BookInfo]:
     """List the author's processed books (ready to search): id, title, author, number of passages,
     whether a summary exists and its key themes. Call this first to get the book_id for the other tools."""
-    return [_book_info(s) for s in _books()]
+    return [book_info(s) for s in ready_books(PROJECT_ID)]
 
 
 @book_server.tool(annotations=READ_ONLY)
@@ -186,29 +176,14 @@ def ask_book(question: str, book_id: str | None = None) -> Answer:
 
 
 # ---------- Helpers ----------
-def _books() -> list[Source]:
-    """The processed books of the project, in upload order."""
-    return [s for s in db.sources.values() if s.project_id == PROJECT_ID and s.status == "ready" and s.kind == "document"]
-
-
 def _book(book_id: str) -> Source:
     """A processed book by id; ToolError (its message reaches the client) with the valid ids if unknown."""
-    for source in _books():
+    for source in ready_books(PROJECT_ID):
         if source.id == book_id:
             return source
-    known = ", ".join(f"{s.id} ({_title(s)})" for s in _books()) or "none"
-    raise ToolError(f"Unknown book_id '{book_id}'. Known books: {known}.")
+    raise ToolError(f"Unknown book_id '{book_id}'. Known books: {known_books(PROJECT_ID)}.")
 
 
 def _title(source: Source) -> str:
     """Title part of the readable name, e.g. "Garden Cities of To Morrow"."""
-    return (source_name(source.id) or source.filename).split(" — ")[0]
-
-
-def _book_info(source: Source) -> BookInfo:
-    """BookInfo for list_books."""
-    name = source_name(source.id) or source.filename
-    title, _, author = name.partition(" — ")
-    summary = db.summaries.get(source.id)
-    return BookInfo(book_id=source.id, title=title, author=author, chunks=source.chunk_count,
-                    has_summary=summary is not None, themes=summary.themes if summary else [])
+    return book_title(source)

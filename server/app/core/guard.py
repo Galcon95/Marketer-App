@@ -25,7 +25,7 @@ Severity = Literal["low", "high"]
 # Maximum length (characters) per kind of input.
 MAX_LENGTH: dict[InputKind, int] = {
     "question": 1000,
-    "chat_message": 2000,
+    "chat_message": 4000,  # may contain a pasted post to check (LinkedIn allows 3000 characters)
     "search_query": 500,
     "brief": 4000,
     "social_post": 3000,

@@ -34,9 +34,11 @@ from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
+from app.core import state as db
+from app.core import storage
 from app.core.config import LLM_MODEL
 from app.core.llm import GenerationError, chat_model, is_configured, tokens_used
-from app.core.schemas import AssetType, Chunk, Citation, GenerateRequest, Length
+from app.core.schemas import Asset, AssetType, Chunk, Citation, GenerateRequest, Length
 from app.core.style import (
     PLATFORM_POST, PLATFORM_REPLY, PLATFORM_VIDEO, REWRITE_FROM, REWRITE_PROMPT, TONES, find_ai_tells,
     style_guidance, temperature_for,
@@ -153,6 +155,41 @@ class GenerationState(TypedDict, total=False):
 
 
 # ---------- Public API ----------
+def create_asset(project_id: str, req: GenerateRequest) -> Asset:
+    """Generate an asset (generate_asset), store it in the project and save it to disk.
+
+    Used by POST /generate and the chat tool draft_social_post (chat_tools.py).
+
+    Raises:
+        GenerationError: As generate_asset.
+        OSError: If the generated asset cannot be saved (it is then not stored in memory either).
+    """
+    result = generate_asset(project_id, req)
+    asset = Asset(
+        id=db.new_id("ast"),
+        project_id=project_id,
+        asset_type=req.asset_type,
+        grounded=req.grounded,
+        brief=req.brief,
+        text=result["text"],
+        citations=result.get("citations", []),
+        created_at=db.now(),
+        tokens=result.get("tokens", 0),
+        tone=req.tone,
+        length=req.length,
+        audience=req.audience,
+        platform=req.platform if req.asset_type in ("social_post", "social_reply", "video_script") else None,
+        source_ids=req.source_ids or [],
+        reply_to=req.reply_to,
+        search_query=result.get("query", ""),
+        humanize=req.humanize,
+        ai_tells=result.get("ai_tells", []),
+    )
+    storage.write_asset(asset)
+    db.assets[asset.id] = asset
+    return asset
+
+
 def generate_asset(project_id: str, req: GenerateRequest) -> GenerationState:
     """Run the generation graph for one asset.
 

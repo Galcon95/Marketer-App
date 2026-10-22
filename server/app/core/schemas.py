@@ -242,7 +242,7 @@ class AssetUpdate(BaseModel):
 class AskRequest(BaseModel):
     """Request body for POST /projects/{id}/ask: a question about the project's books."""
 
-    question: str = Field(min_length=1, max_length=1000)  # natural-language question (cleaned again by guard)
+    question: str = Field(min_length=1, max_length=4000)  # question or chat message, may contain a pasted post (cleaned again by guard)
     k: int = Field(default=6, ge=1, le=20)  # number of passages to retrieve as context (1-20)
     source_ids: list[str] | None = None  # restrict to these sources; None = all sources
     conversation_id: str | None = None  # continue this conversation; None = start a new one
@@ -259,6 +259,17 @@ class AskResponse(BaseModel):
     model: str  # chat model that wrote the answer
     tokens: int  # LLM tokens (prompt + completion) used
     conversation_id: str | None = None  # the conversation this turn belongs to (None for stateless callers like MCP)
+    tool_calls: list["ToolCallRecord"] = []  # tools the model called for this answer (chat only), in call order
+
+
+class ToolCallRecord(BaseModel):
+    """One tool call the chat model made (rag/chat_tools.py), with its result."""
+
+    name: str  # e.g. "check_platform_fit"
+    arguments: dict[str, Any]  # as the model wrote them
+    ok: bool  # False if the arguments were invalid or the tool failed
+    result: Any = None  # the tool's result (JSON), or the error message
+    duration_ms: int
 
 
 class ChatTurn(AskResponse):

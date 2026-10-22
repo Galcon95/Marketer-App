@@ -75,10 +75,12 @@ def create_summary(source_id: str):
 def ask(project_id: str, body: AskRequest):
     """Answer a question from the project's books, NotebookLM-style, as one turn of a conversation.
 
-    The question is cleaned and checked first (guard.py): too long → 422, likely prompt injection → 400.
+    The question is cleaned and checked first (guard.py): too long → 422, likely prompt injection → 400. The
+    checks run in code on every question; they are deliberately not a tool the model may or may not call.
     Then the LangGraph in qa.py runs: a follow-up is rewritten into a standalone question with the help of
     the recent turns, the k most similar passages are retrieved, and the LLM answers from those passages
-    only (plus the book summary as background), citing them as [n]. The turn is appended to the
+    only (plus the book summary as background), citing them as [n]. The model may also call the chat tools
+    once (chat_tools.py: list_books, check_platform_fit, draft_social_post). The turn is appended to the
     conversation (a new one if conversation_id is empty) and saved to disk.
 
     Args:
@@ -103,7 +105,7 @@ def ask(project_id: str, body: AskRequest):
         raise HTTPException(409, f"This chat has reached {MAX_TURNS} questions. Start a new chat to continue.")
     try:
         result = qa.answer_question(project_id, question, body.k, body.source_ids,
-                                    history=conversation.turns if conversation else None)
+                                    history=conversation.turns if conversation else None, use_tools=True)
     except GenerationError as e:
         raise HTTPException(e.status_code, str(e)) from e
 
@@ -157,7 +159,7 @@ def _get_conversation_or_404(conversation_id: str) -> Conversation:
 def _checked_question(question: str) -> str:
     """The cleaned question (guard.validate_input), or HTTPException: 422 if it is empty or too long,
     400 if it is a likely prompt injection (guard.check_prompt_injection)."""
-    checked = guard.validate_input(question, "question")
+    checked = guard.validate_input(question, "chat_message")
     if not checked.ok:
         raise HTTPException(422, " ".join(p.message for p in checked.problems if p.severity == "error"))
     report = guard.check_prompt_injection(checked.cleaned)

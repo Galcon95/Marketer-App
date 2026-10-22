@@ -33,35 +33,11 @@ def generate(project_id: str, body: GenerateRequest):
     """
     get_project_or_404(project_id)
     try:
-        result = generation.generate_asset(project_id, body)
+        return generation.create_asset(project_id, body)
     except GenerationError as e:
         raise HTTPException(e.status_code, str(e)) from e
-    asset = Asset(
-        id=db.new_id("ast"),
-        project_id=project_id,
-        asset_type=body.asset_type,
-        grounded=body.grounded,
-        brief=body.brief,
-        text=result["text"],
-        citations=result.get("citations", []),
-        created_at=db.now(),
-        tokens=result.get("tokens", 0),
-        tone=body.tone,
-        length=body.length,
-        audience=body.audience,
-        platform=body.platform if body.asset_type in ("social_post", "social_reply", "video_script") else None,
-        source_ids=body.source_ids or [],
-        reply_to=body.reply_to,
-        search_query=result.get("query", ""),
-        humanize=body.humanize,
-        ai_tells=result.get("ai_tells", []),
-    )
-    try:
-        storage.write_asset(asset)
     except OSError as e:
         raise HTTPException(500, "The asset was generated but could not be saved") from e
-    db.assets[asset.id] = asset
-    return asset
 
 
 @router.get("/projects/{project_id}/assets", response_model=list[Asset])

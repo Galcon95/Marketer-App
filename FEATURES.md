@@ -42,7 +42,14 @@ Status as of commit `e114f04` (2026-10-22).
   - Query translation: a `condense` step rewrites a follow-up into a standalone question before retrieval, shown in the GUI as "Searched for: …".
   - The answer prompt gets the last 4 turns as chat messages (earlier answers shortened, citation markers removed); only the current passages may be cited.
 - Chats are saved in `server/assets/conversations/` and survive restarts: **New chat**, **Past chats** (reopen or delete), at most 50 questions per chat.
-- Questions are checked with the guardrails functions: cleaned, at most 1000 characters (422), likely prompt injections blocked (400).
+- Questions are checked with the guardrails functions in code, on every question: cleaned, at most 4000 characters (422, room for a pasted post), likely prompt injections blocked (400).
+- **Tool calling** (LangChain `bind_tools`, one round, no loop): besides the passages, the model may call
+  - `list_books`: the library (titles, authors, themes), for questions about the library itself
+  - `check_platform_fit`: a pure calculation of characters, words, hashtags, preview length and AI clichés against a platform's rules
+  - `draft_social_post`: writes a grounded post with the generator, saves it as an asset and checks it for the platform
+  - Graph: `answer ─(tool calls?)─► tools ─► respond`; `respond` runs with `tool_choice="none"`, so there is never a second round. At most 3 calls per answer; invalid arguments or unknown tools become error results for the model.
+  - Book content is deliberately not a tool: the fixed RAG step already supplies the passages. Security checks are not tools either.
+  - The chat shows each tool call as a card (tool, arguments, duration, full result).
 
 ### Semantic search
 - `POST /projects/{id}/search` returns the top-k passages with similarity scores.

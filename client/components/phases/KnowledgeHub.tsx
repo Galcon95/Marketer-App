@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode, type SubmitEvent } from "react";
-import { AlertTriangle, BookOpen, Check, ChevronDown, Database, FileText, Film, Library, MessageSquare, Play, Plus, RotateCcw, Sparkles, Target, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, BookOpen, Check, ChevronDown, Database, FileText, Film, Library, MessageSquare, Play, Plus, RotateCcw, Sparkles, Target, Trash2, Upload, Wrench } from "lucide-react";
 import {
   api, ASSET_TYPES, bookTitle, errorMessage, humanizeLabel, LENGTHS, locationLabel, MAX_UPLOAD_BYTES, PLATFORMS, PROCESSING_STATUSES,
   TONES, UPLOAD_EXTENSIONS, usesPlatform,
-  type AssetType, type BookSummary, type ChatTurn, type Chunk, type ChunkPage, type Length, type Platform, type Source, type Tone,
+  type AssetType, type BookSummary, type ChatTurn, type Chunk, type ToolCallRecord, type ChunkPage, type Length, type Platform, type Source, type Tone,
 } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import AssetCard, { CitationList } from "../AssetCard";
@@ -633,6 +633,8 @@ function AskBook({ bookId, onChange }: { bookId: string | null; onChange: () => 
           <span className="bc-hint">
             Ask anything about your uploaded books, then keep asking follow-up questions. Answers are written
             only from the most relevant passages, with numbered citations; if the books don&apos;t cover it, it says so.
+            The assistant can also use tools: list your books, check a post for a platform (&quot;Does this fit on X? …&quot;)
+            or draft a post (&quot;Write a LinkedIn post about …&quot;).
           </span>
         )}
         {turns.map((turn, i) => <ChatTurnView key={`${turn.created_at}-${i}`} turn={turn} first={i === 0} />)}
@@ -640,7 +642,8 @@ function AskBook({ bookId, onChange }: { bookId: string | null; onChange: () => 
           <div className="bc-stack" style={{ gap: 8, ...(turns.length ? TURN_DIVIDER : {}) }}>
             <QuestionLine question={pending} />
             <Placeholder icon={MessageSquare}>
-              {turns.length ? "Reading the conversation and the relevant passages…" : "Reading the relevant passages…"}
+              {turns.length ? "Reading the conversation and the relevant passages, using tools if needed…"
+                : "Reading the relevant passages, using tools if needed…"}
             </Placeholder>
           </div>
         )}
@@ -693,9 +696,44 @@ function QuestionLine({ question }: { question: string }) {
   );
 }
 
+/** Short labels of the chat tools, shown on their cards. */
+const TOOL_LABELS: Record<string, string> = {
+  list_books: "Looked up the library",
+  check_platform_fit: "Checked the post for the platform",
+  draft_social_post: "Drafted a post (saved to the asset library)",
+};
+
+/**
+ * A tool the chat model called for an answer: what it did, with which arguments, whether it worked and how
+ * long it took; the full result (JSON) is collapsed below.
+ * @param call The tool call.
+ */
+function ToolCallCard({ call }: { call: ToolCallRecord }) {
+  const args = JSON.stringify(call.arguments);
+  return (
+    <details className="bc-cite-src" style={{ borderLeft: 0, borderRadius: "var(--radius-md)" }}>
+      <summary className="bc-row" style={{ gap: 8, cursor: "pointer", flexWrap: "wrap" }}>
+        <Badge tone={call.ok ? "accent" : "danger"} icon={Wrench} mono>{call.name}</Badge>
+        <span className="bc-hint">{call.ok ? TOOL_LABELS[call.name] ?? "Called a tool" : "Tool call failed"}</span>
+        <Badge mono>{call.duration_ms} ms</Badge>
+      </summary>
+      <div className="bc-stack" style={{ gap: 6, marginTop: 8 }}>
+        <span className="bc-hint bc-mono" style={{ wordBreak: "break-word" }}>
+          arguments: {args.length > 300 ? args.slice(0, 297) + "…" : args}
+        </span>
+        <pre className="bc-mono" style={{ margin: 0, padding: 10, maxHeight: 300, overflow: "auto", fontSize: 12,
+          whiteSpace: "pre-wrap", wordBreak: "break-word", background: "var(--surface-sunken)",
+          border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
+          {typeof call.result === "string" ? call.result : JSON.stringify(call.result, null, 2)}
+        </pre>
+      </div>
+    </details>
+  );
+}
+
 /**
  * One turn of an "Ask your book" chat: the question, what was searched (when a follow-up was rewritten),
- * the answer, its cited passages and, collapsed, all retrieved passages.
+ * the tools the model called, the answer, its cited passages and, collapsed, all retrieved passages.
  * @param turn The question and answer.
  * @param first True for the first turn (no divider above it).
  */
@@ -709,6 +747,7 @@ function ChatTurnView({ turn, first }: { turn: ChatTurn; first: boolean }) {
           Searched for: “{turn.search_query}”
         </span>
       )}
+      {(turn.tool_calls ?? []).map((call, i) => <ToolCallCard key={i} call={call} />)}
       <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>{turn.answer}</p>
       <CitationList citations={turn.citations} />
       <details>

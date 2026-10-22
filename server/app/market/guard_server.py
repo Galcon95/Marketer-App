@@ -44,7 +44,7 @@ def validate_input(text: str, kind: InputKind = "question") -> ValidationResult:
 
     Args:
         text: The text the user entered.
-        kind: What it is, which sets the length limit: question (1000 characters), chat_message (2000),
+        kind: What it is, which sets the length limit: question (1000 characters), chat_message (4000),
             search_query (500), brief (4000), social_post (3000) or asset_text (12000).
     """
     return guard.validate_input(_limit(text), kind)

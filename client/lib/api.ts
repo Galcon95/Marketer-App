@@ -148,6 +148,15 @@ export interface AskResponse {
   model: string;
   tokens: number;
   conversation_id: string | null; // send it with the next question to continue the chat
+  tool_calls: ToolCallRecord[]; // tools the model called for this answer, in call order
+}
+/** One tool call the chat model made (list_books, check_platform_fit, draft_social_post), with its result. */
+export interface ToolCallRecord {
+  name: string;
+  arguments: Record<string, unknown>; // as the model wrote them
+  ok: boolean;
+  result: unknown; // the tool's JSON result, or the error message
+  duration_ms: number;
 }
 /** One question and answer inside a conversation. */
 export interface ChatTurn extends AskResponse { created_at: string }
