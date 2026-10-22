@@ -4,7 +4,7 @@
  */
 import { useEffect, useRef, useState, type ComponentPropsWithRef, type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
-import { AlertTriangle, ChevronDown, ChevronsUpDown, FolderOpen, Megaphone, RefreshCw, Search, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, Megaphone, RefreshCw, Search, UserRound, X } from "lucide-react";
 
 /**
  * Join CSS class names, skipping falsy values, so classes can be added conditionally.
@@ -226,16 +226,16 @@ export function StatusRow({ icon: Icon, label, value, ok, title }: { icon: Lucid
 }
 
 /**
- * Left app sidebar: logo, current project, navigation groups and the system status block.
- * The project switcher button is not wired up yet.
+ * Left app sidebar: logo, current client, navigation groups and the system status block.
+ * There is one client for now (the API's project "demo-campaign"); switching clients comes with multi-client support.
  * @param nav Navigation groups to render.
  * @param active Id of the active link (marked with aria-current="page").
  * @param onNavigate Called with the id of a clicked link.
  * @param status Content of the status block (usually StatusRow elements).
- * @param project Name of the current project.
- * @param projectMeta Small line under the project name, e.g. counts.
+ * @param client Name of the current client.
+ * @param clientMeta Small line under the client name, e.g. counts.
  */
-export function Sidebar({ nav, active, onNavigate, status, project, projectMeta }: { nav: NavGroup[]; active: string; onNavigate: (id: string) => void; status: ReactNode; project: string; projectMeta: string }) {
+export function Sidebar({ nav, active, onNavigate, status, client, clientMeta }: { nav: NavGroup[]; active: string; onNavigate: (id: string) => void; status: ReactNode; client: string; clientMeta: string }) {
   return (
     <aside className="bc-side" aria-label="Main">
       <div className="bc-logo">
@@ -246,15 +246,14 @@ export function Sidebar({ nav, active, onNavigate, status, project, projectMeta 
         </div>
       </div>
 
-      <button className="bc-proj" aria-label="Switch project">
-        <span className="bc-proj-ico"><FolderOpen size={14} className="bc-ico" aria-hidden /></span>
+      <div className="bc-proj" style={{ cursor: "default" }}>
+        <span className="bc-proj-ico"><UserRound size={14} className="bc-ico" aria-hidden /></span>
         <span style={{ minWidth: 0, flex: 1 }}>
-          <span className="bc-label" style={{ display: "block", fontSize: 10, lineHeight: "14px" }}>Current project</span>
-          <span className="bc-proj-t" style={{ display: "block" }}>{project}</span>
-          <span className="bc-proj-s">{projectMeta}</span>
+          <span className="bc-label" style={{ display: "block", fontSize: 10, lineHeight: "14px" }}>Current client</span>
+          <span className="bc-proj-t" style={{ display: "block" }}>{client}</span>
+          <span className="bc-proj-s">{clientMeta}</span>
         </span>
-        <ChevronsUpDown size={14} className="bc-ico bc-muted" aria-hidden />
-      </button>
+      </div>
 
       {nav.map((group) => (
         <nav key={group.title} className="bc-nav">

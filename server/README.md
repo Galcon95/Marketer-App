@@ -37,7 +37,8 @@ server/
 │   ├── campaign/       Phase 2 Campaign Builder
 │   │   └── kit.py      zero-shot kit: personas → posts + blurb (LangGraph)
 │   ├── market/         Phase 3 Market Intelligence (MCP)
-│   │   └── book_server.py  mcp-book-knowledge: the books as MCP tools (mounted at /mcp)
+│   │   ├── book_server.py  mcp-book-knowledge: the books as MCP tools (mounted at /mcp)
+│   │   └── guard_server.py mcp-guardrails: input validation and prompt-injection checks (/guardrails/mcp)
 │   ├── agents/         Phase 4 Agent Workspace, not built yet
 │   └── api/            FastAPI routers: health, projects, sources, knowledge, assets, campaigns (+ deps.py)
 └── assets/             data (not committed): uploads, chroma, generated, usage
@@ -63,3 +64,17 @@ claude mcp add --transport http book-knowledge http://127.0.0.1:8000/mcp   # use
 ```
 
 Local use only: no authentication; only localhost Host/Origin headers are accepted.
+
+## MCP server: mcp-guardrails
+
+Security checks for text sent to a language model, at `http://127.0.0.1:8000/guardrails/mcp`. The logic lives
+in `app/core/guard.py` (pure functions, no model calls), so the API can call it directly too.
+
+| Tool | Returns |
+|---|---|
+| `validate_input(text, kind)` | cleaned text, ok, problems (empty, too long, hidden characters, repetition); limits per kind |
+| `check_prompt_injection(text)` | risk none/low/high, findings with rule and excerpt, advice |
+| `wrap_untrusted(passages)` | passages in `<passage n="...">` tags, the system prompt rule, passages flagged as risky |
+
+The injection check is rule-based (override phrases, role changes, prompt leaks, fake role markers, exfiltration
+links, hidden characters): it catches common attacks, not every one. It flags none of the current book chunks.

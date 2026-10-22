@@ -52,6 +52,8 @@ def upload_source(project_id: str, background_tasks: BackgroundTasks, file: Uplo
         chunk_count=0,
         created_at=db.now(),
     )
+    if source.kind == "document":
+        source.author = storage.read_pdf_author(storage.source_file_path(source))
     try:
         storage.write_source_meta(source)
     except OSError as e:

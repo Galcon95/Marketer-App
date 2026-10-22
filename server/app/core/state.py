@@ -1,14 +1,14 @@
 """In-memory stores of the app, keyed by id (formerly dummy_data.py; imported as `db`).
 
-The module-level dicts (projects, sources, chunks, summaries, assets) are the working copy the API
-reads from. Sources, chunks, summaries and assets are persisted on disk by storage.py and loaded into these dicts on
+The module-level dicts (projects, sources, chunks, summaries, assets, conversations) are the working copy
+the API reads from. Sources, chunks, summaries, assets and conversations are persisted on disk by storage.py and loaded into these dicts on
 startup; projects are not persisted yet, so only the fixed demo project exists.
 """
 
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from app.core.schemas import Asset, BookSummary, Chunk, Project, Source
+from app.core.schemas import Asset, BookSummary, Chunk, Conversation, Project, Source
 
 DEFAULT_PROJECT_ID = "demo-campaign"
 
@@ -32,12 +32,14 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:8]}"
 
 
-# Projects by id; starts with one demo project.
+# Projects by id. A project is a client (shown as "Current client" in the GUI): its books, chats, campaigns and
+# assets. There is one fixed client for now; the id "demo-campaign" stays because data on disk and in Chroma is
+# stored under it. More clients come with a database (PostgreSQL).
 projects: dict[str, Project] = {
     DEFAULT_PROJECT_ID: Project(
         id=DEFAULT_PROJECT_ID,
-        name="Demo campaign",
-        description="Dummy project for UI development",
+        name="Peter Schmidt",
+        description="The default client: all books, chats, campaigns and assets",
         created_at=now(),
     )
 }
@@ -51,3 +53,6 @@ summaries: dict[str, BookSummary] = {}
 
 # Generated assets by id; filled from disk on startup (storage.load_assets) and by generation.
 assets: dict[str, Asset] = {}
+
+# "Ask your book" conversations by id; filled from disk on startup (storage.load_conversations) and by /ask.
+conversations: dict[str, Conversation] = {}

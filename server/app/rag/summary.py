@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 MAX_SECTION_CHARS = 120_000  # about 30k tokens; longer chapters are cut to keep each map call affordable
 MAX_PARALLEL_CALLS = 8  # chapter summaries requested at the same time
+SECTION_CHUNKS = 12  # books without any chapters are summarized in parts of this many chunks (about 6,000 tokens)
 
 CHAPTER_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
@@ -176,19 +177,23 @@ def _combine(state: _SummaryState) -> _SummaryState:
 def _sections(source: Source) -> list[_Section]:
     """Group a book's chunks into chapters, in reading order, with their joined text and page range.
 
-    Consecutive chunks with the same chapter form one section. Neighbouring chunks overlap by a few
-    sentences; that small repetition does not matter for a summary.
+    Consecutive chunks with the same chapter form one section. A book without any chapter (no table of
+    contents and no heading lines found at ingestion) is cut into numbered parts of SECTION_CHUNKS chunks
+    ("Section 1", "Section 2", ...) instead of one huge "Front matter" section. Neighbouring chunks overlap
+    by a few sentences; that small repetition does not matter for a summary.
     """
     chunks: list[Chunk] = sorted((c for c in db.chunks.values() if c.source_id == source.id), key=lambda c: c.id)
     book = source_name(source.id) or source.filename
+    no_chapters = all(c.location.chapter is None for c in chunks)
     sections: list[_Section] = []
-    for chunk in chunks:
-        if sections and sections[-1]["chapter"] == chunk.location.chapter:
+    for i, chunk in enumerate(chunks):
+        chapter = f"Section {i // SECTION_CHUNKS + 1}" if no_chapters else chunk.location.chapter
+        if sections and sections[-1]["chapter"] == chapter:
             current = sections[-1]
             current["text"] = (current["text"] + "\n\n" + chunk.text)[:MAX_SECTION_CHARS]
             current["last_page"] = chunk.location.page or current["last_page"]
         else:
-            sections.append(_Section(index=len(sections), book=book, chapter=chunk.location.chapter,
+            sections.append(_Section(index=len(sections), book=book, chapter=chapter,
                                      first_page=chunk.location.page, last_page=chunk.location.page, text=chunk.text))
     return sections
 

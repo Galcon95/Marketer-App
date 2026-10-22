@@ -58,6 +58,7 @@ export interface Source {
   chunk_count: number;
   created_at: string; // ISO 8601 timestamp (UTC)
   error: string | null; // set when status is "failed"
+  author: string; // from the PDF's metadata; "" if unknown
 }
 
 /** Where a chunk came from: chapter/page for documents, start/end time ("HH:MM:SS") for media. */
@@ -140,11 +141,67 @@ export interface VerifyResponse { items: VerifyItem[] }
 /** Response of POST /ask: an answer written from the books, with its cited and all retrieved passages. */
 export interface AskResponse {
   question: string;
+  search_query: string; // what was searched: the question, or its standalone rewrite for a follow-up
   answer: string; // plain text with [n] markers matching `citations`
   citations: Citation[];
   passages: SearchHit[]; // all retrieved passages, best first
   model: string;
   tokens: number;
+  conversation_id: string | null; // send it with the next question to continue the chat
+}
+/** One question and answer inside a conversation. */
+export interface ChatTurn extends AskResponse { created_at: string }
+/** An "Ask your book" chat with all its turns, oldest first. */
+export interface Conversation { id: string; title: string; created_at: string; updated_at: string; turns: ChatTurn[] }
+/** A conversation without its turns, for the list of past chats. */
+export interface ConversationInfo { id: string; title: string; created_at: string; updated_at: string; turn_count: number }
+
+/** One tool of an MCP server (GET /mcp-servers). */
+export interface McpTool {
+  name: string;
+  title: string | null;
+  description: string;
+  input_schema: JsonSchema; // arguments; the console builds its form from it
+  read_only: boolean | null;
+}
+/** The parts of a JSON Schema the console understands. */
+export interface JsonSchema {
+  type?: string;
+  title?: string;
+  description?: string;
+  default?: unknown;
+  enum?: string[];
+  items?: JsonSchema;
+  anyOf?: JsonSchema[];
+  properties?: Record<string, JsonSchema>;
+  required?: string[];
+  minimum?: number;
+  maximum?: number;
+}
+/** An MCP server with its live status and tools (GET /mcp-servers). */
+export interface McpServer {
+  name: string;
+  title: string | null;
+  description: string | null;
+  url: string;
+  audience: "external" | "internal"; // external: for outside clients only; internal: the app uses it too
+  status: "active" | "offline";
+  error: string | null;
+  latency_ms: number | null;
+  instructions: string | null;
+  tools: McpTool[];
+}
+/** One tool call from the console, with its result (POST /mcp-servers/{name}/call, GET /mcp-calls). */
+export interface McpCall {
+  id: string;
+  server: string;
+  tool: string;
+  arguments: Record<string, unknown>;
+  ok: boolean;
+  structured: unknown; // the tool's structured (JSON) result, if any
+  text: string; // text content or error message
+  duration_ms: number;
+  called_at: string;
 }
 
 /** One logged model call with its tokens and costs in USD (server/usage.py). */
@@ -415,13 +472,21 @@ export const api = {
    */
   search: (query: string, k = 5) => request<SearchResponse>(`/projects/${PROJECT_ID}/search`, postJson({ query, k })),
   /**
-   * POST /projects/{id}/ask: answer a question from the books (NotebookLM-style), with citations.
-   * @param question Natural-language question.
+   * POST /projects/{id}/ask: answer a question from the books (NotebookLM-style), with citations, as a turn of a chat.
+   * @param question Natural-language question (follow-ups like "and in chapter 3?" are fine inside a chat).
    * @param k Number of passages to retrieve as context (default 6).
    * @param sourceIds Optional: only use these books (omitted = all books).
+   * @param conversationId Optional: continue this chat (omitted = start a new one; the response has its id).
    */
-  ask: (question: string, k = 6, sourceIds?: string[]) =>
-    request<AskResponse>(`/projects/${PROJECT_ID}/ask`, postJson({ question, k, source_ids: sourceIds })),
+  ask: (question: string, k = 6, sourceIds?: string[], conversationId?: string) =>
+    request<AskResponse>(`/projects/${PROJECT_ID}/ask`,
+      postJson({ question, k, source_ids: sourceIds, conversation_id: conversationId })),
+  /** GET /projects/{id}/conversations: past "Ask your book" chats without their turns, most recent first. */
+  listConversations: () => request<ConversationInfo[]>(`/projects/${PROJECT_ID}/conversations`),
+  /** GET /conversations/{id}: one chat with all its turns. */
+  getConversation: (conversationId: string) => request<Conversation>(`/conversations/${conversationId}`),
+  /** DELETE /conversations/{id}: delete a chat. */
+  deleteConversation: (conversationId: string) => request<void>(`/conversations/${conversationId}`, { method: "DELETE" }),
 
   /** POST /projects/{id}/generate: generate and store a new asset from a brief. */
   generate: (body: GenerateRequest) => request<Asset>(`/projects/${PROJECT_ID}/generate`, postJson(body)),
@@ -434,6 +499,19 @@ export const api = {
     request<Asset>(`/assets/${assetId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }),
   /** DELETE /assets/{assetId}: delete a generated asset. */
   deleteAsset: (assetId: string) => request<void>(`/assets/${assetId}`, { method: "DELETE" }),
+
+  /** GET /mcp-servers: our MCP servers with their live status and tools. */
+  listMcpServers: () => request<McpServer[]>("/mcp-servers"),
+  /**
+   * POST /mcp-servers/{name}/call: run a tool over MCP; failures come back with ok=false, not as an error.
+   * @param server Server name, e.g. "mcp-guardrails".
+   * @param tool Tool name.
+   * @param args The tool's arguments.
+   */
+  callMcpTool: (server: string, tool: string, args: Record<string, unknown>) =>
+    request<McpCall>(`/mcp-servers/${server}/call`, postJson({ tool, arguments: args })),
+  /** GET /mcp-calls: the most recent console calls, newest first. */
+  listMcpCalls: () => request<McpCall[]>("/mcp-calls"),
 
   /** POST /projects/{id}/verify: check each claim of `text` against the project's sources. */
   verify: (text: string) => request<VerifyResponse>(`/projects/${PROJECT_ID}/verify`, postJson({ text })),

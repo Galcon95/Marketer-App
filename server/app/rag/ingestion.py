@@ -127,6 +127,8 @@ def restore_sources() -> None:
     embeddings existed, or the embedding model changed) are marked "failed" so the user can press Retry.
     """
     for source in storage.load_sources().values():
+        if not source.author and source.kind == "document":  # books uploaded before authors were read
+            source = _with_pdf_author(source)
         chunks: list[Chunk] = []
         if source.status in PROCESSING_STATUSES:
             source = _mark_failed(source, "Processing was interrupted by a server restart. Press Retry.")
@@ -144,6 +146,19 @@ def restore_sources() -> None:
         # Saved summaries are loaded for every book (also one that needs a Retry), so they are never paid twice.
         if summary := storage.load_summary(source):
             db.summaries[source.id] = summary
+
+
+def _with_pdf_author(source: Source) -> Source:
+    """The source with the author from its PDF's metadata, saved to its record; unchanged if the PDF names none."""
+    author = storage.read_pdf_author(storage.source_file_path(source))
+    if not author:
+        return source
+    source = source.model_copy(update={"author": author})
+    try:
+        storage.write_source_meta(source)
+    except OSError:
+        logger.warning("Could not save the author of %s", source.id)
+    return source
 
 
 def replace_source_chunks(source_id: str, chunks: list[Chunk]) -> None:
@@ -248,7 +263,11 @@ class BookLoader(BaseLoader):
       - words hyphenated at a line end are rejoined;
       - short lines repeated on many pages (running headers/footers, page numbers) are dropped;
       - chapters from the PDF's table of contents: a chapter starts at the line matching its
-        heading, or at the top of its page if no line matches.
+        heading, or at the top of its page if no line matches. PDFs without a table of contents
+        (e.g. many Project Gutenberg files) get their chapters from heading lines in the text
+        instead ("CHAPTER IV." / "PART TWO", see _text_chapter_starts);
+      - the Project Gutenberg license after "*** END OF THE PROJECT GUTENBERG EBOOK ..." becomes a
+        section of its own (LICENSE_SECTION), so it is not part of the last chapter.
 
     Each Document's metadata holds "chapter" (title or None before the first chapter) and
     "page_starts": [[offset, page], ...], the text offset where each 1-based page begins, so a
@@ -273,13 +292,20 @@ class BookLoader(BaseLoader):
         pages = self._read_pages()
         width = _typical_line_width(pages)
         repeated = _repeated_lines(pages)
-        chapter_starts = _chapter_starts(self._read_toc())
+        chapter_starts = _chapter_starts(self._read_toc()) or _text_chapter_starts(pages)
 
         chapter: str | None = None
         lines: list[tuple[int, str]] = []  # (page, line) of the current chapter
         for page_no, page_lines in pages:
             page_lines = [l for l in page_lines if _repeat_key(l) not in repeated]
             heading_at: dict[int, str] = {}  # line index → chapter starting there
+            if chapter == LICENSE_SECTION:  # everything after the e-book's end marker is license text
+                for line in page_lines:
+                    lines.append((page_no, line))
+                continue
+            end = next((i for i, l in enumerate(page_lines) if _EBOOK_END.match(l)), None)
+            if end is not None:
+                heading_at[end] = LICENSE_SECTION
             for title in chapter_starts.get(page_no, []):
                 match = next((i for i, l in enumerate(page_lines) if i not in heading_at and _is_heading(l, title)), None)
                 if match is None:  # heading not found: chapter starts at the top of the page
@@ -407,6 +433,56 @@ def _chapter_starts(toc: list) -> dict[int, list[str]]:
             title = re.sub(r"\s+", " ", re.sub(r"(?<=[.:;!?])(?=[A-Z])", " ", title)).strip()
             starts.setdefault(page, []).append(title)
     return starts
+
+
+# Project Gutenberg's end marker; the license text follows it.
+_EBOOK_END = re.compile(r"^\*{3}\s*END OF TH(E|IS) PROJECT GUTENBERG", re.IGNORECASE)
+LICENSE_SECTION = "Project Gutenberg license"
+
+# A heading line: keyword + number, e.g. "CHAPTER IV.", "Part 2", "BOOK ONE: THE LAND", "Section 12".
+_HEADING = re.compile(
+    r"^(chapter|part|book|section)\s+([ivxlcdm]+|\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
+    r"(?![a-z])[.:]?\s*(.*)$", re.IGNORECASE)
+_HEADING_KINDS = ("chapter", "part", "book", "section")  # preferred level first
+
+
+def _text_chapter_starts(pages: list[tuple[int, list[str]]]) -> dict[int, list[str]]:
+    """Find chapters from heading lines in the text, for PDFs without a table of contents.
+
+    A heading is a line that starts with chapter/part/book/section and a number (Roman, Arabic or a word)
+    and is otherwise empty, in capitals or short. A following short line in capitals is taken as its title
+    ("CHAPTER I." + "THE PURPOSE OF THIS BOOK"). The level is the first of _HEADING_KINDS found at least
+    3 times, so parts are only used when there are no chapters. Pages with 3 or more headings are skipped:
+    those are the printed contents list.
+
+    Args:
+        pages: (page number, lines) of the book.
+
+    Returns:
+        Chapter titles by start page, like _chapter_starts; empty if no level has 3 headings.
+    """
+    width = _typical_line_width(pages)
+    found: dict[str, dict[int, list[str]]] = {kind: {} for kind in _HEADING_KINDS}
+    for page_no, lines in pages:
+        page_found: list[tuple[str, str]] = []
+        for i, line in enumerate(lines):
+            match = _HEADING.match(line)
+            rest = match and match.group(3)
+            if not match or len(line) > 100 or not (not rest or rest.isupper() or len(line) < 0.6 * width):
+                continue
+            title = line
+            following = lines[i + 1] if i + 1 < len(lines) else ""
+            if not rest and following and len(following) <= 80 and following.isupper() and not _HEADING.match(following):
+                title = f"{line} {following}"
+            page_found.append((match.group(1).lower(), title))
+        if len(page_found) >= 3:  # the printed table of contents, not real headings
+            continue
+        for kind, title in page_found:
+            found[kind].setdefault(page_no, []).append(title)
+    for kind in _HEADING_KINDS:
+        if sum(len(titles) for titles in found[kind].values()) >= 3:
+            return found[kind]
+    return {}
 
 
 def _is_heading(line: str, title: str) -> bool:

@@ -20,25 +20,13 @@ const GENRES = [
   "Self-help · productivity", "Biography / memoir", "Popular science", "Literary fiction", "Cozy mystery",
   "Thriller", "Romance", "Fantasy", "Science fiction", "Historical fiction",
 ];
-/** localStorage key of the author name typed last (books whose file name has no author). */
-const AUTHOR_KEY = "campaign.author";
-
-/** Read the remembered author name; "" if none or storage is blocked. */
-function rememberedAuthor() {
-  try {
-    return localStorage.getItem(AUTHOR_KEY) ?? "";
-  } catch {
-    return "";
-  }
-}
-
 /**
- * Title and author of a library book from its file name: "Garden-Cities_Ebenezer-Howard.pdf" →
- * ["Garden Cities", "Ebenezer Howard"]; without an author part, the author is "".
+ * Title and author of a library book: "Garden-Cities_Ebenezer-Howard.pdf" → ["Garden Cities", "Ebenezer Howard"].
+ * Without an author part in the file name, the author from the PDF's metadata is used ("" if the PDF names none).
  */
 function splitTitle(source: Source): [title: string, author: string] {
   const [title, author = ""] = bookTitle(source.filename).split(" — ");
-  return [title, author];
+  return [title, author || source.author];
 }
 
 /** Name of a persona asset: the first line up to " — " (as written by the campaign kit), at most 60 characters. */
@@ -61,7 +49,7 @@ function BriefForm({ books, assets, onDone }: { books: Source[]; assets: Asset[]
   const book = books.find((b) => b.id === bookId);
   const summary = useApi(`campaign-summary:${bookId}`, () => (book ? api.getSummary(book.id) : Promise.resolve(null)));
   const s = summary.loading ? null : summary.data; // useApi keeps the previous book's summary while loading
-  const [title, fileAuthor] = book ? splitTitle(book) : ["", ""];
+  const [title, bookAuthor] = book ? splitTitle(book) : ["", ""];
   const themes = s?.themes ?? [];
   const [picked, setPicked] = useState<string[] | null>(null); // null = default (first three themes)
   const chosen = picked ?? themes.slice(0, 3);
@@ -84,15 +72,12 @@ function BriefForm({ books, assets, onDone }: { books: Source[]; assets: Asset[]
     setPicked(chosen.includes(theme) ? chosen.filter((t) => t !== theme) : [...chosen, theme]);
   }
 
-  /** Form submit: send the brief to POST /campaigns and remember the author for next time. */
+  /** Form submit: send the brief to POST /campaigns. */
   async function submit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     const get = (k: string) => String(f.get(k) ?? "").trim();
     const author = get("author");
-    try {
-      if (author) localStorage.setItem(AUTHOR_KEY, author);
-    } catch { /* storage blocked: just don't remember */ }
     setPending(true);
     setError(null);
     try {
@@ -130,7 +115,7 @@ function BriefForm({ books, assets, onDone }: { books: Source[]; assets: Asset[]
           {book ? <input type="hidden" name="title" value={title} /> : (
             <Field name="title" label="Title" placeholder="e.g. The Quiet Harbour" required />
           )}
-          <Field name="author" label="Author / pen name" defaultValue={fileAuthor || rememberedAuthor()} placeholder="e.g. Jane Doe" />
+          <Field name="author" label="Author / pen name" defaultValue={bookAuthor} placeholder="e.g. Jane Doe" />
           <div className="bc-field">
             <label className="bc-label" htmlFor="f-genre">Genre</label>
             <input id="f-genre" name="genre" className="bc-input" list="genre-list" placeholder="e.g. Cozy mystery" autoComplete="off" />

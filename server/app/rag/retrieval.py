@@ -61,11 +61,16 @@ def format_background(context: list[tuple[Chunk, float]]) -> str:
 
 
 def source_name(source_id: str) -> str | None:
-    """Readable name of a source from its file name: "Garden-Cities_Ebenezer-Howard.pdf" → "Garden Cities — Ebenezer Howard"."""
+    """Readable name of a source from its file name: "Garden-Cities_Ebenezer-Howard.pdf" → "Garden Cities — Ebenezer Howard".
+
+    Without an author in the file name, the author from the PDF's metadata is added, if known
+    ("Successful Stock Speculation.pdf" → "Successful Stock Speculation — J. J. Butler").
+    """
     source = db.sources.get(source_id)
     if source is None:
         return None
-    return re.sub(r"\s+", " ", source.filename.rsplit(".", 1)[0].replace("_", " — ").replace("-", " ")).strip()
+    name = re.sub(r"\s+", " ", source.filename.rsplit(".", 1)[0].replace("_", " — ").replace("-", " ")).strip()
+    return name if " — " in name or not source.author else f"{name} — {source.author}"
 
 
 def keep_cited(text: str, context: list[tuple[Chunk, float]], also_cited: list[int] | None = None) -> dict:

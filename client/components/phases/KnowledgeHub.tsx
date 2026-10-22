@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode, type SubmitEvent } from "react";
-import { AlertTriangle, BookOpen, Check, ChevronDown, Database, FileText, Film, Library, MessageSquare, Play, RotateCcw, Sparkles, Target, Trash2, Upload, X } from "lucide-react";
+import { AlertTriangle, BookOpen, Check, ChevronDown, Database, FileText, Film, Library, MessageSquare, Play, Plus, RotateCcw, Sparkles, Target, Trash2, Upload } from "lucide-react";
 import {
   api, ASSET_TYPES, bookTitle, errorMessage, humanizeLabel, LENGTHS, locationLabel, MAX_UPLOAD_BYTES, PLATFORMS, PROCESSING_STATUSES,
   TONES, UPLOAD_EXTENSIONS, usesPlatform,
-  type AssetType, type BookSummary, type Chunk, type ChunkPage, type Length, type Platform, type Source, type Tone,
+  type AssetType, type BookSummary, type ChatTurn, type Chunk, type ChunkPage, type Length, type Platform, type Source, type Tone,
 } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import AssetCard, { CitationList } from "../AssetCard";
@@ -548,62 +548,178 @@ function SummaryDrawer({ source, onClose, onChange }: { source: Source; onClose:
 
 /* ---------- Ask your book ---------- */
 /**
- * "Ask your book", NotebookLM-style: a question is answered by the LLM from the most relevant
- * passages of the project's books (POST /ask). Shows the answer with [n] markers, the cited
- * passages numbered to match, and — collapsed — all retrieved passages with their scores, so the
- * evidence can be checked. Submitting stores the question, which triggers the request through
- * useApi; clearing it (empty submit or the X button) hides the result.
+ * "Ask your book" as a chat, NotebookLM-style: each question is answered by the LLM from the most
+ * relevant passages of the project's books (POST /ask), and follow-ups can refer to earlier turns
+ * ("and in chapter 3?"); the server rewrites them into a standalone question before searching, shown
+ * as "Searched for". Each answer shows its [n] citations and, collapsed, all retrieved passages with
+ * their scores. Chats are saved on the server: "Past chats" reopens or deletes them, "New chat" starts over.
  * @param bookId Only use this book; null = all books.
  * @param onChange Called after each answer, so the usage totals in the top bar update.
  */
 function AskBook({ bookId, onChange }: { bookId: string | null; onChange: () => void }) {
-  const [question, setQuestion] = useState<string | null>(null); // submitted question; null = nothing asked
-  const ask = useApi(question ? `ask:${bookId ?? "all"}:${question}` : null,
-    () => api.ask(question!, 6, bookId ? [bookId] : undefined));
-  const answered = ask.data;
-  useEffect(() => {
-    if (answered) onChange();
-  }, [answered, onChange]);
+  const [conversationId, setConversationId] = useState<string | null>(null); // open chat; null = a new chat
+  const [turns, setTurns] = useState<ChatTurn[]>([]); // questions and answers of the open chat, oldest first
+  const [pending, setPending] = useState<string | null>(null); // question being answered right now
+  const [error, setError] = useState<string | null>(null);
+  const [listVersion, setListVersion] = useState(0); // bump to reload the past chats
+  const past = useApi(`conversations:${listVersion}`, api.listConversations);
+  const endRef = useRef<HTMLDivElement>(null);
 
-  /** Form submit: read the trimmed question from the form and ask it (empty → clear). */
-  function submit(e: SubmitEvent<HTMLFormElement>) {
+  // Keep the newest turn (or the pending question) in view.
+  useEffect(() => {
+    if (turns.length || pending) endRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [turns.length, pending]);
+
+  /** Form submit: send the question as the next turn of the open chat (or start one); clears the input on success. */
+  async function submit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
-    const q = String(new FormData(e.currentTarget).get("q") ?? "").trim();
-    setQuestion(q || null);
+    const form = e.currentTarget;
+    const question = String(new FormData(form).get("q") ?? "").trim();
+    if (!question || pending) return;
+    setPending(question);
+    setError(null);
+    try {
+      const turn = await api.ask(question, 6, bookId ? [bookId] : undefined, conversationId ?? undefined);
+      setTurns((t) => [...t, { ...turn, created_at: new Date().toISOString() }]);
+      setConversationId(turn.conversation_id);
+      form.reset();
+      setListVersion((v) => v + 1);
+      onChange();
+    } catch (err) {
+      setError(errorMessage(err)); // the question stays in the input, so it can be fixed and sent again
+    } finally {
+      setPending(null);
+    }
   }
 
-  const result = ask.loading ? undefined : ask.data; // hide the previous answer while a new one loads
+  /** Open a past chat with all its turns. */
+  async function open(id: string) {
+    setError(null);
+    try {
+      const conversation = await api.getConversation(id);
+      setConversationId(conversation.id);
+      setTurns(conversation.turns);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  /** Start a new, empty chat (the open one stays saved). */
+  function newChat() {
+    setConversationId(null);
+    setTurns([]);
+    setError(null);
+  }
+
+  /** Delete a past chat; closes it if it is the open one. */
+  async function remove(id: string) {
+    try {
+      await api.deleteConversation(id);
+      if (id === conversationId) newChat();
+      setListVersion((v) => v + 1);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  const tokens = turns.reduce((n, t) => n + t.tokens, 0);
+  const chats = past.data ?? [];
   return (
-    <Card title="Ask your book" icon={MessageSquare} meta={result ? <Badge mono>{result.tokens} tokens</Badge> : undefined}>
+    <Card title="Ask your book" icon={MessageSquare}
+      meta={tokens ? <Badge mono>{tokens.toLocaleString()} tokens</Badge> : undefined}
+      actions={turns.length ? <Button size="sm" variant="ghost" icon={Plus} onClick={newChat} disabled={!!pending}>New chat</Button> : undefined}>
       <div className="bc-stack">
-        <form className="bc-row" style={{ flexWrap: "nowrap" }} onSubmit={submit}>
-          <div style={{ flex: 1 }}><Field name="q" as="search" placeholder="e.g. How will Garden City be financed?" /></div>
-          <Button type="submit" variant="secondary" icon={Sparkles} loading={ask.loading}>Ask</Button>
-          {question && <Button variant="ghost" icon={X} aria-label="Clear question" onClick={() => setQuestion(null)} />}
-        </form>
-        {!question ? (
+        {turns.length === 0 && !pending && (
           <span className="bc-hint">
-            Ask anything about your uploaded books. The answer is written only from the most relevant
-            passages, with numbered citations; if the books don&apos;t cover it, it says so.
+            Ask anything about your uploaded books, then keep asking follow-up questions. Answers are written
+            only from the most relevant passages, with numbered citations; if the books don&apos;t cover it, it says so.
           </span>
-        ) : ask.error ? (
-          <ErrorNote>{ask.error}</ErrorNote>
-        ) : !result ? (
-          <Placeholder icon={MessageSquare}>Reading the relevant passages…</Placeholder>
-        ) : (
-          <>
-            <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>{result.answer}</p>
-            <CitationList citations={result.citations} />
-            <details>
-              <summary className="bc-hint" style={{ cursor: "pointer" }}>All retrieved passages ({result.passages.length})</summary>
-              <div className="bc-stack" style={{ marginTop: 8 }}>
-                {result.passages.map((h) => <ChunkCard key={h.chunk.id} chunk={h.chunk} score={h.score} />)}
-              </div>
-            </details>
-          </>
         )}
+        {turns.map((turn, i) => <ChatTurnView key={`${turn.created_at}-${i}`} turn={turn} first={i === 0} />)}
+        {pending && (
+          <div className="bc-stack" style={{ gap: 8, ...(turns.length ? TURN_DIVIDER : {}) }}>
+            <QuestionLine question={pending} />
+            <Placeholder icon={MessageSquare}>
+              {turns.length ? "Reading the conversation and the relevant passages…" : "Reading the relevant passages…"}
+            </Placeholder>
+          </div>
+        )}
+        <div ref={endRef} />
+        {error && <ErrorNote>{error}</ErrorNote>}
+        <form className="bc-row" style={{ flexWrap: "nowrap" }} onSubmit={submit}>
+          <div style={{ flex: 1 }}>
+            <Field name="q" as="search"
+              placeholder={turns.length ? "Ask a follow-up, e.g. And who collects that money?" : "e.g. How will Garden City be financed?"} />
+          </div>
+          <Button type="submit" variant="secondary" icon={Sparkles} loading={!!pending}>Ask</Button>
+        </form>
+        {chats.length > 0 && (
+          <details>
+            <summary className="bc-hint" style={{ cursor: "pointer" }}>Past chats ({chats.length})</summary>
+            <div className="bc-stack" style={{ gap: 4, marginTop: 8 }}>
+              {chats.map((c) => (
+                <div key={c.id} className="bc-row" style={{ flexWrap: "nowrap", gap: 8 }}>
+                  <Button size="sm" variant="ghost" icon={MessageSquare} onClick={() => open(c.id)} disabled={!!pending}
+                    title="Open this chat">
+                    {c.title}
+                  </Button>
+                  <span className="bc-hint" style={{ flex: 1, whiteSpace: "nowrap" }}>
+                    {c.turn_count} {c.turn_count === 1 ? "question" : "questions"} · {new Date(c.updated_at).toLocaleString()}
+                  </span>
+                  {c.id === conversationId && <Badge tone="accent">open</Badge>}
+                  <Button size="sm" variant="ghost" icon={Trash2} aria-label={`Delete chat "${c.title}"`}
+                    onClick={() => remove(c.id)} disabled={!!pending} />
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+        {past.error && <ErrorNote>{past.error}</ErrorNote>}
       </div>
     </Card>
+  );
+}
+
+/** Line between two turns of a chat. */
+const TURN_DIVIDER = { borderTop: "1px solid var(--border)", paddingTop: 16 };
+
+/** The user's question in a chat, marked "You". */
+function QuestionLine({ question }: { question: string }) {
+  return (
+    <div className="bc-row" style={{ flexWrap: "nowrap", gap: 8, alignItems: "baseline" }}>
+      <Badge tone="accent">You</Badge>
+      <strong>{question}</strong>
+    </div>
+  );
+}
+
+/**
+ * One turn of an "Ask your book" chat: the question, what was searched (when a follow-up was rewritten),
+ * the answer, its cited passages and, collapsed, all retrieved passages.
+ * @param turn The question and answer.
+ * @param first True for the first turn (no divider above it).
+ */
+function ChatTurnView({ turn, first }: { turn: ChatTurn; first: boolean }) {
+  const rewritten = turn.search_query.trim().toLowerCase() !== turn.question.trim().toLowerCase();
+  return (
+    <div className="bc-stack" style={{ gap: 8, ...(first ? {} : TURN_DIVIDER) }}>
+      <QuestionLine question={turn.question} />
+      {rewritten && (
+        <span className="bc-hint" title="Follow-up questions are rewritten into a standalone question before searching the books">
+          Searched for: “{turn.search_query}”
+        </span>
+      )}
+      <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>{turn.answer}</p>
+      <CitationList citations={turn.citations} />
+      <details>
+        <summary className="bc-hint" style={{ cursor: "pointer" }}>
+          All retrieved passages ({turn.passages.length}) · {turn.tokens.toLocaleString()} tokens
+        </summary>
+        <div className="bc-stack" style={{ marginTop: 8 }}>
+          {turn.passages.map((h) => <ChunkCard key={h.chunk.id} chunk={h.chunk} score={h.score} />)}
+        </div>
+      </details>
+    </div>
   );
 }
 

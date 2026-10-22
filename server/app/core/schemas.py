@@ -6,7 +6,7 @@ Class docstrings also appear as schema descriptions in the generated OpenAPI doc
 """
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -80,6 +80,7 @@ class Source(BaseModel):
     chunk_count: int  # number of chunks produced from this source so far
     created_at: datetime  # upload time in UTC
     error: str | None = None  # error message when status == "failed", otherwise None
+    author: str = ""  # from the PDF's metadata (author field, or "..., by Name" in its title); "" if unknown
 
 
 # ---------- Chunks & search ----------
@@ -241,20 +242,97 @@ class AssetUpdate(BaseModel):
 class AskRequest(BaseModel):
     """Request body for POST /projects/{id}/ask: a question about the project's books."""
 
-    question: str  # natural-language question
+    question: str = Field(min_length=1, max_length=1000)  # natural-language question (cleaned again by guard)
     k: int = Field(default=6, ge=1, le=20)  # number of passages to retrieve as context (1-20)
     source_ids: list[str] | None = None  # restrict to these sources; None = all sources
+    conversation_id: str | None = None  # continue this conversation; None = start a new one
 
 
 class AskResponse(BaseModel):
     """Response of POST /projects/{id}/ask: an answer written from the books, with its evidence."""
 
     question: str  # echo of the question
+    search_query: str  # what was searched: the question, or its standalone rewrite for a follow-up
     answer: str  # answer based only on the retrieved passages, with [n] citation markers
     citations: list[Citation]  # the passages cited in the answer, numbered like the markers
     passages: list[SearchHit]  # all retrieved passages, best first (what the answer could draw on)
     model: str  # chat model that wrote the answer
     tokens: int  # LLM tokens (prompt + completion) used
+    conversation_id: str | None = None  # the conversation this turn belongs to (None for stateless callers like MCP)
+
+
+class ChatTurn(AskResponse):
+    """One question and its answer inside a conversation."""
+
+    created_at: datetime
+
+
+class Conversation(BaseModel):
+    """A chat with the books ("Ask your book"): its turns, oldest first. Saved in assets/conversations/."""
+
+    id: str  # unique id, e.g. "cnv_1a2b3c4d"
+    project_id: str
+    title: str  # the first question, shortened
+    created_at: datetime
+    updated_at: datetime  # time of the last turn
+    turns: list[ChatTurn] = []
+
+
+class ConversationInfo(BaseModel):
+    """A conversation without its turns, for the list of past chats."""
+
+    id: str
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    turn_count: int
+
+
+# ---------- MCP console (Market Intelligence) ----------
+class McpTool(BaseModel):
+    """One tool of an MCP server, as listed by tools/list."""
+
+    name: str
+    title: str | None = None
+    description: str  # what the tool does; the text MCP clients and models read
+    input_schema: dict[str, Any]  # JSON Schema of the arguments; the GUI builds its form from it
+    read_only: bool | None = None  # the server's read-only hint, if it gives one
+
+
+class McpServerStatus(BaseModel):
+    """An MCP server the app knows, with its live status and tools (GET /mcp-servers)."""
+
+    name: str  # e.g. "mcp-guardrails"
+    title: str | None = None
+    description: str | None = None
+    url: str  # Streamable HTTP endpoint
+    audience: Literal["external", "internal"]  # external: for outside clients only; internal: the app uses it too
+    status: Literal["active", "offline"]
+    error: str | None = None  # why it is offline
+    latency_ms: int | None = None  # time to connect and list the tools
+    instructions: str | None = None  # the server's usage instructions for clients
+    tools: list[McpTool] = []
+
+
+class McpCallRequest(BaseModel):
+    """Request body for POST /mcp-servers/{name}/call: which tool to run with which arguments."""
+
+    tool: str = Field(min_length=1, max_length=100)
+    arguments: dict[str, Any] = {}
+
+
+class McpCallResult(BaseModel):
+    """One tool call made from the console, with its result; also an entry of the call log."""
+
+    id: str  # e.g. "call_1a2b3c4d"
+    server: str
+    tool: str
+    arguments: dict[str, Any]
+    ok: bool  # False if the call failed or the tool reported an error
+    structured: Any = None  # the tool's structured result (JSON), if it returned one
+    text: str = ""  # the text content of the result, or the error message
+    duration_ms: int
+    called_at: datetime
 
 
 # ---------- Usage & costs ----------

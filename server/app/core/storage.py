@@ -1,5 +1,6 @@
 """File storage for uploaded sources: server/assets/uploads/{project_id}/{source_id}/{filename},
-and for generated assets: server/assets/generated/{project_id}/{asset_id}.json.
+for generated assets: server/assets/generated/{project_id}/{asset_id}.json, and for "Ask your book"
+conversations: server/assets/conversations/{project_id}/{conversation_id}.json.
 
 Each source directory also holds META_FILENAME, the source's record as JSON, and after ingestion
 CHUNKS_FILENAME with its chunks. The upload directory
@@ -14,16 +15,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO
 
+import pymupdf
 from pydantic import ValidationError
 
 from app.core.config import DATA_DIR
-from app.core.schemas import Asset, BookSummary, Chunk, Source, SourceKind
+from app.core.schemas import Asset, BookSummary, Chunk, Conversation, Source, SourceKind
 
 logger = logging.getLogger(__name__)
 
 UPLOAD_DIR = DATA_DIR / "uploads"
 # Generated marketing assets: assets/generated/{project_id}/{asset_id}.json
 GENERATED_DIR = DATA_DIR / "generated"
+# Conversations of "Ask your book": assets/conversations/{project_id}/{conversation_id}.json
+CONVERSATIONS_DIR = DATA_DIR / "conversations"
 
 # Source record stored next to the uploaded file. It starts with "." and safe_filename strips
 # leading dots from uploads, so it can never collide with an uploaded file.
@@ -184,6 +188,25 @@ def cover_path(source: Source) -> Path:
     return UPLOAD_DIR / source.project_id / source.id / COVER_FILENAME
 
 
+def read_pdf_author(path: Path) -> str:
+    """The author from a PDF's metadata: its author field, or else "..., by Name" at the end of its title
+    (as in Project Gutenberg files, e.g. "The Project Gutenberg eBook of Successful Stock Speculation, by J. J. Butler").
+
+    Returns:
+        The author, or "" if the PDF names none or cannot be read.
+    """
+    try:
+        with pymupdf.open(path) as doc:
+            meta = doc.metadata or {}
+    except Exception:  # not a readable PDF: no author
+        return ""
+    author = (meta.get("author") or "").strip()
+    if not author:
+        match = re.search(r",? by ([^,;]+?)(?:--.*)?$", meta.get("title") or "", re.IGNORECASE)
+        author = match.group(1).strip() if match else ""
+    return author[:120]
+
+
 def source_file_path(source: Source) -> Path:
     """Path of the uploaded file of a source (the file may be missing, e.g. if deleted by hand).
 
@@ -289,6 +312,41 @@ def load_assets() -> dict[str, Asset]:
             logger.warning("Skipping unreadable asset file %s", path)
     assets.sort(key=lambda a: a.created_at)
     return {a.id: a for a in assets}
+
+
+def write_conversation(conversation: Conversation) -> None:
+    """Save a conversation as JSON (replacing the previous version), written to a temporary file first so a
+    crash cannot leave a half-written file.
+
+    Raises:
+        OSError: If the file cannot be written.
+    """
+    target_dir = CONVERSATIONS_DIR / conversation.project_id
+    target_dir.mkdir(parents=True, exist_ok=True)
+    tmp = target_dir / f".{conversation.id}.tmp"
+    tmp.write_text(conversation.model_dump_json(indent=2), encoding="utf-8")
+    tmp.replace(target_dir / f"{conversation.id}.json")
+
+
+def delete_conversation(conversation: Conversation) -> None:
+    """Delete the saved file of a conversation, if any."""
+    (CONVERSATIONS_DIR / conversation.project_id / f"{conversation.id}.json").unlink(missing_ok=True)
+
+
+def load_conversations() -> dict[str, Conversation]:
+    """Read all saved conversations (called once on server startup); unreadable files are skipped.
+
+    Returns:
+        Conversations by id, oldest first.
+    """
+    conversations: list[Conversation] = []
+    for path in CONVERSATIONS_DIR.glob("*/*.json"):
+        try:
+            conversations.append(Conversation.model_validate_json(path.read_text(encoding="utf-8")))
+        except (OSError, ValidationError):
+            logger.warning("Skipping unreadable conversation file %s", path)
+    conversations.sort(key=lambda c: c.created_at)
+    return {c.id: c for c in conversations}
 
 
 def load_sources() -> dict[str, Source]:

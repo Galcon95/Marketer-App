@@ -13,5 +13,8 @@ assets/chroma/
 # Generated marketing assets (user data)
 assets/generated/
 
+# Ask your book conversations (user data)
+assets/conversations/
+
 # Usage and cost log of model calls
 assets/usage/

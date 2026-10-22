@@ -6,35 +6,41 @@ lives in the app package (see README.md, "Project layout"):
     app/core      configuration, chat model, schemas, in-memory state, disk storage, usage log, writing style
     app/rag       Phase 1 Knowledge Hub: ingestion, vector store, retrieval, summaries, Q&A, generation
     app/campaign  Phase 2 Campaign Builder: zero-shot campaign kit
-    app/market    Phase 3 Market Intelligence: MCP servers (mcp-book-knowledge, mounted at /mcp)
+    app/market    Phase 3 Market Intelligence: MCP servers (mcp-book-knowledge at /mcp, mcp-guardrails at /guardrails/mcp)
+                  and the app's MCP client for the console (client.py)
     app/agents    Phase 4 Agent Workspace (still empty)
     app/api       FastAPI routers, one per area
 """
 
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import assets, campaigns, health, knowledge, projects, sources
+from app.api import assets, campaigns, health, knowledge, mcp_console, projects, sources
 from app.core import state, storage, usage
 from app.market.book_server import book_server
+from app.market.guard_server import guard_server
 from app.rag import ingestion
 
 # Restore uploaded sources (with their chunks) and generated assets from disk, so they survive
 # server restarts.
 ingestion.restore_sources()
 state.assets.update(storage.load_assets())
+state.conversations.update(storage.load_conversations())
 usage.load()  # totals of all model calls so far (usage.jsonl)
 
-# MCP server over Streamable HTTP; stateless + JSON responses: each request stands alone, no SSE streams.
+# MCP servers over Streamable HTTP; stateless + JSON responses: each request stands alone, no SSE streams.
 mcp_app = book_server.streamable_http_app(streamable_http_path="/mcp", stateless_http=True, json_response=True)
+guard_app = guard_server.streamable_http_app(streamable_http_path="/mcp", stateless_http=True, json_response=True)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    """Run the MCP session manager while the API runs (a mounted app's own lifespan is not started)."""
-    async with book_server.session_manager.run():
+    """Run the MCP session managers while the API runs (a mounted app's own lifespan is not started)."""
+    async with AsyncExitStack() as stack:
+        for server in (book_server, guard_server):
+            await stack.enter_async_context(server.session_manager.run())
         yield
 
 
@@ -48,8 +54,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for module in (health, projects, sources, knowledge, assets, campaigns):
+for module in (health, projects, sources, knowledge, assets, campaigns, mcp_console):
     app.include_router(module.router)
 
-# Last, so the API routes match first: the MCP app only serves POST/GET /mcp.
+# Last, so the API routes match first. /guardrails before the catch-all "/", which only serves POST/GET /mcp.
+app.mount("/guardrails", guard_app)  # → /guardrails/mcp
 app.mount("/", mcp_app)
+
+# run the server
+# cd server
+# uv run fastapi dev server.py
+
+# see the MCP server with:
+# npx @modelcontextprotocol/inspector

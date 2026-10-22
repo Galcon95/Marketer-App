@@ -9,6 +9,7 @@ import { api, API_URL, PROJECT_ID } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import CampaignBuilder from "./phases/CampaignBuilder";
 import KnowledgeHub from "./phases/KnowledgeHub";
+import MarketIntelligence from "./phases/MarketIntelligence";
 import UsageDrawer, { formatTokens, formatUsd } from "./UsagePanel";
 import { Badge, Button, Card, ErrorNote, Placeholder, SectionHeading, Sidebar, StatusRow, Tabs, type NavGroup, type TabItem } from "./ui";
 
@@ -40,25 +41,7 @@ const SERVICE_META: Record<string, { label: string; icon: typeof Server }> = {
   llm: { label: "LLM", icon: Brain },
 };
 
-/* ---------- Phases without backend endpoints yet (dummies) ---------- */
-
-/** Phase 3 placeholder: MCP server cards and an empty leads table. No API calls yet. */
-function MarketIntelligence() {
-  return (
-    <>
-      <div className="bc-grid bc-g3">
-        {["mcp-server-1", "mcp-server-2", "mcp-server-3"].map((name) => (
-          <Card key={name} title={name} icon={Network} meta={<Badge tone="warning">Not connected</Badge>}>
-            <span className="bc-hint">MCP server placeholder</span>
-          </Card>
-        ))}
-      </div>
-      <Card title="High-intent leads" icon={Target} meta={<Badge mono>0 rows</Badge>}>
-        <Placeholder icon={Target}>Leads table will appear here.</Placeholder>
-      </Card>
-    </>
-  );
-}
+/* ---------- Phase without backend endpoints yet (dummy) ---------- */
 
 /** Steps of the planned multi-agent workflow, in order. */
 const AGENTS = [
@@ -172,8 +155,8 @@ export default function AppShell() {
         nav={nav}
         active={tab}
         onNavigate={navigate}
-        project={p?.name ?? PROJECT_ID}
-        projectMeta={p ? `${p.source_count} sources · ${p.asset_count} assets` : "loading…"}
+        client={p?.name ?? PROJECT_ID}
+        clientMeta={p ? `${p.source_count} sources · ${p.asset_count} assets` : "loading…"}
         status={status}
       />
       <main className="bc-main">
