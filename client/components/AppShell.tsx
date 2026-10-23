@@ -6,10 +6,10 @@
  * Agent Workspace (Phase 4) placeholder.
  */
 
-import { useCallback, useState, type JSX } from "react";
+import { useCallback, useState, useSyncExternalStore, type JSX } from "react";
 import {
-  Bot, Brain, Cpu, Database, FileText, Menu, Network, Server, Settings,
-  Sparkles, SunMoon, Target, Terminal, Users, UserCheck,
+  Bot, Brain, Cpu, Database, FileText, Menu, Moon, Network, Server, Settings,
+  Sparkles, Sun, SunMoon, Target, Terminal, Users, UserCheck,
 } from "lucide-react";
 import { api, API_URL, PROJECT_ID } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
@@ -18,6 +18,25 @@ import KnowledgeHub from "./phases/KnowledgeHub";
 import MarketIntelligence from "./phases/MarketIntelligence";
 import UsageDrawer, { formatTokens, formatUsd } from "./UsagePanel";
 import { Badge, Button, Card, ErrorNote, Placeholder, SectionHeading, Sidebar, StatusRow, Tabs, type NavGroup, type TabItem } from "./ui";
+
+/** localStorage key of the chosen theme; the theme-init script in app/layout.tsx reads the same key. */
+const THEME_KEY = "theme";
+
+/**
+ * The current theme from <html data-theme>, kept in sync by watching that attribute (the theme-init script and
+ * the Theme button set it). Null while rendering on the server, where the theme is not known yet.
+ */
+function useTheme(): "light" | "dark" | null {
+  return useSyncExternalStore(
+    (onChange) => {
+      const observer = new MutationObserver(onChange);
+      observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+      return () => observer.disconnect();
+    },
+    () => (document.documentElement.dataset.theme === "light" ? "light" : "dark"),
+    () => null,
+  );
+}
 
 /** Id of one of the four pipeline phases (tabs). */
 type PhaseId = "p1" | "p2" | "p3" | "p4";
@@ -105,6 +124,7 @@ export default function AppShell() {
 
   const health = useApi(`health:${refresh}`, api.health);
   const project = useApi(`project:${refresh}`, api.getProject);
+  const theme = useTheme();
   // Usage totals for the top bar (reloaded on every change); the panel loads its own data when opened.
   const usage = useApi(`usage:${refresh}`, () => api.usage(1));
   const [usageOpen, setUsageOpen] = useState(0); // > 0 while the usage panel is open; increases per opening
@@ -139,10 +159,14 @@ export default function AppShell() {
     setNavOpen(false);
   }
 
-  /** Switch between light and dark theme via the data-theme attribute on <html>. */
+  /** Switch between light and dark theme via the data-theme attribute on <html>, and remember the choice
+   * (the theme-init script in app/layout.tsx applies it on the next visit). */
   function toggleTheme() {
-    const el = document.documentElement;
-    el.dataset.theme = el.dataset.theme === "light" ? "dark" : "light";
+    const next = theme === "light" ? "dark" : "light";
+    document.documentElement.dataset.theme = next; // useTheme sees the change and updates the button
+    try {
+      localStorage.setItem(THEME_KEY, next);
+    } catch { /* storage blocked: the theme just isn't remembered */ }
   }
 
   // Status block: "Unreachable" on error, "Checking…" while loading, else one row per service.
@@ -188,7 +212,10 @@ export default function AppShell() {
         </div>
       </main>
       {usageOpen > 0 && <UsageDrawer openCount={usageOpen} onClose={closeUsage} />}
-      <Button variant="secondary" size="sm" icon={SunMoon} className="theme-toggle" onClick={toggleTheme}>Theme</Button>
+      <Button variant="secondary" size="sm" icon={theme === "dark" ? Sun : theme === "light" ? Moon : SunMoon}
+        className="theme-toggle" onClick={toggleTheme} aria-label="Switch between light and dark theme">
+        {theme === "dark" ? "Light mode" : theme === "light" ? "Dark mode" : "Theme"}
+      </Button>
     </div>
   );
 }
