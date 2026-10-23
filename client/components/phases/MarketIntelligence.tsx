@@ -7,8 +7,9 @@
 
 import { useState, type SubmitEvent } from "react";
 import { Network, Play, RotateCcw, Target, Terminal, Wrench } from "lucide-react";
-import { api, errorMessage, type JsonSchema, type McpCall, type McpServer, type McpTool } from "@/lib/api";
+import { api, bookTitle, errorMessage, type JsonSchema, type McpCall, type McpServer, type McpTool, type Source } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
+import { readyBooks } from "../BookPicker";
 import { Badge, Button, Card, ErrorNote, Field, Placeholder, SectionHeading } from "../ui";
 
 /** Props every phase view gets from AppShell: `refresh` reloads data, `onChange` triggers a global refresh. */
@@ -23,7 +24,7 @@ interface ArgField {
   label: string;
   kind: ArgKind;
   required: boolean;
-  options: string[]; // for kind "select"
+  options: Array<string | { value: string; label: string }>; // for kind "select"
   defaultValue: string; // the schema's default, as form text
   hint: string;
 }
@@ -33,10 +34,12 @@ const LONG_TEXT_ARGS = ["text", "question", "brief", "post"];
 /**
  * The form fields for a tool's input schema: one per property, in schema order. Optional values
  * (anyOf with null) use their non-null type; enums become selects, numbers number fields, string
- * lists a text box with one item per line, anything else a JSON text box.
+ * lists a text box with one item per line, anything else a JSON text box. A "book_id" argument becomes a select of
+ * the processed books (plus "All books" when it is optional), so nobody has to type a book id.
  * @param schema The tool's input schema.
+ * @param books The processed books, for "book_id" arguments.
  */
-function argFields(schema: JsonSchema): ArgField[] {
+function argFields(schema: JsonSchema, books: Source[]): ArgField[] {
   const required = new Set(schema.required ?? []);
   return Object.entries(schema.properties ?? {}).map(([name, prop]) => {
     const type = prop.anyOf?.find((s) => s.type !== "null") ?? prop;
@@ -48,6 +51,14 @@ function argFields(schema: JsonSchema): ArgField[] {
       : "json";
     const hint = [prop.description ?? type.description, kind === "list" ? "One item per line." : "",
       kind === "json" ? "JSON value." : ""].filter(Boolean).join(" ");
+    if (name === "book_id" && books.length) {
+      const options = books.map((b) => ({ value: b.id, label: bookTitle(b.filename) }));
+      return {
+        name, label: "Book", kind: "select", required: required.has(name), hint: "",
+        options: required.has(name) ? options : [{ value: "", label: `All books (${books.length})` }, ...options],
+        defaultValue: required.has(name) ? books[0].id : "",
+      };
+    }
     return {
       name, label: prop.title ?? name, kind, required: required.has(name),
       options: kind === "boolean" ? ["true", "false"] : (type.enum ?? []),
@@ -151,10 +162,13 @@ function CallResult({ call }: { call: McpCall }) {
  * Keyed by server and tool by the parent, so switching tools starts with a fresh form.
  * @param server The tool's server.
  * @param tool The tool.
+ * @param books The processed books, offered as a select for "book_id" arguments.
  * @param onResult Called with the finished call (also failed ones).
  */
-function ToolForm({ server, tool, onResult }: { server: McpServer; tool: McpTool; onResult: (call: McpCall) => void }) {
-  const fields = argFields(tool.input_schema);
+function ToolForm({ server, tool, books, onResult }: {
+  server: McpServer; tool: McpTool; books: Source[]; onResult: (call: McpCall) => void;
+}) {
+  const fields = argFields(tool.input_schema, books);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -240,6 +254,8 @@ function CallLog({ calls, onOpen }: { calls: McpCall[]; onOpen: (call: McpCall) 
 export default function MarketIntelligence({ refresh, onChange }: Props) {
   const servers = useApi(`mcp-servers:${refresh}`, api.listMcpServers);
   const calls = useApi(`mcp-calls:${refresh}`, api.listMcpCalls);
+  const sources = useApi(`mcp-books:${refresh}`, api.listSources); // for the book selects in tool forms
+  const books = readyBooks(sources.data ?? []);
   const [serverName, setServerName] = useState<string | null>(null); // chosen server; null = first active
   const [toolName, setToolName] = useState<string | null>(null); // chosen tool; null = the server's first
   const [shown, setShown] = useState<McpCall | null>(null); // result shown in the console
@@ -289,7 +305,7 @@ export default function MarketIntelligence({ refresh, onChange }: Props) {
                     options={server.tools.map((t) => t.name)} onChange={setToolName} />
                 </div>
               </div>
-              {tool && <ToolForm key={`${server.name}/${tool.name}`} server={server} tool={tool} onResult={handleResult} />}
+              {tool && <ToolForm key={`${server.name}/${tool.name}`} server={server} tool={tool} books={books} onResult={handleResult} />}
             </div>
             <div className="bc-stack">
               <div className="bc-label">Result</div>

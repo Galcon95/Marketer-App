@@ -30,7 +30,7 @@ from app.core import state as db
 from app.core.llm import GenerationError
 from app.core.schemas import Source
 from app.rag import qa, vectorstore
-from app.rag.library import BookInfo, book_info, book_title, known_books, ready_books
+from app.rag.library import BookInfo, book_info, book_title, find_book, known_books, ready_books
 from app.rag.retrieval import retrieve_chunks, source_name
 
 PROJECT_ID = db.DEFAULT_PROJECT_ID  # the project whose books the tools serve
@@ -113,7 +113,7 @@ def search_book(query: str, book_id: str | None = None, k: int = 5) -> list[Pass
 
     Args:
         query: What to look for, in natural language, e.g. "why towns should own their land".
-        book_id: Optional: only search this book (from list_books).
+        book_id: Optional: only search this book, by its id from list_books, its title (or part of it) or its author.
         k: Number of passages to return, 1-20 (default 5).
     """
     query = _checked(query, "search_query", check_injection=False)  # only embedded, never a prompt
@@ -136,7 +136,7 @@ def get_book_summary(book_id: str) -> BookSummaryResult:
     Fails if the book has no summary yet (list_books shows has_summary).
 
     Args:
-        book_id: The book (from list_books).
+        book_id: The book, by its id from list_books, its title (or part of it) or its author.
     """
     source = _book(book_id)
     summary = db.summaries.get(source.id)
@@ -159,7 +159,7 @@ def ask_book(question: str, book_id: str | None = None) -> Answer:
 
     Args:
         question: The question, e.g. "What does Howard propose against overcrowded cities?".
-        book_id: Optional: only use this book (from list_books).
+        book_id: Optional: only use this book, by its id from list_books, its title (or part of it) or its author.
     """
     question = _checked(question, "question", check_injection=True)
     source_ids = [_book(book_id).id] if book_id else None
@@ -176,11 +176,12 @@ def ask_book(question: str, book_id: str | None = None) -> Answer:
 
 # ---------- Helpers ----------
 def _book(book_id: str) -> Source:
-    """A processed book by id; ToolError (its message reaches the client) with the valid ids if unknown."""
-    for source in ready_books(PROJECT_ID):
-        if source.id == book_id:
-            return source
-    raise ToolError(f"Unknown book_id '{book_id}'. Known books: {known_books(PROJECT_ID)}.")
+    """A processed book by its id, (part of) its title or its author (library.find_book); ToolError (its message
+    reaches the client) listing the known books if nothing or several books match."""
+    source = find_book(PROJECT_ID, book_id)
+    if source is None:
+        raise ToolError(f"No single book matches '{book_id}'. Known books: {known_books(PROJECT_ID)}.")
+    return source
 
 
 def _title(source: Source) -> str:
