@@ -907,7 +907,7 @@ export default function KnowledgeHub({ refresh, onChange }: Props) {
       <BookShelf books={books} refresh={refresh} selected={bookId} onSelect={setSelectedBook} onBrowse={openDrawer} />
       <SourcesCard sources={list} error={sources.error} onBrowse={openDrawer} onChange={onChange} />
       <BookPicker books={books} selected={bookId} onSelect={setSelectedBook} />
-      <div className="bc-split">
+      <div className="bc-split bc-split-chat">
         <AskBook bookId={bookId} onChange={onChange} />
         <GroundedGenerator refresh={refresh} bookId={bookId} onChange={onChange} />
       </div>
