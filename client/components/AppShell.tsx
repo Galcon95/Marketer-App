@@ -2,8 +2,8 @@
 
 /**
  * The app frame: sidebar (navigation, current client, system status from GET /health), top bar (title,
- * usage and costs button, export) and the four phase tabs, which render the phase views. Also holds the
- * Agent Workspace (Phase 4) placeholder.
+ * usage and costs button, export) and the four phase tabs, which render the phase views. Holds the state the
+ * views share (refresh counter, the book being worked on) and the Agent Workspace (Phase 4) placeholder.
  */
 
 import { useCallback, useState, useSyncExternalStore, type JSX } from "react";
@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { api, API_URL, PROJECT_ID } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
-import CampaignBuilder from "./phases/CampaignBuilder";
+import ContentStudio from "./phases/ContentStudio";
 import KnowledgeHub from "./phases/KnowledgeHub";
 import MarketIntelligence from "./phases/MarketIntelligence";
 import UsageDrawer, { formatTokens, formatUsd } from "./UsagePanel";
@@ -40,13 +40,17 @@ function useTheme(): "light" | "dark" | null {
 
 /** Id of one of the four pipeline phases (tabs). */
 type PhaseId = "p1" | "p2" | "p3" | "p4";
-/** Props passed to every phase view: `refresh` reloads its data, `onChange` triggers a global refresh. */
-type PhaseProps = { refresh: number; onChange: () => void };
+/**
+ * Props passed to every phase view: `refresh` reloads its data, `onChange` triggers a global refresh, `bookId` is
+ * the book being worked on (null = all books; shared, so a choice in the Knowledge Hub carries over to the
+ * Content Studio) and `onSelectBook` changes it.
+ */
+type PhaseProps = { refresh: number; onChange: () => void; bookId: string | null; onSelectBook: (id: string | null) => void };
 
 /** Tab bar entries, one per phase. */
 const TABS: TabItem<PhaseId>[] = [
   { id: "p1", kicker: "PHASE 1", label: "Knowledge Hub", icon: Database },
-  { id: "p2", kicker: "PHASE 2", label: "Campaign Builder", icon: Sparkles },
+  { id: "p2", kicker: "PHASE 2", label: "Content Studio", icon: Sparkles },
   { id: "p3", kicker: "PHASE 3", label: "Market Intelligence", icon: Network },
   { id: "p4", kicker: "PHASE 4", label: "Agent Workspace", icon: Cpu },
 ];
@@ -54,7 +58,7 @@ const TABS: TabItem<PhaseId>[] = [
 /** Page title and breadcrumb subtitle shown in the top bar for each phase. */
 const TITLES: Record<PhaseId, [title: string, crumb: string]> = {
   p1: ["Knowledge hub", "Retrieval-augmented generation over your content"],
-  p2: ["Campaign builder", "Zero-shot prompts · no grounding"],
+  p2: ["Content studio", "Grounded assets from your books · zero-shot campaign kits"],
   p3: ["Market intelligence", "Live tool calls via Model Context Protocol"],
   p4: ["Agent workspace", "Strategist → Copywriter → Auditor → You"],
 };
@@ -103,7 +107,7 @@ function AgentWorkspace() {
 /** Component rendered for each phase tab. */
 const VIEWS: Record<PhaseId, (props: PhaseProps) => JSX.Element> = {
   p1: KnowledgeHub,
-  p2: CampaignBuilder,
+  p2: ContentStudio,
   p3: MarketIntelligence,
   p4: AgentWorkspace,
 };
@@ -121,6 +125,8 @@ export default function AppShell() {
   // Bumped after any change (upload, delete, generate) so every list and count reloads.
   const [refresh, setRefresh] = useState(0);
   const onChange = useCallback(() => setRefresh((n) => n + 1), []);
+  // Book being worked on (null = all books), shared by the Knowledge Hub and the Content Studio.
+  const [bookId, setBookId] = useState<string | null>(null);
 
   const health = useApi(`health:${refresh}`, api.health);
   const project = useApi(`project:${refresh}`, api.getProject);
@@ -208,7 +214,7 @@ export default function AppShell() {
         {/* key={tab} remounts the view on tab change, resetting its local state. */}
         <div className="bc-view" key={tab}>
           {health.error && <ErrorNote>Backend unreachable at {API_URL}. Start it with “uv run fastapi dev server.py” in server/.</ErrorNote>}
-          <View refresh={refresh} onChange={onChange} />
+          <View refresh={refresh} onChange={onChange} bookId={bookId} onSelectBook={setBookId} />
         </div>
       </main>
       {usageOpen > 0 && <UsageDrawer openCount={usageOpen} onClose={closeUsage} />}

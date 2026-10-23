@@ -6,23 +6,25 @@
  *   BookShelf / BookPicker      the library with covers; choose one book or all books to work on
  *   SourceChunksDrawer          browse a book's chunks; SummaryDrawer: create and read the book summary
  *   AskBook                     "Ask your book": chat with history, citations and tool calls
- *   GroundedGenerator           write assets from the books, with citations
+ * Writing content from the books happens in the Content Studio (Phase 2).
  */
 
 import { useCallback, useEffect, useRef, useState, type ReactNode, type SubmitEvent } from "react";
-import { AlertTriangle, BookOpen, Check, ChevronDown, Database, FileText, Film, Library, MessageSquare, Play, Plus, RotateCcw, Sparkles, Target, Trash2, Upload, Wrench } from "lucide-react";
+import { AlertTriangle, BookOpen, Check, Database, FileText, Film, Library, MessageSquare, Play, Plus, RotateCcw, Sparkles, Target, Trash2, Upload, Wrench } from "lucide-react";
 import {
-  api, ASSET_TYPES, assetTypeLabel, bookTitle, errorMessage, humanizeLabel, LENGTHS, locationLabel, MAX_UPLOAD_BYTES, PLANNED_ASSET_TYPES, PLATFORMS, PROCESSING_STATUSES,
-  TONES, UPLOAD_EXTENSIONS, usesPlatform,
-  type AssetType, type BookSummary, type ChatTurn, type Chunk, type ToolCallRecord, type ChunkPage, type Length, type Platform, type Source, type Tone,
+  api, bookTitle, errorMessage, locationLabel, MAX_UPLOAD_BYTES, PROCESSING_STATUSES, UPLOAD_EXTENSIONS,
+  type BookSummary, type ChatTurn, type Chunk, type ChunkPage, type Source, type ToolCallRecord,
 } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
-import AssetCard, { CitationList } from "../AssetCard";
+import { CitationList } from "../AssetCard";
 import BookCover, { PageLink } from "../BookCover";
-import { Badge, Button, Card, Drawer, ErrorNote, Field, Placeholder, ProgressBar, RangeField, Score, SectionHeading } from "../ui";
+import BookPicker, { readyBooks } from "../BookPicker";
+import { Badge, Button, Card, Drawer, ErrorNote, Field, Placeholder, ProgressBar, Score, SectionHeading } from "../ui";
 
-/** Props every phase view gets from AppShell: `refresh` reloads data, `onChange` triggers a global refresh. */
-type Props = { refresh: number; onChange: () => void };
+/** Props every phase view gets from AppShell (see PhaseProps there). */
+type Props = {
+  refresh: number; onChange: () => void; bookId: string | null; onSelectBook: (id: string | null) => void;
+};
 
 /** Which side panel is open for a source: its chunks or its book summary. */
 type DrawerView = "chunks" | "summary";
@@ -186,37 +188,6 @@ function BookShelf({ books, refresh, selected, onSelect, onBrowse }: {
             onSelect={() => onSelect(selected === book.id ? null : book.id)} onBrowse={onBrowse} />
         ))}
       </div>
-    </div>
-  );
-}
-
-/** The processed books of a project (ready PDFs and other documents), in upload order. */
-function readyBooks(sources: Source[]) {
-  return sources.filter((s) => s.status === "ready" && s.kind === "document");
-}
-
-/**
- * "Working on" bar above Ask and Generate: choose one book or all books. Ask your book, the
- * generator and the generated-assets list then only use that book.
- * @param books The processed books.
- * @param selected Id of the selected book, or null for all books.
- * @param onSelect Called with the chosen book's id, or null for all books.
- */
-function BookPicker({ books, selected, onSelect }: { books: Source[]; selected: string | null; onSelect: (id: string | null) => void }) {
-  if (books.length === 0) return null;
-  const book = books.find((b) => b.id === selected);
-  return (
-    <div className="bc-card" style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", flexWrap: "wrap" }}>
-      {book ? <BookCover sourceId={book.id} title={bookTitle(book.filename)} width={26} link /> : <Library size={18} className="bc-ico" aria-hidden />}
-      <strong>Working on</strong>
-      <div className="bc-select-wrap" style={{ minWidth: 260, flex: "0 1 420px" }}>
-        <select className="bc-select" aria-label="Book to work on" value={selected ?? ""} onChange={(e) => onSelect(e.target.value || null)}>
-          <option value="">All books ({books.length})</option>
-          {books.map((b) => <option key={b.id} value={b.id}>{bookTitle(b.filename)}</option>)}
-        </select>
-        <ChevronDown size={16} className="bc-ico" aria-hidden />
-      </div>
-      <span className="bc-hint">Ask your book, the generator and the asset list use {book ? "only this book" : "all books"}.</span>
     </div>
   );
 }
@@ -741,8 +712,8 @@ function ToolCallCard({ call }: { call: ToolCallRecord }) {
 }
 
 /**
- * One turn of an "Ask your book" chat: the question, what was searched (when a follow-up was rewritten),
- * the tools the model called, the answer, its cited passages and, collapsed, all retrieved passages.
+ * One turn of an "Ask your book" chat: the question, what was searched (when a follow-up was rewritten), the
+ * book/chapter/page filter taken from the question, the tools the model called, the answer, its cited passages and, collapsed, all retrieved passages.
  * @param turn The question and answer.
  * @param first True for the first turn (no divider above it).
  */
@@ -754,6 +725,11 @@ function ChatTurnView({ turn, first }: { turn: ChatTurn; first: boolean }) {
       {rewritten && (
         <span className="bc-hint" title="Follow-up questions are rewritten into a standalone question before searching the books">
           Searched for: “{turn.search_query}”
+        </span>
+      )}
+      {turn.filters && (
+        <span className="bc-hint" title="Structured retrieval: the book, chapter or pages named in the question restrict the search">
+          Filtered to: {turn.filters}
         </span>
       )}
       {(turn.tool_calls ?? []).map((call, i) => <ToolCallCard key={i} call={call} />)}
@@ -771,141 +747,19 @@ function ChatTurnView({ turn, first }: { turn: ChatTurn; first: boolean }) {
   );
 }
 
-/* ---------- Grounded generation ---------- */
-/** Example brief per asset type, shown as the brief's placeholder (for replies: the optional angle). */
-const BRIEF_EXAMPLES: Record<AssetType, string> = {
-  blurb: "e.g. Why this book still matters today; use the strongest quote",
-  social_post: "e.g. Make people curious about the book's central idea, with a short quote",
-  social_reply: "e.g. Agree partly, but add the book's view that both sides can be combined",
-  video_script: "e.g. Why this old book still answers today's problem; end with a question to comment on",
-  youtube_video: "e.g. A 8-minute video explaining the book's central idea for beginners",
-  newsletter: "e.g. Introduce the book to readers interested in housing and city life; call to action: read chapter I",
-  ad_copy: "e.g. Ads for people frustrated with expensive city rents",
-  lead_magnet: "e.g. A free guide with 5 ideas from the book for better neighbourhoods",
-  persona: "e.g. The ideal reader of this book among today's professionals",
-};
-
-/**
- * Form for grounded (RAG) generation plus the list of grounded assets, newest first.
- * Options adapt to the asset type: social posts, replies and video scripts choose a platform (which
- * decides length and style), other types a length; replies take the post to answer plus an optional
- * angle, all other types a brief (with an example that fits the type). With a book selected, it
- * generates from that book only and lists only that book's assets. The list shows the selected asset
- * type only ("Show all types" lifts that), and switching the type clears the brief and the pasted post,
- * so nothing written for another type is carried over.
- * @param refresh Changing it reloads the asset list.
- * @param bookId Only use (and list assets of) this book; null = all books.
- * @param onChange Called after generating (and after editing or deleting an asset) to refresh the app.
- */
-function GroundedGenerator({ refresh, bookId, onChange }: Props & { bookId: string | null }) {
-  const assets = useApi(`assets:${refresh}`, api.listAssets);
-  const [assetType, setAssetType] = useState<AssetType>("blurb"); // decides which fields are shown
-  const [allTypes, setAllTypes] = useState(false); // list assets of every type, not only the selected one
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const isReply = assetType === "social_reply";
-
-  /** Form submit: request a grounded asset with the chosen type, options and brief (or post + angle). */
-  async function submit(e: SubmitEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const f = new FormData(e.currentTarget);
-    const get = (k: string) => String(f.get(k) ?? "").trim();
-    setPending(true);
-    setError(null);
-    try {
-      await api.generate({
-        asset_type: assetType,
-        brief: get("brief"),
-        grounded: true,
-        tone: (get("tone") || "neutral") as Tone,
-        audience: get("audience"),
-        humanize: Number(get("humanize") || 60),
-        ...(bookId ? { source_ids: [bookId] } : {}),
-        ...(usesPlatform(assetType) ? { platform: get("platform") as Platform } : { length: get("length") as Length }),
-        ...(isReply ? { reply_to: get("reply_to") } : {}),
-      });
-      onChange();
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setPending(false);
-    }
-  }
-
-  // The server returns assets oldest first; show only grounded ones (of the selected book), newest on top,
-  // and of those only the selected type unless "Show all types" is on.
-  const grounded = (assets.data ?? [])
-    .filter((a) => a.grounded && (!bookId || a.source_ids.includes(bookId)))
-    .reverse();
-  const shown = allTypes ? grounded : grounded.filter((a) => a.asset_type === assetType);
-  const typeLabel = assetTypeLabel(assetType).replace(/\s*\(.*\)$/, ""); // "YouTube video page (titles · …)" → "YouTube video page"
-
-  return (
-    <div className="bc-stack" style={{ gap: 16 }}>
-      <SectionHeading icon={Sparkles} title="Grounded asset generator" count={shown.length}>
-        {grounded.length > 0 && (
-          <Button size="sm" variant="ghost" onClick={() => setAllTypes(!allTypes)}
-            title={allTypes ? `List only ${typeLabel} assets` : "List the assets of every type"}>
-            {allTypes ? `Only ${typeLabel}` : `Show all types (${grounded.length})`}
-          </Button>
-        )}
-      </SectionHeading>
-      <Card>
-        <form className="bc-stack" onSubmit={submit}>
-          <Field name="asset_type" as="select" label="Asset type" options={[...ASSET_TYPES, ...PLANNED_ASSET_TYPES]}
-            onChange={(value) => setAssetType(value as AssetType)} />
-          <div className="bc-row" style={{ gap: 12, alignItems: "flex-start" }}>
-            <div style={{ flex: 1, minWidth: 140 }}>
-              {usesPlatform(assetType)
-                ? <Field name="platform" as="select" label="Platform" options={PLATFORMS} />
-                : <Field name="length" as="select" label="Length" options={LENGTHS} defaultValue="standard" />}
-            </div>
-            <div style={{ flex: 1, minWidth: 140 }}>
-              <Field name="tone" as="select" label="Tone" options={TONES} />
-            </div>
-          </div>
-          <Field name="audience" label="Target audience (optional)" placeholder="e.g. young urban planners" />
-          <RangeField name="humanize" label="How human should it sound?" defaultValue={60} describe={humanizeLabel}
-            hint="Higher = less typical AI wording. From 60 on, AI clichés found in the result are rewritten automatically." />
-          {isReply && (
-            <Field name="reply_to" as="textarea" label="Their post" rows={5} required
-              placeholder="Paste the post you want to reply to" />
-          )}
-          {/* key: a new asset type starts with an empty brief instead of the text written for the previous type. */}
-          <Field key={`brief-${assetType}`} name="brief" as="textarea" label={isReply ? "Your angle (optional)" : "Brief"}
-            rows={3} placeholder={BRIEF_EXAMPLES[assetType]} required={!isReply} />
-          <Button type="submit" icon={Sparkles} loading={pending}>
-            {pending ? "Generating…" : isReply ? "Generate reply from sources" : "Generate from sources"}
-          </Button>
-          {error && <ErrorNote>{error}</ErrorNote>}
-        </form>
-      </Card>
-      {assets.error ? (
-        <ErrorNote>{assets.error}</ErrorNote>
-      ) : shown.length ? (
-        shown.map((a) => <AssetCard key={a.id} asset={a} onChange={onChange} />)
-      ) : (
-        <Placeholder icon={Sparkles}>
-          {assets.loading ? "Loading…"
-            : allTypes || !grounded.length ? "Grounded assets with citations will appear here."
-            : `No ${typeLabel} yet${bookId ? " for this book" : ""}. Generate one above, or show all types.`}
-        </Placeholder>
-      )}
-    </div>
-  );
-}
-
 /* ---------- Phase 1 ---------- */
 /**
  * Phase 1: the knowledge hub for retrieval-augmented generation. Combines upload, the book shelf, the sources
- * table, "Ask your book" (questions answered from the books) and grounded generation, and opens the chunk drawer for a source.
+ * table and "Ask your book" (questions answered from the books), and opens the chunk and summary drawers.
  * While any source is being processed, the sources list is reloaded every second so the upload
  * panel and the table show live progress; when processing ends, the whole app is refreshed once
  * (sidebar counts, project stats).
  * @param refresh Changing it reloads sources and assets.
  * @param onChange Called after any change (upload, delete, generate) to refresh the app.
+ * @param bookId The book being worked on, shared across the app (null = all books).
+ * @param onSelectBook Changes the book being worked on.
  */
-export default function KnowledgeHub({ refresh, onChange }: Props) {
+export default function KnowledgeHub({ refresh, onChange, bookId: selectedBook, onSelectBook }: Props) {
   const sources = useApi(`sources:${refresh}`, api.listSources);
   // Source and view shown in the side panel; null = closed.
   const [browsing, setBrowsing] = useState<{ source: Source; view: DrawerView } | null>(null);
@@ -914,8 +768,7 @@ export default function KnowledgeHub({ refresh, onChange }: Props) {
 
   const list = sources.data ?? [];
   const books = readyBooks(list);
-  // Book being worked on (null = all books); forgotten when that book disappears (deleted, re-indexing).
-  const [selectedBook, setSelectedBook] = useState<string | null>(null);
+  // Book being worked on (null = all books); ignored while that book is not ready (deleted, re-indexing).
   const bookId = selectedBook && books.some((b) => b.id === selectedBook) ? selectedBook : null;
   const processing = list.some(isProcessing);
   const { reload } = sources;
@@ -931,13 +784,10 @@ export default function KnowledgeHub({ refresh, onChange }: Props) {
   return (
     <>
       <UploadPanel sources={list} sourcesLoading={sources.loading} onChange={onChange} />
-      <BookShelf books={books} refresh={refresh} selected={bookId} onSelect={setSelectedBook} onBrowse={openDrawer} />
+      <BookShelf books={books} refresh={refresh} selected={bookId} onSelect={onSelectBook} onBrowse={openDrawer} />
       <SourcesCard sources={list} error={sources.error} onBrowse={openDrawer} onChange={onChange} />
-      <BookPicker books={books} selected={bookId} onSelect={setSelectedBook} />
-      <div className="bc-split bc-split-chat">
-        <AskBook bookId={bookId} onChange={onChange} />
-        <GroundedGenerator refresh={refresh} bookId={bookId} onChange={onChange} />
-      </div>
+      <BookPicker books={books} selected={bookId} onSelect={onSelectBook} uses="Ask your book uses" />
+      <AskBook bookId={bookId} onChange={onChange} />
       {browsing?.view === "chunks" && <SourceChunksDrawer source={browsing.source} onClose={closeDrawer} />}
       {browsing?.view === "summary" && <SummaryDrawer source={browsing.source} onClose={closeDrawer} onChange={onChange} />}
     </>

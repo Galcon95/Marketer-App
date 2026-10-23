@@ -142,6 +142,7 @@ export interface VerifyResponse { items: VerifyItem[] }
 export interface AskResponse {
   question: string;
   search_query: string; // what was searched: the question, or its standalone rewrite for a follow-up
+  filters: string; // book/chapter/page filters taken from the question (structured retrieval); "" = none
   answer: string; // plain text with [n] markers matching `citations`
   citations: Citation[];
   passages: SearchHit[]; // all retrieved passages, best first

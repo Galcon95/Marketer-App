@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Phase 2, Campaign Builder: a book brief (pre-filled from a library book and its summary) becomes a
- * zero-shot campaign kit of 3 reader personas, 5 social posts and a blurb (POST /campaigns). Past
+ * Campaign Builder, the "Campaign kit" tab of the Content Studio (Phase 2): a book brief (pre-filled from a
+ * library book and its summary) becomes a zero-shot campaign kit of 3 reader personas, 5 social posts and a blurb (POST /campaigns). Past
  * campaigns are listed below, the newest open.
  */
 
@@ -226,9 +226,9 @@ function CampaignKit({ assets, onChange }: { assets: Asset[]; onChange: () => vo
 }
 
 /**
- * Phase 2 (Campaign Builder): one book brief → a zero-shot campaign kit (POST /campaigns):
+ * Campaign kit (Content Studio, Phase 2): one book brief → a zero-shot campaign kit (POST /campaigns):
  * 3 reader personas, 5 social posts written for them, 1 blurb. No excerpts from the book are used;
- * the Knowledge Hub's grounded generator is the counterpart that writes from the book's text.
+ * the grounded generator (the "Single asset" tab) is the counterpart that writes from the book's text.
  * Left: the brief, pre-filled from the library. Right: the kits, newest first (older ones collapsed),
  * plus earlier single zero-shot assets.
  * @param refresh Counter from AppShell; changing it reloads books and assets.

@@ -58,8 +58,9 @@ You can also call both MCP servers inside the app, in the **Market Intelligence*
 
 1. **Knowledge Hub**: upload a PDF book (e.g. `Garden-Cities-of-To-Morrow_Ebenezer-Howard.pdf` in the repo root)
    and press **Process**. Wait until it shows `ready`. Uploaded books stay in `server/assets/` and survive restarts.
-2. Make the **book summary**, try **Ask your book** (the chat), and generate assets with the **Grounded asset generator**.
-3. **Campaign Builder**: pick the book, check the brief, press **Generate campaign (zero-shot)** for personas, posts and a blurb.
+2. Make the **book summary** and try **Ask your book** (the chat).
+3. **Content Studio**: in **Single asset**, write a blurb, post, newsletter, ... from the book with citations; in
+   **Campaign kit**, check the brief and press **Generate campaign (zero-shot)** for personas, posts and a blurb.
 4. **Market Intelligence**: the MCP tool console (both MCP servers, status, tools, call log).
 5. Costs so far: the usage panel in the app, or http://127.0.0.1:8000/usage.
 
@@ -84,8 +85,8 @@ More details: [server/README.md](server/README.md) (layout, MCP tools) and [eval
    `http://127.0.0.1:8000/mcp` (books) or `http://127.0.0.1:8000/guardrails/mcp` (security checks).
 4. **See it in action:**
    - Upload the Garden Cities PDF from the repo root and press **Process**.
-   - Make the summary, try the chat and the asset generator.
-   - Generate a campaign in the Campaign Builder.
+   - Make the summary and try the chat.
+   - In the Content Studio, generate an asset (Single asset) and a campaign (Campaign kit).
    - Call the MCP tools in the Market Intelligence tab.
    - Look at the costs.
 5. **Stop:** `Ctrl+C` in each terminal.
