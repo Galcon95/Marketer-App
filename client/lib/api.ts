@@ -265,6 +265,13 @@ export const ASSET_TYPES: { value: AssetType; label: string }[] = [
   { value: "lead_magnet", label: "Lead magnet" },
   { value: "persona", label: "Audience persona" },
 ];
+/** Planned formats, shown disabled after ASSET_TYPES ("coming soon"); the server cannot generate them yet. */
+export const PLANNED_ASSET_TYPES: { value: string; label: string; disabled: true }[] = [
+  { value: "carousel", label: "Carousel post – swipeable slides (coming soon)", disabled: true },
+  { value: "carousel_ad", label: "Carousel ad – paid, cards with links (coming soon)", disabled: true },
+  { value: "slides_gif", label: "GIF from slides (coming soon)", disabled: true },
+  { value: "slides_video", label: "Short video from slides – MP4 (coming soon)", disabled: true },
+];
 
 /**
  * Human-readable label of an asset type, e.g. "social_post" → "Social post".

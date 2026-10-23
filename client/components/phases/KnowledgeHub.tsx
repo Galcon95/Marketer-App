@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type SubmitEvent } from "react";
 import { AlertTriangle, BookOpen, Check, ChevronDown, Database, FileText, Film, Library, MessageSquare, Play, Plus, RotateCcw, Sparkles, Target, Trash2, Upload, Wrench } from "lucide-react";
 import {
-  api, ASSET_TYPES, bookTitle, errorMessage, humanizeLabel, LENGTHS, locationLabel, MAX_UPLOAD_BYTES, PLATFORMS, PROCESSING_STATUSES,
+  api, ASSET_TYPES, assetTypeLabel, bookTitle, errorMessage, humanizeLabel, LENGTHS, locationLabel, MAX_UPLOAD_BYTES, PLANNED_ASSET_TYPES, PLATFORMS, PROCESSING_STATUSES,
   TONES, UPLOAD_EXTENSIONS, usesPlatform,
   type AssetType, type BookSummary, type ChatTurn, type Chunk, type ToolCallRecord, type ChunkPage, type Length, type Platform, type Source, type Tone,
 } from "@/lib/api";
@@ -790,7 +790,9 @@ const BRIEF_EXAMPLES: Record<AssetType, string> = {
  * Options adapt to the asset type: social posts, replies and video scripts choose a platform (which
  * decides length and style), other types a length; replies take the post to answer plus an optional
  * angle, all other types a brief (with an example that fits the type). With a book selected, it
- * generates from that book only and lists only that book's assets.
+ * generates from that book only and lists only that book's assets. The list shows the selected asset
+ * type only ("Show all types" lifts that), and switching the type clears the brief and the pasted post,
+ * so nothing written for another type is carried over.
  * @param refresh Changing it reloads the asset list.
  * @param bookId Only use (and list assets of) this book; null = all books.
  * @param onChange Called after generating (and after editing or deleting an asset) to refresh the app.
@@ -798,6 +800,7 @@ const BRIEF_EXAMPLES: Record<AssetType, string> = {
 function GroundedGenerator({ refresh, bookId, onChange }: Props & { bookId: string | null }) {
   const assets = useApi(`assets:${refresh}`, api.listAssets);
   const [assetType, setAssetType] = useState<AssetType>("blurb"); // decides which fields are shown
+  const [allTypes, setAllTypes] = useState(false); // list assets of every type, not only the selected one
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isReply = assetType === "social_reply";
@@ -829,17 +832,27 @@ function GroundedGenerator({ refresh, bookId, onChange }: Props & { bookId: stri
     }
   }
 
-  // The server returns assets oldest first; show only grounded ones (of the selected book), newest on top.
+  // The server returns assets oldest first; show only grounded ones (of the selected book), newest on top,
+  // and of those only the selected type unless "Show all types" is on.
   const grounded = (assets.data ?? [])
     .filter((a) => a.grounded && (!bookId || a.source_ids.includes(bookId)))
     .reverse();
+  const shown = allTypes ? grounded : grounded.filter((a) => a.asset_type === assetType);
+  const typeLabel = assetTypeLabel(assetType).replace(/\s*\(.*\)$/, ""); // "YouTube video page (titles · …)" → "YouTube video page"
 
   return (
     <div className="bc-stack" style={{ gap: 16 }}>
-      <SectionHeading icon={Sparkles} title="Grounded asset generator" count={grounded.length} />
+      <SectionHeading icon={Sparkles} title="Grounded asset generator" count={shown.length}>
+        {grounded.length > 0 && (
+          <Button size="sm" variant="ghost" onClick={() => setAllTypes(!allTypes)}
+            title={allTypes ? `List only ${typeLabel} assets` : "List the assets of every type"}>
+            {allTypes ? `Only ${typeLabel}` : `Show all types (${grounded.length})`}
+          </Button>
+        )}
+      </SectionHeading>
       <Card>
         <form className="bc-stack" onSubmit={submit}>
-          <Field name="asset_type" as="select" label="Asset type" options={ASSET_TYPES}
+          <Field name="asset_type" as="select" label="Asset type" options={[...ASSET_TYPES, ...PLANNED_ASSET_TYPES]}
             onChange={(value) => setAssetType(value as AssetType)} />
           <div className="bc-row" style={{ gap: 12, alignItems: "flex-start" }}>
             <div style={{ flex: 1, minWidth: 140 }}>
@@ -858,8 +871,9 @@ function GroundedGenerator({ refresh, bookId, onChange }: Props & { bookId: stri
             <Field name="reply_to" as="textarea" label="Their post" rows={5} required
               placeholder="Paste the post you want to reply to" />
           )}
-          <Field name="brief" as="textarea" label={isReply ? "Your angle (optional)" : "Brief"} rows={3}
-            placeholder={BRIEF_EXAMPLES[assetType]} required={!isReply} />
+          {/* key: a new asset type starts with an empty brief instead of the text written for the previous type. */}
+          <Field key={`brief-${assetType}`} name="brief" as="textarea" label={isReply ? "Your angle (optional)" : "Brief"}
+            rows={3} placeholder={BRIEF_EXAMPLES[assetType]} required={!isReply} />
           <Button type="submit" icon={Sparkles} loading={pending}>
             {pending ? "Generating…" : isReply ? "Generate reply from sources" : "Generate from sources"}
           </Button>
@@ -868,10 +882,14 @@ function GroundedGenerator({ refresh, bookId, onChange }: Props & { bookId: stri
       </Card>
       {assets.error ? (
         <ErrorNote>{assets.error}</ErrorNote>
-      ) : grounded.length ? (
-        grounded.map((a) => <AssetCard key={a.id} asset={a} onChange={onChange} />)
+      ) : shown.length ? (
+        shown.map((a) => <AssetCard key={a.id} asset={a} onChange={onChange} />)
       ) : (
-        <Placeholder icon={Sparkles}>{assets.loading ? "Loading…" : "Grounded assets with citations will appear here."}</Placeholder>
+        <Placeholder icon={Sparkles}>
+          {assets.loading ? "Loading…"
+            : allTypes || !grounded.length ? "Grounded assets with citations will appear here."
+            : `No ${typeLabel} yet${bookId ? " for this book" : ""}. Generate one above, or show all types.`}
+        </Placeholder>
       )}
     </div>
   );

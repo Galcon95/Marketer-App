@@ -98,7 +98,7 @@ interface FieldProps {
   label?: string; // visible label above the control
   name?: string; // form field name, also used to build the element id
   as?: "input" | "textarea" | "select" | "search"; // which control to render, default "input"
-  options?: Array<string | { value: string; label: string }>; // choices for as="select"
+  options?: Array<string | { value: string; label: string; disabled?: boolean }>; // choices for as="select"
   rows?: number; // height of as="textarea", default 3
   placeholder?: string;
   defaultValue?: string;
@@ -122,8 +122,8 @@ export function Field({ label, name, as = "input", options = [], rows = 3, place
       <div className="bc-select-wrap">
         <select {...base} className="bc-select">
           {options.map((o) => {
-            const { value, label: text } = typeof o === "string" ? { value: o, label: o } : o;
-            return <option key={value} value={value}>{text}</option>;
+            const { value, label: text, disabled } = typeof o === "string" ? { value: o, label: o, disabled: false } : o;
+            return <option key={value} value={value} disabled={disabled}>{text}</option>;
           })}
         </select>
         <ChevronDown size={16} className="bc-ico" aria-hidden />
