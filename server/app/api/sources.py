@@ -8,6 +8,7 @@ from app.core import state as db
 from app.core import storage
 from app.core.schemas import ChunkPage, Source
 from app.rag import ingestion
+from app.rag.retrieval import source_name
 
 router = APIRouter()
 
@@ -18,9 +19,10 @@ def upload_source(project_id: str, background_tasks: BackgroundTasks, file: Uplo
     """Store an uploaded file on disk and start processing it into chunks in the background.
 
     Sanitizes the file name, streams the file to disk via storage.save_upload (which validates
-    type, signature and size), then registers a Source with status "queued", saves its record
-    next to the file so it is restored after a server restart, and schedules ingestion.ingest_source
-    to run after the response is sent. Poll GET /sources/{id} to follow the progress.
+    type, signature and size and computes the content checksum), rejects a file whose content is already
+    in the project (whatever its name; the new copy is deleted again), then registers a Source with status
+    "queued", saves its record next to the file so it is restored after a server restart, and schedules
+    ingestion.ingest_source to run after the response is sent. Poll GET /sources/{id} to follow the progress.
 
     Args:
         project_id: Project to add the source to (path parameter). 404 if unknown.
@@ -31,16 +33,21 @@ def upload_source(project_id: str, background_tasks: BackgroundTasks, file: Uplo
         The new Source record (status "queued").
 
     Raises:
-        HTTPException: 404 for an unknown project; 400/413/415 when storage rejects the file;
-            500 when the record cannot be saved (the stored file is removed again).
+        HTTPException: 404 for an unknown project; 400/413/415 when storage rejects the file; 409 when the
+            same file is already in the project; 500 when the record cannot be saved (the stored file is
+            removed again).
     """
     get_project_or_404(project_id)
     source_id = db.new_id("src")
     filename = storage.safe_filename(file.filename or "")
     try:
-        _, size = storage.save_upload(file.file, filename, project_id, source_id)
+        _, size, sha256 = storage.save_upload(file.file, filename, project_id, source_id)
     except storage.UploadError as e:
         raise HTTPException(e.status_code, e.detail) from e
+    duplicate = next((s for s in db.sources.values() if s.project_id == project_id and s.sha256 == sha256), None)
+    if duplicate:
+        storage.delete_source_files(project_id, source_id)
+        raise HTTPException(409, f"This file is already in your library as '{source_name(duplicate.id) or duplicate.filename}'.")
     source = Source(
         id=source_id,
         project_id=project_id,
@@ -51,6 +58,7 @@ def upload_source(project_id: str, background_tasks: BackgroundTasks, file: Uplo
         progress=0,
         chunk_count=0,
         created_at=db.now(),
+        sha256=sha256,
     )
     if source.kind == "document":
         source.author = storage.read_pdf_author(storage.source_file_path(source))

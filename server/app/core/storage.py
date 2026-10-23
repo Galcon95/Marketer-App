@@ -8,6 +8,7 @@ is the single source of truth: load_sources() rebuilds all source records from i
 deleting a source deletes its directory, so the GUI and the files on disk always match.
 """
 
+import hashlib
 import logging
 import re
 import shutil
@@ -83,14 +84,14 @@ def safe_filename(name: str) -> str:
     return name[:150] or "upload"
 
 
-def save_upload(stream: BinaryIO, filename: str, project_id: str, source_id: str) -> tuple[Path, int]:
-    """Validate and stream an upload to disk. Returns (path, size). Leaves nothing behind on failure.
+def save_upload(stream: BinaryIO, filename: str, project_id: str, source_id: str) -> tuple[Path, int, str]:
+    """Validate and stream an upload to disk. Returns (path, size, SHA-256). Leaves nothing behind on failure.
 
     Checks the extension first, then creates a fresh directory for the source and copies the stream
     in CHUNK_BYTES pieces so large files never sit in memory as a whole. While copying it checks that
     the first bytes match the expected file signature and that the total size stays under
-    MAX_UPLOAD_BYTES. On any error (including client disconnects) the source directory is removed
-    before the exception is re-raised.
+    MAX_UPLOAD_BYTES, and computes the content's SHA-256 checksum in the same pass (for the duplicate check).
+    On any error (including client disconnects) the source directory is removed before the exception is re-raised.
 
     Args:
         stream: Readable binary file object with the upload content (e.g. UploadFile.file).
@@ -99,7 +100,7 @@ def save_upload(stream: BinaryIO, filename: str, project_id: str, source_id: str
         source_id: New, unique source id; second directory level. Must not exist yet.
 
     Returns:
-        Tuple of the path of the stored file and its size in bytes.
+        Tuple of the path of the stored file, its size in bytes and its SHA-256 checksum (hex).
 
     Raises:
         UploadError: 415 for an unsupported extension or wrong content signature,
@@ -115,6 +116,7 @@ def save_upload(stream: BinaryIO, filename: str, project_id: str, source_id: str
     target_dir.mkdir(parents=True, exist_ok=False)
     target = target_dir / filename
     size = 0
+    digest = hashlib.sha256()
     try:
         with target.open("wb") as out:
             while chunk := stream.read(CHUNK_BYTES):
@@ -124,12 +126,25 @@ def save_upload(stream: BinaryIO, filename: str, project_id: str, source_id: str
                 if size > MAX_UPLOAD_BYTES:
                     raise UploadError(413, f"File is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB")
                 out.write(chunk)
+                digest.update(chunk)
         if size == 0:
             raise UploadError(400, "File is empty")
     except BaseException:
         shutil.rmtree(target_dir, ignore_errors=True)
         raise
-    return target, size
+    return target, size, digest.hexdigest()
+
+
+def file_sha256(path: Path) -> str:
+    """SHA-256 checksum (hex) of a stored file, read in CHUNK_BYTES pieces; "" if it cannot be read."""
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as f:
+            while chunk := f.read(CHUNK_BYTES):
+                digest.update(chunk)
+    except OSError:
+        return ""
+    return digest.hexdigest()
 
 
 def delete_source_files(project_id: str, source_id: str) -> None:

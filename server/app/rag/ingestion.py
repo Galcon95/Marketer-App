@@ -127,8 +127,7 @@ def restore_sources() -> None:
     embeddings existed, or the embedding model changed) are marked "failed" so the user can press Retry.
     """
     for source in storage.load_sources().values():
-        if not source.author and source.kind == "document":  # books uploaded before authors were read
-            source = _with_pdf_author(source)
+        source = _with_missing_metadata(source)  # sources uploaded before authors and checksums were recorded
         chunks: list[Chunk] = []
         if source.status in PROCESSING_STATUSES:
             source = _mark_failed(source, "Processing was interrupted by a server restart. Press Retry.")
@@ -148,16 +147,22 @@ def restore_sources() -> None:
             db.summaries[source.id] = summary
 
 
-def _with_pdf_author(source: Source) -> Source:
-    """The source with the author from its PDF's metadata, saved to its record; unchanged if the PDF names none."""
-    author = storage.read_pdf_author(storage.source_file_path(source))
-    if not author:
+def _with_missing_metadata(source: Source) -> Source:
+    """The source with what older records lack, saved to its record: the author from the PDF's metadata and the
+    file's content checksum (for the duplicate check on upload). Unchanged if nothing is missing or found."""
+    update = {}
+    path = storage.source_file_path(source)
+    if not source.author and source.kind == "document" and (author := storage.read_pdf_author(path)):
+        update["author"] = author
+    if not source.sha256 and path.is_file() and (sha256 := storage.file_sha256(path)):
+        update["sha256"] = sha256
+    if not update:
         return source
-    source = source.model_copy(update={"author": author})
+    source = source.model_copy(update=update)
     try:
         storage.write_source_meta(source)
     except OSError:
-        logger.warning("Could not save the author of %s", source.id)
+        logger.warning("Could not save the author/checksum of %s", source.id)
     return source
 
 

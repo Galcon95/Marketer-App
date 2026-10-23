@@ -7,7 +7,7 @@ Status as of commit `e114f04` (2026-10-22).
 | Phase | Name | Status |
 |---|---|---|
 | 1 | Knowledge Hub (RAG) | ✅ Built |
-| 2 | Campaign Builder (zero-shot) | ✅ Built |
+| 2 | Content Studio (grounded single assets + zero-shot campaign kits) | ✅ Built |
 | 3 | Market Intelligence (MCP) | 🟡 2 MCP servers + tool console built, leads table still a placeholder |
 | 4 | Agent Workspace | ⬜ Placeholder UI only |
 
@@ -17,6 +17,7 @@ Status as of commit `e114f04` (2026-10-22).
 
 ### Upload & ingestion
 - Upload PDF books with a progress bar (`POST /projects/{id}/sources`).
+- **No duplicates:** each upload's SHA-256 checksum is computed while it is saved; a file whose content is already in the library (under any name) is rejected with 409 ("This file is already in your library as '…'") and the copy is deleted. Books uploaded earlier get their checksum at the next server start.
 - Ingestion runs in the background: PDF → chapters → token-based chunks (500 tokens with 80 overlap, so tiny pieces get merged) → embeddings → Chroma.
 - Chapters come from the PDF's table of contents. PDFs without one (e.g. many Project Gutenberg files) get them from heading lines in the text (`CHAPTER IV.` plus its title line, or `PART TWO` / `BOOK I` when there are no chapters); the printed contents page is ignored.
 - The Project Gutenberg license after the e-book's end marker becomes its own section instead of being glued to the last chapter.
@@ -24,7 +25,7 @@ Status as of commit `e114f04` (2026-10-22).
 - Sources are processed one at a time, because PyMuPDF is not thread-safe.
 - **Process / Re-index / Retry** actions, plus deleting a source.
 - Book covers are extracted from the PDF and shown in the library.
-- The author is read from the PDF's metadata when the file name has none; it is used in prompts, citations, the MCP tools and the Campaign Builder.
+- The author is read from the PDF's metadata when the file name has none; it is used in prompts, citations, the MCP tools and the campaign kits.
 - Chunk browser: page through a book's chunks with chapter and page info.
 - Open the original PDF at the cited page (PDF page links).
 
@@ -43,6 +44,8 @@ Status as of commit `e114f04` (2026-10-22).
   - The answer prompt gets the last 4 turns as chat messages (earlier answers shortened, citation markers removed); only the current passages may be cited.
 - Chats are saved in `server/assets/conversations/` and survive restarts: **New chat**, **Past chats** (reopen or delete), at most 50 questions per chat.
 - Questions are checked with the guardrails functions in code, on every question: cleaned, at most 4000 characters (422, room for a pasted post), likely prompt injections blocked (400).
+- **Structured retrieval** (self-querying, `server/app/rag/filters.py`): if a question names a book, chapter or pages ("What does chapter 17 of Butler say about short selling?"), a model call with structured output extracts them, and code resolves them to real metadata values (book id, the exact chapter heading, page range) for a Chroma metadata filter. Numbers match Roman numerals ("17" → "CHAPTER XVII. SHORT SELLING"), and titles match by words. Unknown references are dropped with a note; if the filter finds nothing, the search runs again without it. Questions without such hints skip the model call. A book named in the question overrides the "Working on" choice. The chat shows the filter as "Filtered to: …".
+  - Measured with RAGAs (k=6): faithfulness 0.95 → 0.97, context precision 0.93 → 0.94; the Garden City estate question (names its book) went from 0.56 to 1.00 faithfulness and 0.75 to 1.00 context precision.
 - **Tool calling** (LangChain `bind_tools`, one round, no loop): besides the passages, the model may call
   - `list_books`: the library (titles, authors, themes), for questions about the library itself
   - `check_platform_fit`: a pure calculation of characters, words, hashtags, preview length and AI clichés against a platform's rules
@@ -54,7 +57,7 @@ Status as of commit `e114f04` (2026-10-22).
 ### Semantic search
 - `POST /projects/{id}/search` returns the top-k passages with similarity scores.
 
-### Grounded asset generator (LangGraph)
+### Grounded asset generator (LangGraph), in the Content Studio's "Single asset" tab
 - Asset types: **blurb, social post, social reply, video script, YouTube video page, newsletter, ad copy, lead magnet, persona**.
 - Platforms: X, LinkedIn, Instagram, Facebook, TikTok and YouTube, each with its own length and style rules for posts, replies and short videos.
 - Tones: neutral, inspiring, friendly, professional, punchy, literary. Lengths: short, standard, long.
@@ -78,7 +81,13 @@ Status as of commit `e114f04` (2026-10-22).
 
 ---
 
-## Phase 2 – Campaign Builder (zero-shot campaign kit)
+## Phase 2 – Content Studio
+
+Everything that produces content, in two tabs: **Single asset** (the grounded asset generator described in
+Phase 1's section, for the book chosen under "Working on") and **Campaign kit** (below). The "Working on" book is
+shared with the Knowledge Hub.
+
+### Campaign kit (zero-shot campaign builder)
 
 A LangGraph pipeline turns one book brief into a whole kit:
 
@@ -171,7 +180,7 @@ Three layers, all in code and on every request (never left to the model):
 - First run (k=6): faithfulness 0.95, answer relevancy 0.85, context precision 0.93, context recall 1.00. Findings: the Garden City estate answer added unsupported claims (faithfulness 0.56); the stop-loss answer got answer relevancy 0 because the judge treats a hedge as noncommittal (a false negative).
 
 ### Tests
-- Backend: 44 pytest tests in `server/tests/` (guardrails, platform check, citations, passage format, chapter detection, and API tests that bad input is rejected before any model call, including the rate limit). Run `uv run pytest` in `server/`.
+- Backend: 72 pytest tests in `server/tests/` (guardrails, platform check, citations, passage format, chapter detection, structured retrieval filters, uploads (wrong types, duplicates), and API tests that bad input is rejected before any model call, including the rate limit). Run `uv run pytest` in `server/`.
 - Frontend: 15 Vitest tests in `client/tests/` (helpers in `lib/api.ts` and the API client's error handling with a stubbed `fetch`). Run `npm test` in `client/`.
 - No model calls, no API key needed; answer quality is measured separately with RAGAs (`eval/`).
 
