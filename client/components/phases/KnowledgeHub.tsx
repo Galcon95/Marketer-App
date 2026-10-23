@@ -9,7 +9,7 @@
  * Writing content from the books happens in the Content Studio (Phase 2).
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode, type SubmitEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode, type SubmitEvent } from "react";
 import { AlertTriangle, BookOpen, Check, Database, FileText, Film, Library, MessageSquare, Play, Plus, RotateCcw, Sparkles, Target, Trash2, Upload, Wrench } from "lucide-react";
 import {
   api, bookTitle, errorMessage, locationLabel, MAX_UPLOAD_BYTES, PROCESSING_STATUSES, UPLOAD_EXTENSIONS,
@@ -195,7 +195,7 @@ function BookShelf({ books, refresh, selected, onSelect, onBrowse }: {
 /**
  * One book on the shelf: cover (click: opens the PDF), title, chunk/chapter/size badges, the first sentences of its summary
  * and up to four key themes, with buttons to open the summary (or create it) and the chunks.
- * The book being worked on is highlighted with an accent border.
+ * The book being worked on is highlighted with an accent border; clicking another card makes it the one worked on.
  * @param source The book.
  * @param refresh Changing it reloads the summary.
  * @param selected True if this is the book being worked on.
@@ -208,9 +208,17 @@ function BookCard({ source, refresh, selected, onSelect, onBrowse }: {
   const summary = useApi(`book-summary:${source.id}:${refresh}`, () => api.getSummary(source.id));
   const s = summary.data;
   const title = bookTitle(source.filename);
+
+  /** A click anywhere on the card (outside its buttons and links) makes this the book being worked on. It never
+   * deselects, so an accidental click cannot drop the choice; the "Working on this book" button does that. */
+  function pickFromCard(e: MouseEvent<HTMLDivElement>) {
+    if (!selected && !(e.target as HTMLElement).closest("button, a")) onSelect();
+  }
+
   return (
-    <Card className={selected ? "book-selected" : undefined}>
-      <div style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
+    <Card className={selected ? "book-selected" : "book-pickable"}>
+      <div style={{ display: "flex", gap: 20, alignItems: "flex-start" }} onClick={pickFromCard}
+        title={selected ? undefined : "Click to work on this book"}>
         <BookCover sourceId={source.id} title={title} width={120} link />
         <div className="bc-stack" style={{ gap: 10, minWidth: 0, flex: 1 }}>
           <h3 style={{ margin: 0, fontSize: 18, lineHeight: 1.3 }}>{title}</h3>

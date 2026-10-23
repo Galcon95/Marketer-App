@@ -270,3 +270,5 @@ html, body { background: var(--bg); color: var(--ink); font-family: var(--font-s
 
 /* Book card of the book being worked on (Knowledge Hub "Work on this book") */
 .bc-card.book-selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.bc-card.book-pickable { cursor: pointer; transition: border-color .15s; }
+.bc-card.book-pickable:hover { border-color: var(--border-strong); }
