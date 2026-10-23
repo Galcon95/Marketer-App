@@ -23,7 +23,8 @@ Status as of commit `e114f04` (2026-10-22).
 - The Project Gutenberg license after the e-book's end marker becomes its own section instead of being glued to the last chapter.
 - Live progress through the statuses `queued → chunking → embedding → ready` (or `failed`), saved so it survives restarts.
 - Sources are processed one at a time, because PyMuPDF is not thread-safe.
-- **Process / Re-index / Retry** actions, plus deleting a source.
+- **Process / Re-index / Retry** actions.
+- **Deleting a book** (from its card or the sources table) asks first and says what else goes: the book's file, chunks, vectors and summary, the generated texts made only from it (incl. its campaign kits) and the chats that only used its passages. Texts and chats that also draw on other books are kept (`GET /sources/{id}/deletion` previews, `DELETE /sources/{id}` deletes).
 - Book covers are extracted from the PDF and shown in the library.
 - The author is read from the PDF's metadata when the file name has none; it is used in prompts, citations, the MCP tools and the campaign kits.
 - Chunk browser: page through a book's chunks with chapter and page info.
@@ -180,7 +181,7 @@ Three layers, all in code and on every request (never left to the model):
 - First run (k=6): faithfulness 0.95, answer relevancy 0.85, context precision 0.93, context recall 1.00. Findings: the Garden City estate answer added unsupported claims (faithfulness 0.56); the stop-loss answer got answer relevancy 0 because the judge treats a hedge as noncommittal (a false negative).
 
 ### Tests
-- Backend: 72 pytest tests in `server/tests/` (guardrails, platform check, citations, passage format, chapter detection, structured retrieval filters, uploads (wrong types, duplicates), and API tests that bad input is rejected before any model call, including the rate limit). Run `uv run pytest` in `server/`.
+- Backend: 75 pytest tests in `server/tests/` (guardrails, platform check, citations, passage format, chapter detection, structured retrieval filters, uploads (wrong types, duplicates), deleting a book with what belongs only to it, and API tests that bad input is rejected before any model call, including the rate limit). Run `uv run pytest` in `server/`.
 - Frontend: 15 Vitest tests in `client/tests/` (helpers in `lib/api.ts` and the API client's error handling with a stubbed `fetch`). Run `npm test` in `client/`.
 - No model calls, no API key needed; answer quality is measured separately with RAGAs (`eval/`).
 

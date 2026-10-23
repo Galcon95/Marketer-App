@@ -149,6 +149,35 @@ function UploadPanel({ sources, sourcesLoading, onChange }: { sources: Source[];
   );
 }
 
+/* ---------- Deleting a book ---------- */
+/** "1 chat" / "2 chats". */
+function plural(n: number, word: string) {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+/**
+ * Ask for confirmation, naming what will also go (from GET /sources/{id}/deletion), then delete the book.
+ * Used by the book cards and the sources table, so the question is always the same.
+ * @param source The book to delete.
+ * @returns True if it was deleted, false if the user cancelled. Rejects on API errors.
+ */
+async function confirmAndDeleteBook(source: Source): Promise<boolean> {
+  const preview = await api.previewDeletion(source.id);
+  const also = [
+    "its chunks and summary",
+    preview.assets ? `${plural(preview.assets, "generated text")} made only from it` : "",
+    preview.conversations ? `${plural(preview.conversations, "chat")} that only used it` : "",
+  ].filter(Boolean);
+  const message = [
+    `Delete "${preview.name}"?`,
+    `This also deletes ${also.join(", ")}. Texts and chats that also draw on other books are kept.`,
+    "This cannot be undone.",
+  ].join("\n\n");
+  if (!window.confirm(message)) return false;
+  await api.deleteSource(source.id);
+  return true;
+}
+
 /* ---------- Book shelf ---------- */
 /**
  * Shortened text: whole sentences up to about `max` characters, with "…" if something was left out.
@@ -174,9 +203,10 @@ function firstSentences(text: string, max: number) {
  * @param onSelect Called with a book's id (or null to clear) when "Work on this book" is clicked.
  * @param onBrowse Opens the summary or chunks panel of a book.
  */
-function BookShelf({ books, refresh, selected, onSelect, onBrowse }: {
+function BookShelf({ books, refresh, selected, onSelect, onBrowse, onDelete }: {
   books: Source[]; refresh: number; selected: string | null;
   onSelect: (id: string | null) => void; onBrowse: (source: Source, view: DrawerView) => void;
+  onDelete: (source: Source) => void;
 }) {
   if (books.length === 0) return null;
   return (
@@ -185,7 +215,8 @@ function BookShelf({ books, refresh, selected, onSelect, onBrowse }: {
       <div className="bc-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(420px, 100%), 1fr))" }}>
         {books.map((book) => (
           <BookCard key={book.id} source={book} refresh={refresh} selected={selected === book.id}
-            onSelect={() => onSelect(selected === book.id ? null : book.id)} onBrowse={onBrowse} />
+            onSelect={() => onSelect(selected === book.id ? null : book.id)} onBrowse={onBrowse}
+            onDelete={() => onDelete(book)} />
         ))}
       </div>
     </div>
@@ -201,9 +232,11 @@ function BookShelf({ books, refresh, selected, onSelect, onBrowse }: {
  * @param selected True if this is the book being worked on.
  * @param onSelect Toggles this book as the one being worked on.
  * @param onBrowse Opens the summary or chunks panel.
+ * @param onDelete Deletes the book (after a confirmation).
  */
-function BookCard({ source, refresh, selected, onSelect, onBrowse }: {
+function BookCard({ source, refresh, selected, onSelect, onBrowse, onDelete }: {
   source: Source; refresh: number; selected: boolean; onSelect: () => void; onBrowse: (source: Source, view: DrawerView) => void;
+  onDelete: () => void;
 }) {
   const summary = useApi(`book-summary:${source.id}:${refresh}`, () => api.getSummary(source.id));
   const s = summary.data;
@@ -247,6 +280,8 @@ function BookCard({ source, refresh, selected, onSelect, onBrowse }: {
               title={selected ? "Stop working on only this book" : "Ask and generate for this book only"}>
               {selected ? "Working on this book" : "Work on this book"}
             </Button>
+            <Button size="sm" variant="ghost" icon={Trash2} onClick={onDelete} title="Delete this book"
+              aria-label={`Delete ${title}`} />
           </div>
         </div>
       </div>
@@ -303,14 +338,13 @@ function SourcesCard({ sources, error, onBrowse, onChange }: {
   const [starting, setStarting] = useState<string | null>(null); // id of the source whose processing is being started
 
   /**
-   * Delete a source on the server (file and chunks) and refresh the app.
-   * @param id Id of the source to delete.
+   * Delete a book after a confirmation that names what also goes (confirmAndDeleteBook), then refresh the app.
+   * @param source The book to delete.
    */
-  async function remove(id: string) {
+  async function remove(source: Source) {
     setActionError(null);
     try {
-      await api.deleteSource(id);
-      onChange();
+      if (await confirmAndDeleteBook(source)) onChange();
     } catch (e) {
       setActionError(errorMessage(e));
     }
@@ -368,7 +402,7 @@ function SourcesCard({ sources, error, onBrowse, onChange }: {
                       <Button variant="ghost" size="sm" icon={BookOpen} onClick={() => onBrowse(s, "summary")} disabled={s.status !== "ready"}
                         title="What the book is about: overview, key themes and chapter summaries">Summary</Button>
                       <Button variant="ghost" size="sm" icon={Database} onClick={() => onBrowse(s, "chunks")} disabled={s.status !== "ready"}>Chunks</Button>
-                      <Button variant="ghost" size="sm" icon={Trash2} aria-label={`Delete ${s.filename}`} onClick={() => remove(s.id)} />
+                      <Button variant="ghost" size="sm" icon={Trash2} aria-label={`Delete ${s.filename}`} onClick={() => remove(s)} />
                     </td>
                   </tr>
                 );
@@ -779,6 +813,19 @@ export default function KnowledgeHub({ refresh, onChange, bookId: selectedBook, 
   // Book being worked on (null = all books); ignored while that book is not ready (deleted, re-indexing).
   const bookId = selectedBook && books.some((b) => b.id === selectedBook) ? selectedBook : null;
   const processing = list.some(isProcessing);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  /** Delete a book from its card (after the confirmation); closes its side panel if that is open. */
+  async function deleteBook(source: Source) {
+    setDeleteError(null);
+    try {
+      if (!(await confirmAndDeleteBook(source))) return;
+      if (browsing?.source.id === source.id) closeDrawer();
+      onChange();
+    } catch (e) {
+      setDeleteError(errorMessage(e));
+    }
+  }
   const { reload } = sources;
   useEffect(() => {
     if (!processing) return;
@@ -792,7 +839,9 @@ export default function KnowledgeHub({ refresh, onChange, bookId: selectedBook, 
   return (
     <>
       <UploadPanel sources={list} sourcesLoading={sources.loading} onChange={onChange} />
-      <BookShelf books={books} refresh={refresh} selected={bookId} onSelect={onSelectBook} onBrowse={openDrawer} />
+      <BookShelf books={books} refresh={refresh} selected={bookId} onSelect={onSelectBook} onBrowse={openDrawer}
+        onDelete={deleteBook} />
+      {deleteError && <ErrorNote>{deleteError}</ErrorNote>}
       <SourcesCard sources={list} error={sources.error} onBrowse={openDrawer} onChange={onChange} />
       <BookPicker books={books} selected={bookId} onSelect={onSelectBook} uses="Ask your book uses" />
       <AskBook bookId={bookId} onChange={onChange} />

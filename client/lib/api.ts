@@ -214,6 +214,14 @@ export interface McpCall {
   called_at: string;
 }
 
+/** What deleting a book removes besides its file, chunks and summary (GET /sources/{id}/deletion, DELETE /sources/{id}). */
+export interface SourceDeletion {
+  source_id: string;
+  name: string; // readable book name
+  assets: number; // generated assets made only from this book (incl. its campaign kits)
+  conversations: number; // chats whose passages all come from this book
+}
+
 /** One logged model call with its tokens and costs in USD (server/app/core/usage.py). */
 export interface UsageRecord {
   timestamp: string; // ISO 8601 (UTC)
@@ -472,8 +480,14 @@ export const api = {
   },
   /** POST /sources/{sourceId}/summary: create (or recreate) the book summary; takes some seconds. */
   createSummary: (sourceId: string) => request<BookSummary>(`/sources/${sourceId}/summary`, { method: "POST" }),
-  /** DELETE /sources/{sourceId}: remove a source, its stored file and its chunks. */
-  deleteSource: (sourceId: string) => request<void>(`/sources/${sourceId}`, { method: "DELETE" }),
+  /** GET /sources/{sourceId}/deletion: what deleting the book would also remove (for the confirmation); deletes nothing. */
+  previewDeletion: (sourceId: string) => request<SourceDeletion>(`/sources/${sourceId}/deletion`),
+  /**
+   * DELETE /sources/{sourceId}: remove a book with everything that belongs only to it (file, chunks, summary, the
+   * assets made only from it and the chats that only used its passages).
+   * @returns What was removed besides the book itself.
+   */
+  deleteSource: (sourceId: string) => request<SourceDeletion>(`/sources/${sourceId}`, { method: "DELETE" }),
 
   /**
    * GET /sources/{sourceId}/chunks: one page of a source's chunks.

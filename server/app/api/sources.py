@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from app.api.deps import get_project_or_404, get_source_or_404
 from app.core import state as db
 from app.core import storage
-from app.core.schemas import ChunkPage, Source
+from app.core.schemas import Asset, ChunkPage, Conversation, Source, SourceDeletion
 from app.rag import ingestion
 from app.rag.retrieval import source_name
 
@@ -125,18 +125,54 @@ def get_source(source_id: str):
     return get_source_or_404(source_id)
 
 
-@router.delete("/sources/{source_id}", status_code=204)
+@router.get("/sources/{source_id}/deletion", response_model=SourceDeletion)
+def preview_deletion(source_id: str):
+    """What deleting this book would remove besides the book itself (for the confirmation): the generated assets
+    made only from it and the chats that only used its passages. Nothing is deleted. 404 if unknown."""
+    source = get_source_or_404(source_id)
+    assets, conversations = _dependents(source)
+    return SourceDeletion(source_id=source.id, name=source_name(source.id) or source.filename,
+                          assets=len(assets), conversations=len(conversations))
+
+
+@router.delete("/sources/{source_id}", response_model=SourceDeletion)
 def delete_source(source_id: str):
-    """Delete a source with its stored files, chunks and vectors (also while it is processing).
+    """Delete a book with everything that belongs only to it: its stored files (PDF, cover, summary), chunks and
+    vectors, the generated assets made only from it (incl. its campaign kits) and the chats that only used its
+    passages. Assets and chats that also draw on other books are kept. Works while the book is processing.
 
     Args:
         source_id: Id of the source (path parameter). 404 if unknown.
+
+    Returns:
+        What was removed besides the book itself.
     """
     source = get_source_or_404(source_id)
+    name = source_name(source.id) or source.filename
+    assets, conversations = _dependents(source)
     # Remove the record first, so a running ingestion sees the deletion and stops writing.
     db.sources.pop(source_id, None)
     ingestion.delete_source_data(source)
     storage.delete_source_files(source.project_id, source_id)
+    for asset in assets:
+        db.assets.pop(asset.id, None)
+        storage.delete_asset(asset)
+    for conversation in conversations:
+        db.conversations.pop(conversation.id, None)
+        storage.delete_conversation(conversation)
+    return SourceDeletion(source_id=source_id, name=name, assets=len(assets), conversations=len(conversations))
+
+
+def _dependents(source: Source) -> tuple[list[Asset], list[Conversation]]:
+    """The generated assets made only from this book (their source_ids are exactly this book; campaign kits for it
+    too) and the chats in which every retrieved passage comes from this book."""
+    assets = [a for a in db.assets.values() if a.project_id == source.project_id and a.source_ids == [source.id]]
+    conversations = [
+        c for c in db.conversations.values()
+        if c.project_id == source.project_id and c.turns
+        and all(hit.chunk.source_id == source.id for turn in c.turns for hit in turn.passages)
+    ]
+    return assets, conversations
 
 
 @router.get("/sources/{source_id}/chunks", response_model=ChunkPage)

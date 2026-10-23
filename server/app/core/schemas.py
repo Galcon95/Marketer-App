@@ -107,6 +107,17 @@ class Chunk(BaseModel):
     token_count: int  # size of the text in LLM tokens
 
 
+class SourceDeletion(BaseModel):
+    """What deleting a book removes besides its file, chunks, vectors and summary: the generated assets made only
+    from this book (incl. its campaign kits) and the chats that only used its passages. Returned by the preview
+    (GET /sources/{id}/deletion, for the confirmation) and by DELETE /sources/{id} (what was removed)."""
+
+    source_id: str
+    name: str  # readable book name, e.g. "Successful Stock Speculation — J. J. Butler"
+    assets: int  # generated assets made only from this book
+    conversations: int  # chats whose passages all come from this book
+
+
 class ChunkPage(BaseModel):
     """One page of chunks returned by GET /sources/{id}/chunks (offset/limit pagination)."""
 
