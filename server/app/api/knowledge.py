@@ -3,10 +3,10 @@
 import logging
 import re
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import get_project_or_404, get_source_or_404, retrieve
-from app.core import guard, storage
+from app.api.deps import checked_text, get_project_or_404, get_source_or_404, llm_rate_limit, retrieve
+from app.core import storage
 from app.core import state as db
 from app.core.llm import GenerationError
 from app.core.schemas import (
@@ -42,7 +42,8 @@ def get_summary(source_id: str):
     return found
 
 
-@router.post("/sources/{source_id}/summary", response_model=BookSummary, status_code=201)
+@router.post("/sources/{source_id}/summary", response_model=BookSummary, status_code=201,
+             dependencies=[Depends(llm_rate_limit)])
 def create_summary(source_id: str):
     """Create (or recreate) the summary of a processed book: chapter summaries + book overview.
 
@@ -71,7 +72,7 @@ def create_summary(source_id: str):
         raise HTTPException(500, "The summary was created but could not be saved") from e
 
 
-@router.post("/projects/{project_id}/ask", response_model=AskResponse)
+@router.post("/projects/{project_id}/ask", response_model=AskResponse, dependencies=[Depends(llm_rate_limit)])
 def ask(project_id: str, body: AskRequest):
     """Answer a question from the project's books, NotebookLM-style, as one turn of a conversation.
 
@@ -93,11 +94,11 @@ def ask(project_id: str, body: AskRequest):
 
     Raises:
         HTTPException: 400 for a likely prompt injection; 404 for an unknown conversation; 409 if there is
-            nothing to search or the conversation is full; 422 for an empty or too long question;
-            503 if no API key is configured; 502 if retrieval or the model call fails.
+            nothing to search or the conversation is full; 422 for an empty or too long question; 429 if the
+            rate limit is reached; 503 if no API key is configured; 502 if retrieval or the model call fails.
     """
     get_project_or_404(project_id)
-    question = _checked_question(body.question)
+    question = checked_text(body.question, "chat_message", "question")
     conversation = _get_conversation_or_404(body.conversation_id) if body.conversation_id else None
     if conversation and conversation.project_id != project_id:
         raise HTTPException(404, f"Conversation '{conversation.id}' not found")
@@ -156,20 +157,6 @@ def _get_conversation_or_404(conversation_id: str) -> Conversation:
     return conversation
 
 
-def _checked_question(question: str) -> str:
-    """The cleaned question (guard.validate_input), or HTTPException: 422 if it is empty or too long,
-    400 if it is a likely prompt injection (guard.check_prompt_injection)."""
-    checked = guard.validate_input(question, "chat_message")
-    if not checked.ok:
-        raise HTTPException(422, " ".join(p.message for p in checked.problems if p.severity == "error"))
-    report = guard.check_prompt_injection(checked.cleaned)
-    if report.risk == "high":
-        logger.warning("Blocked question (prompt injection: %s)", ", ".join(f.rule for f in report.findings))
-        raise HTTPException(400, "This question looks like an attempt to change the assistant's instructions "
-                                 "and was blocked. Please ask about the books.")
-    return checked.cleaned
-
-
 @router.post("/projects/{project_id}/search", response_model=SearchResponse)
 def search(project_id: str, body: SearchRequest):
     """Find the passages of a project's sources that best match a query (semantic vector search).
@@ -185,11 +172,13 @@ def search(project_id: str, body: SearchRequest):
         The query and up to k hits, best first.
 
     Raises:
-        HTTPException: 503 if no embedding API key is configured, 502 if the search fails.
+        HTTPException: 422 if the query is empty or too long; 503 if no embedding API key is configured,
+            502 if the search fails.
     """
     get_project_or_404(project_id)
-    hits = [SearchHit(chunk=c, score=score) for c, score in retrieve(project_id, body.query, body.k, body.source_ids)]
-    return SearchResponse(query=body.query, hits=hits)
+    query = checked_text(body.query, "search_query", "query", check_injection=False)  # only embedded, never a prompt
+    hits = [SearchHit(chunk=c, score=score) for c, score in retrieve(project_id, query, body.k, body.source_ids)]
+    return SearchResponse(query=query, hits=hits)
 
 
 # ---------- Verification ----------
@@ -209,10 +198,12 @@ def verify(project_id: str, body: VerifyRequest):
         One VerifyItem per sentence, in text order.
 
     Raises:
-        HTTPException: 503 if no embedding API key is configured, 502 if the search fails.
+        HTTPException: 422 if the text is empty or too long; 503 if no embedding API key is configured,
+            502 if the search fails.
     """
     get_project_or_404(project_id)
-    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", body.text.replace("\n", " ")) if s.strip()]
+    text = checked_text(body.text, "asset_text", "text", check_injection=False)  # only embedded, never a prompt
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text.replace("\n", " ")) if s.strip()]
     items = []
     for sentence in sentences:
         best = retrieve(project_id, sentence, k=1, operation="verify")

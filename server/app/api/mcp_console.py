@@ -3,7 +3,9 @@ keeps a call log. The app talks to the servers as a real MCP client (market/clie
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from app.api.deps import llm_rate_limit
 
 from app.core.schemas import McpCallRequest, McpCallResult, McpServerStatus
 from app.market import client
@@ -18,14 +20,15 @@ async def list_mcp_servers(request: Request):
     return await asyncio.gather(*(client.server_status(base_url, config) for config in client.SERVERS))
 
 
-@router.post("/mcp-servers/{name}/call", response_model=McpCallResult)
+@router.post("/mcp-servers/{name}/call", response_model=McpCallResult, dependencies=[Depends(llm_rate_limit)])
 async def call_mcp_tool(name: str, body: McpCallRequest, request: Request):
     """Call a tool of an MCP server over MCP and return its result (also added to the call log).
 
     A failing call (tool error, timeout, server offline) is returned with ok=false and the error as text.
 
     Raises:
-        HTTPException: 404 for an unknown server; 413 if the arguments are too large.
+        HTTPException: 404 for an unknown server; 413 if the arguments are too large; 429 if the rate limit is
+            reached (a tool like ask_book calls the model).
     """
     try:
         config = client.server_config(name)

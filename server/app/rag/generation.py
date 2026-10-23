@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field
 from app.core import state as db
 from app.core import storage
 from app.core.config import LLM_MODEL
+from app.core.guard import UNTRUSTED_RULE, quote_untrusted
 from app.core.llm import GenerationError, chat_model, is_configured, tokens_used
 from app.core.schemas import Asset, AssetType, Chunk, Citation, GenerateRequest, Length
 from app.core.style import (
@@ -98,12 +99,13 @@ GROUNDED_SYSTEM = (
     "something, leave it out. The book background (a summary of the whole book, if given) helps you "
     "understand what the book is about overall; specific facts and quotes must come from the excerpts "
     "and be cited. Reply with the asset text only. Write plain text that can be pasted anywhere: "
-    "no Markdown (no ** or #).\n\n{style}"
+    "no Markdown (no ** or #).\n"
+    "The excerpts come as <passage n=\"...\"> blocks; cite passage n as [n]. " + UNTRUSTED_RULE + "\n\n{style}"
 )
 ZERO_SHOT_SYSTEM = (
     "You are an expert book marketer. Write {instructions}\n\n"
     "Base it on the request only. Reply with the asset text only. Write plain text that can be pasted "
-    "anywhere: no Markdown (no ** or #).\n\n{style}"
+    "anywhere: no Markdown (no ** or #). " + UNTRUSTED_RULE + "\n\n{style}"
 )
 
 GROUNDED_PROMPT = ChatPromptTemplate.from_messages([
@@ -118,7 +120,7 @@ PLAN_QUERY_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
      "You help find passages in a book that are useful for replying to a social media post. Read the post and "
      "the user's angle, then write ONE search query of at most 25 words that names the topics, claims or "
-     "questions the reply should address. Reply with the query only."),
+     "questions the reply should address. Reply with the query only. " + UNTRUSTED_RULE),
     ("human", "{request}"),
 ])
 
@@ -258,7 +260,7 @@ def build_request(req: GenerateRequest) -> str:
     """The user's request for the human message: the brief, or for replies the post plus the optional angle."""
     if req.asset_type == "social_reply":
         angle = req.brief.strip() or "(none: reply as you see fit)"
-        return f'Post to reply to:\n"""\n{req.reply_to.strip()}\n"""\n\nMy angle: {angle}'
+        return f"Post to reply to:\n{quote_untrusted(req.reply_to, 'post')}\n\nMy angle: {angle}"
     return f"Brief: {req.brief.strip()}"
 
 

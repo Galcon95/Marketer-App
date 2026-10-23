@@ -25,6 +25,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
+from app.core import guard
 from app.core import state as db
 from app.core.llm import GenerationError
 from app.core.schemas import Source
@@ -115,8 +116,7 @@ def search_book(query: str, book_id: str | None = None, k: int = 5) -> list[Pass
         book_id: Optional: only search this book (from list_books).
         k: Number of passages to return, 1-20 (default 5).
     """
-    if not query.strip():
-        raise ToolError("The query is empty.")
+    query = _checked(query, "search_query", check_injection=False)  # only embedded, never a prompt
     source_ids = [_book(book_id).id] if book_id else None
     try:
         hits = retrieve_chunks(PROJECT_ID, query, max(1, min(k, 20)), source_ids, operation="mcp_search_book")
@@ -161,8 +161,7 @@ def ask_book(question: str, book_id: str | None = None) -> Answer:
         question: The question, e.g. "What does Howard propose against overcrowded cities?".
         book_id: Optional: only use this book (from list_books).
     """
-    if not question.strip():
-        raise ToolError("The question is empty.")
+    question = _checked(question, "question", check_injection=True)
     source_ids = [_book(book_id).id] if book_id else None
     try:
         result = qa.answer_question(PROJECT_ID, question, 6, source_ids, operation="mcp_ask_book")
@@ -187,3 +186,14 @@ def _book(book_id: str) -> Source:
 def _title(source: Source) -> str:
     """Title part of the readable name, e.g. "Garden Cities of To Morrow"."""
     return book_title(source)
+
+
+def _checked(text: str, kind: guard.InputKind, *, check_injection: bool) -> str:
+    """The cleaned text (guard.py), or ToolError if it is empty, too long or (with check_injection) a likely
+    prompt injection; the same checks as the app's own endpoints."""
+    checked = guard.validate_input(text, kind)
+    if not checked.ok:
+        raise ToolError(" ".join(p.message for p in checked.problems if p.severity == "error"))
+    if check_injection and guard.check_prompt_injection(checked.cleaned).risk == "high":
+        raise ToolError("The text looks like an attempt to change the assistant's instructions and was blocked.")
+    return checked.cleaned

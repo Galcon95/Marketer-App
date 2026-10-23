@@ -1,8 +1,8 @@
 """Generated assets: single-asset generation (grounded or zero-shot) and asset management."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import get_project_or_404
+from app.api.deps import checked_optional, checked_text, get_project_or_404, llm_rate_limit
 from app.core import state as db
 from app.core import storage
 from app.core.llm import GenerationError
@@ -13,7 +13,8 @@ router = APIRouter()
 
 
 # ---------- Generation & assets ----------
-@router.post("/projects/{project_id}/generate", response_model=Asset, status_code=201)
+@router.post("/projects/{project_id}/generate", response_model=Asset, status_code=201,
+             dependencies=[Depends(llm_rate_limit)])
 def generate(project_id: str, body: GenerateRequest):
     """Generate a marketing asset from a brief with the LLM and store it in the project.
 
@@ -29,9 +30,20 @@ def generate(project_id: str, body: GenerateRequest):
         The newly created Asset, also saved to disk (storage.write_asset).
 
     Raises:
-        HTTPException: 503 if no API key is configured; 502 if retrieval or the model call fails.
+        HTTPException: 400 if the brief or audience is a likely prompt injection; 422 if a text is empty or too
+            long; 429 if the rate limit is reached; 503 if no API key is configured; 502 if retrieval or the
+            model call fails.
     """
     get_project_or_404(project_id)
+    reply = body.asset_type == "social_reply"
+    body = body.model_copy(update={
+        # The user's own instructions to the model: checked for prompt injection.
+        "brief": (checked_optional if reply else checked_text)(body.brief, "brief", "brief"),
+        "audience": checked_optional(body.audience, "short_text", "audience"),
+        # Someone else's post: never blocked (it is what the user answers), but only ever given to the model
+        # as quoted data in a <post> block (generation.build_request).
+        "reply_to": checked_optional(body.reply_to, "social_post", "post to reply to", check_injection=False),
+    })
     try:
         return generation.create_asset(project_id, body)
     except GenerationError as e:
@@ -76,12 +88,13 @@ def update_asset(asset_id: str, body: AssetUpdate):
         body: The new text.
 
     Raises:
-        HTTPException: 404 when no asset has this id; 500 if it cannot be saved.
+        HTTPException: 404 when no asset has this id; 422 if the text is empty or too long; 500 if it cannot be saved.
     """
     asset = db.assets.get(asset_id)
     if asset is None:
         raise HTTPException(404, f"Asset '{asset_id}' not found")
-    asset = asset.model_copy(update={"text": body.text, "edited": True})
+    text = checked_text(body.text, "asset_text", "text", check_injection=False)  # the user's own edit, not a prompt
+    asset = asset.model_copy(update={"text": text, "edited": True})
     try:
         storage.write_asset(asset)
     except OSError as e:

@@ -2,9 +2,9 @@
 
 from datetime import timedelta
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import get_project_or_404, get_source_or_404
+from app.api.deps import checked_optional, checked_text, get_project_or_404, get_source_or_404, llm_rate_limit
 from app.campaign import kit
 from app.core import state as db
 from app.core import storage
@@ -14,7 +14,8 @@ from app.core.schemas import Asset, CampaignRequest, CampaignResponse
 router = APIRouter()
 
 
-@router.post("/projects/{project_id}/campaigns", response_model=CampaignResponse, status_code=201)
+@router.post("/projects/{project_id}/campaigns", response_model=CampaignResponse, status_code=201,
+             dependencies=[Depends(llm_rate_limit)])
 def create_campaign(project_id: str, body: CampaignRequest):
     """Generate a zero-shot campaign kit from a book brief: 3 personas, 5 social posts, 1 blurb.
 
@@ -30,12 +31,15 @@ def create_campaign(project_id: str, body: CampaignRequest):
         The kit's stored assets and the tokens it used.
 
     Raises:
-        HTTPException: 404 if the project or the given book is unknown; 503 if no API key is
-            configured; 502 if a model call fails; 500 if the assets cannot be saved.
+        HTTPException: 400 if a field is a likely prompt injection; 404 if the project or the given book is
+            unknown; 422 if a field is empty, too long or there are more than MAX_THEMES themes; 429 if the
+            rate limit is reached; 503 if no API key is configured; 502 if a model call fails; 500 if the
+            assets cannot be saved.
     """
     get_project_or_404(project_id)
     if body.source_id:
         get_source_or_404(body.source_id)
+    body = _checked_brief(body)
     try:
         result = kit.generate_campaign(body)
     except GenerationError as e:
@@ -70,3 +74,26 @@ def create_campaign(project_id: str, body: CampaignRequest):
         raise HTTPException(500, "The campaign was generated but could not be saved") from e
     return CampaignResponse(campaign_id=campaign_id, personas=personas, posts=posts, blurb=blurb,
                             tokens=result.get("tokens", 0))
+
+
+MAX_THEMES = 10
+
+
+def _checked_brief(body: CampaignRequest) -> CampaignRequest:
+    """The brief with every text field cleaned and checked (deps.checked_text): all of it is the user's own
+    instruction to the model, so likely prompt injections are blocked.
+
+    Raises:
+        HTTPException: 400, 422 (see create_campaign).
+    """
+    if len(body.themes) > MAX_THEMES:
+        raise HTTPException(422, f"themes: at most {MAX_THEMES} themes are allowed.")
+    return body.model_copy(update={
+        "title": checked_text(body.title, "short_text", "title"),
+        "author": checked_optional(body.author, "short_text", "author"),
+        "genre": checked_optional(body.genre, "short_text", "genre"),
+        "themes": [t for t in (checked_optional(t, "short_text", "theme") for t in body.themes) if t],
+        "premise": checked_text(body.premise, "brief", "premise"),
+        "comparables": checked_optional(body.comparables, "short_text", "comparables"),
+        "audience": checked_optional(body.audience, "short_text", "audience"),
+    })

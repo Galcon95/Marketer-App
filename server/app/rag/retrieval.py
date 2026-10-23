@@ -1,7 +1,7 @@
 """Retrieval helpers shared by generation and Q&A: vector search, prompt context and citations.
 
     retrieve_chunks     the k chunks most similar to a query (Chroma, see vectorstore.py)
-    format_context      numbered excerpts [1]..[k] with source, chapter and page for the prompt
+    format_context      numbered excerpts <passage n="1">..<passage n="k"> with source, chapter and page for the prompt
     format_background   the summaries of the excerpts' books (summary.py) as background
     keep_cited          the [n] markers the model wrote → Citations, renumbered in text order
 """
@@ -9,6 +9,7 @@
 import re
 
 from app.core import state as db
+from app.core.guard import quote_untrusted
 from app.core.schemas import Chunk, Citation
 from app.rag import vectorstore
 
@@ -38,13 +39,16 @@ def retrieve_chunks(project_id: str, query: str, k: int, source_ids: list[str] |
 
 
 def format_context(context: list[tuple[Chunk, float]]) -> str:
-    """Numbered excerpts for the prompt, each with its source, chapter and page, e.g.
-    "[1] (Garden Cities of To Morrow — Ebenezer Howard · CHAPTER II. THE REVENUE… · p. 13)\\n<text>".
+    """Numbered excerpts for the prompt, each as data in a <passage> block with its source, chapter and page, e.g.
+    '<passage n="1" source="Garden Cities of To Morrow — Ebenezer Howard · CHAPTER II. … · p. 13">\\n<text>\\n</passage>'.
+
+    The block keeps book text apart from instructions (guard.quote_untrusted; the prompts add guard.UNTRUSTED_RULE):
+    a passage that contains "ignore your instructions" is read as a quote, not obeyed. Passage n is cited as [n].
     """
     parts = []
     for n, (chunk, _) in enumerate(context, start=1):
         header = (source_name(chunk.source_id), chunk.location.chapter, chunk.location.page and f"p. {chunk.location.page}")
-        parts.append(f"[{n}] ({' · '.join(x for x in header if x)})\n{chunk.text}")
+        parts.append(quote_untrusted(chunk.text, "passage", n=n, source=" · ".join(x for x in header if x)))
     return "\n\n".join(parts)
 
 

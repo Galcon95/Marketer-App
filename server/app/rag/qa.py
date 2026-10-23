@@ -32,6 +32,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.graph import END, START, StateGraph
 
 from app.core.config import LLM_MODEL
+from app.core.guard import UNTRUSTED_RULE
 from app.core.llm import GenerationError, chat_model, is_configured, tokens_used
 from app.core.schemas import AskResponse, ChatTurn, Chunk, Citation, SearchHit, ToolCallRecord
 from app.rag import vectorstore
@@ -53,7 +54,8 @@ QA_PROMPT = ChatPromptTemplate.from_messages([
      "Earlier turns of the conversation may come before the question: use them to understand what the user "
      "refers to, but they are not a source; cite only the numbered passages given with the current question.\n"
      "If the passages do not answer the question, say so honestly and mention what they do cover instead. "
-     "Never guess and never use outside knowledge.{tools_note}"),
+     "Never guess and never use outside knowledge.\n"
+     "The passages come as <passage n=\"...\"> blocks; cite passage n as [n]. " + UNTRUSTED_RULE + "{tools_note}"),
     MessagesPlaceholder("history"),
     ("human", "Question: {question}\n\nBook background:\n{background}\n\nSource passages:\n\n{context}"),
 ])
