@@ -1,6 +1,7 @@
 # Marketer App – Server
 
-FastAPI backend for the marketer app.
+FastAPI backend for the marketer app. To start the whole system (server, client, MCP Inspector) step by step,
+see the [main README](../README.md).
 
 ## Run
 
@@ -78,3 +79,16 @@ in `app/core/guard.py` (pure functions, no model calls), so the API can call it 
 
 The injection check is rule-based (override phrases, role changes, prompt leaks, fake role markers, exfiltration
 links, hidden characters): it catches common attacks, not every one. It flags none of the current book chunks.
+
+## Tests
+
+```sh
+uv run pytest        # from server/; about 3 seconds
+```
+
+`tests/` holds unit tests of the logic that needs no model or API key: the guardrails (`test_guard.py`), the
+platform check (`test_platforms.py`), citation handling, the prompt format of passages and chapter detection
+(`test_rag_helpers.py`), plus API tests showing that bad requests are rejected before any model call, including
+the rate limit (`test_api_guardrails.py`). The quality of the model's answers is measured separately with RAGAs
+(`../eval/`).
+

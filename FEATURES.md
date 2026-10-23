@@ -61,6 +61,11 @@ Status as of commit `e114f04` (2026-10-22).
 - **Grounded** mode retrieves excerpts and cites them. **Zero-shot** mode writes without excerpts.
 - **Social replies**: the LLM first turns the post plus your angle into a search query, then writes a reply that sounds like a person in the conversation.
 - Citations are renumbered, and only the excerpts the model actually used are kept.
+- **Planned (shown greyed out as "coming soon" in the asset type list, not built yet):**
+  - **Carousel post**: swipeable slides (hook slide, one idea per slide, CTA slide) plus a caption, for Instagram, LinkedIn (as a PDF), TikTok photo mode and Facebook; with a swipeable preview in the app and export as images/PDF.
+  - **Carousel ad**: paid ad with 2–10 cards, each with its own headline, description and link, plus one primary text.
+  - **GIF from slides**: the carousel slides as an auto-playing GIF (X, LinkedIn, Facebook).
+  - **Short video from slides**: the slides as an MP4 slideshow with fades and music (Reels, TikTok, Shorts); needs shorter text per slide.
 
 ### "How human" (humanize slider, 0–100)
 - Adds more and more style guidance as the value rises and raises the temperature slightly.
@@ -164,6 +169,11 @@ Three layers, all in code and on every request (never left to the model):
 - Scores faithfulness, answer relevancy, context precision and context recall with a judge model via OpenRouter.
 - Each run writes a self-contained HTML report (score tiles, a questions × metrics grid that highlights weak spots, a history chart comparing all runs, answers with references and passages) plus JSON and CSV.
 - First run (k=6): faithfulness 0.95, answer relevancy 0.85, context precision 0.93, context recall 1.00. Findings: the Garden City estate answer added unsupported claims (faithfulness 0.56); the stop-loss answer got answer relevancy 0 because the judge treats a hedge as noncommittal (a false negative).
+
+### Tests
+- Backend: 44 pytest tests in `server/tests/` (guardrails, platform check, citations, passage format, chapter detection, and API tests that bad input is rejected before any model call, including the rate limit). Run `uv run pytest` in `server/`.
+- Frontend: 15 Vitest tests in `client/tests/` (helpers in `lib/api.ts` and the API client's error handling with a stubbed `fetch`). Run `npm test` in `client/`.
+- No model calls, no API key needed; answer quality is measured separately with RAGAs (`eval/`).
 
 ### Observability
 - LangSmith tracing (`summarize_book`, `generate_campaign`, generation runs) whenever `LANGSMITH_TRACING` is set.
