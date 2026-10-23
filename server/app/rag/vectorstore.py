@@ -94,7 +94,7 @@ def count_source(project_id: str, source_id: str) -> int:
 
 
 def search(project_id: str, query: str, k: int, source_ids: list[str] | None = None,
-           operation: str = "search") -> list[tuple[str, float]]:
+           operation: str = "search", where: dict | None = None) -> list[tuple[str, float]]:
     """Find the chunks most similar in meaning to a query.
 
     Args:
@@ -103,6 +103,8 @@ def search(project_id: str, query: str, k: int, source_ids: list[str] | None = N
         k: Maximum number of results.
         source_ids: Optional filter: only search these sources.
         operation: What the search is for; logged as "<operation>/embed_query" in the usage log.
+        where: Optional further Chroma metadata conditions, e.g. {"chapter": {"$in": [...]}} (structured
+            retrieval, see filters.py); combined with the source filter.
 
     Returns:
         (chunk_id, relevance) pairs, best first; relevance is the cosine similarity (about 0-1).
@@ -111,9 +113,10 @@ def search(project_id: str, query: str, k: int, source_ids: list[str] | None = N
         VectorStoreError: If no API key is configured or the search fails.
     """
     store = _store(project_id, with_embeddings=True)
-    where = {"source_id": {"$in": source_ids}} if source_ids else None
+    conditions = [c for c in ({"source_id": {"$in": source_ids}} if source_ids else None, where) if c]
+    combined = None if not conditions else conditions[0] if len(conditions) == 1 else {"$and": conditions}
     try:
-        results = store.similarity_search_with_relevance_scores(query, k=k, filter=where)
+        results = store.similarity_search_with_relevance_scores(query, k=k, filter=combined)
         usage.record_embedding(f"{operation}/embed_query", EMBEDDING_MODEL, texts=[query], project_id=project_id)
     except Exception as e:
         raise VectorStoreError(f"Vector search failed: {e}") from e

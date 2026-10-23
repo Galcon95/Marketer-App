@@ -4,6 +4,8 @@ Shared by the mcp-book-knowledge MCP server (market/book_server.py) and the chat
 so both describe the books the same way.
 """
 
+import re
+
 from pydantic import BaseModel, Field
 
 from app.core import state as db
@@ -42,14 +44,34 @@ def book_info(source: Source) -> BookInfo:
 
 
 def find_book(project_id: str, ref: str) -> Source | None:
-    """A processed book by its id, or by (part of) its title, case-insensitive; None if nothing or several match."""
+    """A processed book by its id, by (part of) its title, or by its author (full name or last name),
+    case-insensitive; None if nothing or several match. Lets people and models name a book naturally
+    ("political economy", "Mill") instead of using its id."""
     ref = ref.strip().lower()
+    if not ref:
+        return None
     books = ready_books(project_id)
     for source in books:
         if source.id.lower() == ref:
             return source
-    matches = [s for s in books if ref and ref in book_title(s).lower()]
+    squashed = _squash(ref)
+    matches = []
+    for source in books:
+        title, author = _squash(book_title(source)), _author(source).lower()
+        # Titles are compared without spaces and punctuation, so "political economy" finds "ThePrinciplesOfPoliticalEconomy".
+        if (squashed and (squashed in title or title in squashed)) or (author and (ref in author or ref.split()[-1] in author.split())):
+            matches.append(source)
     return matches[0] if len(matches) == 1 else None
+
+
+def _squash(text: str) -> str:
+    """Lowercase letters and digits only: "The Principles Of …" and "ThePrinciplesOf…" compare equal."""
+    return re.sub(r"[^0-9a-z]", "", text.lower())
+
+
+def _author(source: Source) -> str:
+    """Author of a book: from the file name ("Title_Author.pdf"), else from the PDF's metadata; "" if unknown."""
+    return (source_name(source.id) or source.filename).partition(" — ")[2] or source.author
 
 
 def known_books(project_id: str) -> str:

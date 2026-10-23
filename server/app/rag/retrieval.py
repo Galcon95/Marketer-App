@@ -15,7 +15,7 @@ from app.rag import vectorstore
 
 
 def retrieve_chunks(project_id: str, query: str, k: int, source_ids: list[str] | None = None,
-                    operation: str = "search") -> list[tuple[Chunk, float]]:
+                    operation: str = "search", where: dict | None = None) -> list[tuple[Chunk, float]]:
     """Find the project's chunks most similar to a query (vector search in Chroma).
 
     Looks the hits up in the in-memory chunks; hits whose chunk no longer exists (e.g. deleted
@@ -27,6 +27,7 @@ def retrieve_chunks(project_id: str, query: str, k: int, source_ids: list[str] |
         k: Maximum number of results.
         source_ids: Optional filter: only search these sources.
         operation: What the search is for, for the usage log (e.g. "ask", "verify").
+        where: Optional further metadata conditions (chapter, pages), see vectorstore.search.
 
     Returns:
         (chunk, similarity) pairs, best first.
@@ -34,7 +35,7 @@ def retrieve_chunks(project_id: str, query: str, k: int, source_ids: list[str] |
     Raises:
         vectorstore.VectorStoreError: If no API key is configured or the search fails.
     """
-    hits = vectorstore.search(project_id, query, k, source_ids, operation=operation)
+    hits = vectorstore.search(project_id, query, k, source_ids, operation=operation, where=where)
     return [(db.chunks[chunk_id], round(score, 3)) for chunk_id, score in hits if chunk_id in db.chunks]
 
 

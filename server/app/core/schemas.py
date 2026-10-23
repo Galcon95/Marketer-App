@@ -81,6 +81,7 @@ class Source(BaseModel):
     created_at: datetime  # upload time in UTC
     error: str | None = None  # error message when status == "failed", otherwise None
     author: str = ""  # from the PDF's metadata (author field, or "..., by Name" in its title); "" if unknown
+    sha256: str = ""  # checksum of the file's content; the same file cannot be uploaded twice into a project
 
 
 # ---------- Chunks & search ----------
@@ -253,6 +254,7 @@ class AskResponse(BaseModel):
 
     question: str  # echo of the question
     search_query: str  # what was searched: the question, or its standalone rewrite for a follow-up
+    filters: str = ""  # book/chapter/page filters taken from the question (structured retrieval); "" = none
     answer: str  # answer based only on the retrieved passages, with [n] citation markers
     citations: list[Citation]  # the passages cited in the answer, numbered like the markers
     passages: list[SearchHit]  # all retrieved passages, best first (what the answer could draw on)

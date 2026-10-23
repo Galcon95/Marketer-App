@@ -1,12 +1,16 @@
 """Question answering over the project's books with LangGraph + LangChain ("ask your book"), with
 conversation history and tool calling.
 
-    START ─(history?)─► condense ─► retrieve ─► answer ─(tool calls?)─► tools ─► respond ─► END
-              └─────(first question)──┘           └──────(no tool calls)───────────────────►┘
+    START ─(history?)─► condense ─► filter ─► retrieve ─► answer ─(tool calls?)─► tools ─► respond ─► END
+              └─────(first question)──┘                     └──────(no tool calls)───────────────────►┘
 
     condense  only for follow-ups: the chat model rewrites the latest question into a standalone search
               question using the recent turns ("and in chapter 3?" → "What does chapter 3 say about ...?")
-    retrieve  the (standalone) question is embedded; the k most similar passages come from Chroma (vectorstore.py)
+    filter    structured retrieval (filters.py): if the question names a book, chapter or pages, a model call with
+              structured output extracts them and code resolves them to real metadata values ("chapter 17 of
+              Butler" → that book, "CHAPTER XVII. SHORT SELLING"); questions without such hints skip the model call
+    retrieve  the (standalone) question is embedded; the k most similar passages come from Chroma (vectorstore.py),
+              restricted by the filters; if the filters find nothing, it searches again without them
     answer    ChatPromptTemplate: recent turns as chat messages + question + book background (summary.py)
               + numbered passages → ChatOpenAI (via OpenRouter) writes an answer from the passages only, citing them as [n].
               With use_tools (the chat), the model also gets the chat tools (chat_tools.py: list_books,
@@ -37,6 +41,7 @@ from app.core.llm import GenerationError, chat_model, is_configured, tokens_used
 from app.core.schemas import AskResponse, ChatTurn, Chunk, Citation, SearchHit, ToolCallRecord
 from app.rag import vectorstore
 from app.rag.chat_tools import make_tools, run_tool_calls
+from app.rag.filters import ResolvedFilters, extract_filters, might_filter, resolve_filters
 from app.rag.retrieval import format_background, format_context, keep_cited, retrieve_chunks
 
 logger = logging.getLogger(__name__)
@@ -90,6 +95,8 @@ class _QAState(TypedDict, total=False):
     operation: str  # name in the usage log, e.g. "ask" (GUI) or "mcp_ask_book" (MCP)
     use_tools: bool  # offer the chat tools to the model (the chat yes, MCP's ask_book no)
     search_query: str  # what retrieval searches for: the question, or its standalone rewrite
+    filters: ResolvedFilters | None  # book/chapter/page filters taken from the question (structured retrieval)
+    filter_note: str  # what was filtered, for the GUI, e.g. "Successful Stock Speculation · CHAPTER XVII. ..."
     context: list[tuple[Chunk, float]]  # retrieved passages with similarity, best first
     messages: list[BaseMessage]  # the answer prompt plus the model's tool calls and their results (tool round only)
     tool_calls: list[ToolCallRecord]  # the tools that ran, for the GUI
@@ -140,6 +147,7 @@ def answer_question(project_id: str, question: str, k: int, source_ids: list[str
     return AskResponse(
         question=question,
         search_query=state["search_query"],
+        filters=state.get("filter_note", ""),
         answer=state["answer"],
         citations=state["citations"],
         passages=[SearchHit(chunk=chunk, score=score) for chunk, score in state["context"]],
@@ -152,16 +160,18 @@ def answer_question(project_id: str, question: str, k: int, source_ids: list[str
 # ---------- Graph ----------
 @cache
 def _graph():
-    """Build and compile the LangGraph: START → (condense →) retrieve → answer → (tools → respond →) END."""
+    """Build and compile the LangGraph: START → (condense →) filter → retrieve → answer → (tools → respond →) END."""
     builder = StateGraph(_QAState)
     builder.add_node("condense", _condense)
+    builder.add_node("filter", _filter)
     builder.add_node("retrieve", _retrieve)
     builder.add_node("answer", _answer)
     builder.add_node("tools", _tools)
     builder.add_node("respond", _respond)
-    builder.add_conditional_edges(START, lambda s: "condense" if s.get("history") else "retrieve",
-                                  {"condense": "condense", "retrieve": "retrieve"})
-    builder.add_edge("condense", "retrieve")
+    builder.add_conditional_edges(START, lambda s: "condense" if s.get("history") else "filter",
+                                  {"condense": "condense", "filter": "filter"})
+    builder.add_edge("condense", "filter")
+    builder.add_edge("filter", "retrieve")
     builder.add_edge("retrieve", "answer")
     builder.add_conditional_edges("answer", lambda s: "tools" if s.get("messages") else END, {"tools": "tools", END: END})
     builder.add_edge("tools", "respond")
@@ -181,18 +191,38 @@ def _condense(state: _QAState) -> _QAState:
     return {"search_query": query, "tokens": tokens_used(reply)}
 
 
+def _filter(state: _QAState) -> _QAState:
+    """Filter node (structured retrieval): the book, chapter or pages the (standalone) question names, as metadata
+    filters. Skips the model call when the question has no such hints (filters.might_filter)."""
+    query = state.get("search_query") or state["question"]
+    if not might_filter(state["project_id"], query):
+        return {"search_query": query}
+    extracted, tokens = extract_filters(state["project_id"], query)
+    resolved = resolve_filters(state["project_id"], extracted, state.get("source_ids"))
+    note = "; ".join(x for x in [resolved.description, *resolved.notes] if x)
+    return {"search_query": query, "filters": resolved, "filter_note": note, "tokens": state.get("tokens", 0) + tokens}
+
+
 def _retrieve(state: _QAState) -> _QAState:
-    """Retrieval node: the k passages most similar to the (standalone) question.
+    """Retrieval node: the k passages most similar to the (standalone) question, within the filters. If the filters
+    leave nothing, the search runs again without them (and the note says so), so a filter never empties an answer.
 
     Raises:
         GenerationError: 409 if the project has no searchable passages.
     """
     query = state.get("search_query") or state["question"]
-    context = retrieve_chunks(state["project_id"], query, state["k"], state.get("source_ids"),
+    filters, note = state.get("filters"), state.get("filter_note", "")
+    source_ids = filters.source_ids if filters else state.get("source_ids")
+    where = filters.where() if filters else None
+    context = retrieve_chunks(state["project_id"], query, state["k"], source_ids, where=where,
                               operation=state.get("operation", "ask"))
+    if not context and (where or source_ids != state.get("source_ids")):
+        context = retrieve_chunks(state["project_id"], query, state["k"], state.get("source_ids"),
+                                  operation=state.get("operation", "ask"))
+        note = "; ".join(x for x in [note, "nothing matched the filter, so all passages were searched"] if x)
     if not context:
         raise GenerationError(409, "No searchable books in this project yet. Upload and process a book first.")
-    return {"search_query": query, "context": context}
+    return {"search_query": query, "context": context, "filter_note": note}
 
 
 def _answer(state: _QAState) -> _QAState:

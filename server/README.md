@@ -35,7 +35,7 @@ server/
 │   │   ├── summary.py      book summaries (LangGraph map-reduce)
 │   │   ├── qa.py           ask your book (LangGraph)
 │   │   └── generation.py   single assets, grounded or zero-shot (LangGraph)
-│   ├── campaign/       Phase 2 Campaign Builder
+│   ├── campaign/       Phase 2 Content Studio: campaign kits
 │   │   └── kit.py      zero-shot kit: personas → posts + blurb (LangGraph)
 │   ├── market/         Phase 3 Market Intelligence (MCP)
 │   │   ├── book_server.py  mcp-book-knowledge: the books as MCP tools (mounted at /mcp)
@@ -88,7 +88,7 @@ uv run pytest        # from server/; about 3 seconds
 
 `tests/` holds unit tests of the logic that needs no model or API key: the guardrails (`test_guard.py`), the
 platform check (`test_platforms.py`), citation handling, the prompt format of passages and chapter detection
-(`test_rag_helpers.py`), plus API tests showing that bad requests are rejected before any model call, including
+(`test_rag_helpers.py`), structured retrieval filters (`test_filters.py`), plus API tests showing that bad requests are rejected before any model call, including
 the rate limit (`test_api_guardrails.py`). The quality of the model's answers is measured separately with RAGAs
 (`../eval/`).
 
