@@ -1,15 +1,15 @@
 /**
- * Typed client for the Marketer App API (server/server.py, models in server/schemas.py).
+ * Typed client for the Marketer App API (server/server.py, models in server/app/core/schemas.py).
  * Called from the browser; the server allows http://localhost:3000 via CORS.
  */
 
 /** Base URL of the FastAPI server; override with NEXT_PUBLIC_API_URL. */
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
-/** Single hard-coded project until project switching is built. */
+/** The one client (the API calls it a project) until several clients are supported. */
 export const PROJECT_ID = "demo-campaign";
 
-/* ---------- Types (mirror server/schemas.py) ---------- */
+/* ---------- Types (mirror server/app/core/schemas.py) ---------- */
 /** Kind of content a source holds; decides how it will be ingested (parsed vs. transcribed). */
 export type SourceKind = "document" | "video" | "audio" | "text";
 /** uploaded = stored on the server, not processed yet; queued … embedding = ingestion running. */
@@ -17,14 +17,14 @@ export type SourceStatus = "uploaded" | "queued" | "transcribing" | "chunking" |
 /** Statuses during which ingestion is still running and the UI should keep polling. */
 export const PROCESSING_STATUSES: SourceStatus[] = ["queued", "transcribing", "chunking", "embedding"];
 
-/** Mirrors server/storage.py. The server enforces these too; checking here gives instant feedback. */
+/** Mirrors server/app/core/storage.py. The server enforces these too; checking here gives instant feedback. */
 export const UPLOAD_EXTENSIONS = [".pdf"];
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 /** Kinds of marketing content the generator can produce. */
 export type AssetType =
   | "blurb" | "social_post" | "social_reply" | "video_script" | "youtube_video"
   | "newsletter" | "ad_copy" | "lead_magnet" | "persona";
-/** Writing style options for generated assets (mirror server/schemas.py). */
+/** Writing style options for generated assets (mirror server/app/core/schemas.py). */
 export type Tone = "neutral" | "inspiring" | "friendly" | "professional" | "punchy" | "literary";
 export type Length = "short" | "standard" | "long"; // not used for social posts and replies (the platform decides)
 export type Platform = "x" | "linkedin" | "instagram" | "facebook" | "tiktok" | "youtube"; // for posts, replies, video scripts
@@ -213,7 +213,7 @@ export interface McpCall {
   called_at: string;
 }
 
-/** One logged model call with its tokens and costs in USD (server/usage.py). */
+/** One logged model call with its tokens and costs in USD (server/app/core/usage.py). */
 export interface UsageRecord {
   timestamp: string; // ISO 8601 (UTC)
   operation: string; // e.g. "ask/answer", "generate_blurb/generate", "embed_chunks"
@@ -326,7 +326,7 @@ export function humanizeLabel(value: number) {
   return "Very human, casual";
 }
 
-
+/** Display label of an asset type, e.g. "social_post" → "Social post" (the type itself if unknown). */
 export function assetTypeLabel(type: AssetType) {
   return ASSET_TYPES.find((t) => t.value === type)?.label ?? type;
 }
@@ -364,6 +364,7 @@ export function bookTitle(filename: string) {
   return filename.replace(/\.[^.]+$/, "").replace(/_/g, " — ").replace(/-/g, " ").replace(/\s+/g, " ").trim();
 }
 
+/** Where a chunk is, for display: "CHAPTER IV. … · p.9" for books, "00:01:20–00:02:05" for media. */
 export function locationLabel(loc: ChunkLocation) {
   if (loc.start_time) return loc.end_time ? `${loc.start_time}–${loc.end_time}` : loc.start_time;
   return [loc.chapter, loc.page != null && `p.${loc.page}`].filter(Boolean).join(" · ");

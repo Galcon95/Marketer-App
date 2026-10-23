@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * The "LLM usage & costs" drawer opened from the top bar: totals and the history of model calls
+ * (GET /usage), plus the token and USD formatters the top bar uses too.
+ */
+
 import { Cpu } from "lucide-react";
 import { api, type UsageTotals } from "@/lib/api";
 import { useApi } from "@/lib/useApi";

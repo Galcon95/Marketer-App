@@ -1,5 +1,11 @@
 "use client";
 
+/**
+ * The app frame: sidebar (navigation, current client, system status from GET /health), top bar (title,
+ * usage and costs button, export) and the four phase tabs, which render the phase views. Also holds the
+ * Agent Workspace (Phase 4) placeholder.
+ */
+
 import { useCallback, useState, type JSX } from "react";
 import {
   Bot, Brain, Cpu, Database, FileText, Menu, Network, Server, Settings,

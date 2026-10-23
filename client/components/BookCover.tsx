@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * Book covers extracted from the PDFs (BookCover, with a placeholder while loading or if there is none) and
+ * PageLink, which opens the original PDF at a cited page.
+ */
+
 import { useState, type ReactNode } from "react";
 import { BookOpen } from "lucide-react";
 import { coverUrl, fileUrl } from "@/lib/api";

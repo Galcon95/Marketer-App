@@ -1,5 +1,11 @@
 "use client";
 
+/**
+ * Phase 2, Campaign Builder: a book brief (pre-filled from a library book and its summary) becomes a
+ * zero-shot campaign kit of 3 reader personas, 5 social posts and a blurb (POST /campaigns). Past
+ * campaigns are listed below, the newest open.
+ */
+
 import { useState, type SubmitEvent } from "react";
 import { BookOpen, Check, FileText, Megaphone, Sparkles, Users, Wand2 } from "lucide-react";
 import { api, bookTitle, errorMessage, humanizeLabel, PROJECT_ID, type Asset, type Source } from "@/lib/api";

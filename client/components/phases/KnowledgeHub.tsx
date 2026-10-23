@@ -1,5 +1,14 @@
 "use client";
 
+/**
+ * Phase 1, Knowledge Hub (RAG over the client's books):
+ *   UploadPanel / SourcesCard   upload PDFs, follow ingestion progress, process, re-index, delete
+ *   BookShelf / BookPicker      the library with covers; choose one book or all books to work on
+ *   SourceChunksDrawer          browse a book's chunks; SummaryDrawer: create and read the book summary
+ *   AskBook                     "Ask your book": chat with history, citations and tool calls
+ *   GroundedGenerator           write assets from the books, with citations
+ */
+
 import { useCallback, useEffect, useRef, useState, type ReactNode, type SubmitEvent } from "react";
 import { AlertTriangle, BookOpen, Check, ChevronDown, Database, FileText, Film, Library, MessageSquare, Play, Plus, RotateCcw, Sparkles, Target, Trash2, Upload, Wrench } from "lucide-react";
 import {

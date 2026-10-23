@@ -36,6 +36,8 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 def main() -> None:
+    """One evaluation run: ask the app every test question, score the answers with RAGAs, then write
+    results.json, results.csv and report.html to reports/<run id>/ and print a summary."""
     args = _parse_args()
     _load_server_env()
     if not os.getenv("OPENROUTER_API_KEY"):
@@ -82,6 +84,7 @@ def main() -> None:
 
 
 def _parse_args() -> argparse.Namespace:
+    """The command line options (see --help): API address, project, k, question limit, label, judge model, workers."""
     p = argparse.ArgumentParser(description="RAG evaluation of the marketer app with RAGAs")
     p.add_argument("--api", default="http://127.0.0.1:8000", help="base URL of the running app API")
     p.add_argument("--project", default="demo-campaign", help="project (client) whose books are asked")

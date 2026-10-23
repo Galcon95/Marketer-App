@@ -1,5 +1,11 @@
 "use client";
 
+/**
+ * A generated asset (blurb, post, persona, ...) as a card: its text with citation markers, platform
+ * character count, and the actions copy, edit, verify against the books and delete. CitationList shows
+ * the cited passages; it is reused by the "Ask your book" chat.
+ */
+
 import { useState } from "react";
 import { AlertTriangle, Check, Copy, Pencil, ShieldCheck, Sparkles, Trash2, UserCheck, Users, X } from "lucide-react";
 import { api, assetTypeLabel, cleanText, errorMessage, hasCharLimit, humanizeLabel, locationLabel, PLATFORMS, type Asset, type Citation, type VerifyItem } from "@/lib/api";

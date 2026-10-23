@@ -1,3 +1,7 @@
+/**
+ * Root layout of the Next.js app: fonts, page metadata and the global styles (BookCraft design system).
+ */
+
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";

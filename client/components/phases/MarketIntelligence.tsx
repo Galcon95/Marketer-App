@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * Phase 3, Market Intelligence: our MCP servers with their live status, a tool console like the MCP
+ * Inspector (forms built from each tool's input schema, results, call log) and the leads table placeholder.
+ */
+
 import { useState, type SubmitEvent } from "react";
 import { Network, Play, RotateCcw, Target, Terminal, Wrench } from "lucide-react";
 import { api, errorMessage, type JsonSchema, type McpCall, type McpServer, type McpTool } from "@/lib/api";
