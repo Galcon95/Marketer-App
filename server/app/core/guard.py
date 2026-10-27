@@ -70,6 +70,7 @@ class InjectionFinding(BaseModel):
 class InjectionReport(BaseModel):
     """Result of check_prompt_injection."""
 
+    passed: bool = Field(description="True if the text may be used (risk none or low); false if it should be blocked.")
     risk: Literal["none", "low", "high"] = Field(
         description="'high': block or ask the user; 'low': allow but keep the text wrapped as data; 'none': nothing found.")
     findings: list[InjectionFinding]
@@ -162,7 +163,7 @@ def check_prompt_injection(text: str) -> InjectionReport:
                 findings.append(InjectionFinding(rule=rule, severity=severity, excerpt=_excerpt(line, match)))
                 break
     risk = "high" if any(f.severity == "high" for f in findings) else "low" if findings else "none"
-    return InjectionReport(risk=risk, findings=findings, advice=_ADVICE[risk])
+    return InjectionReport(passed=risk != "high", risk=risk, findings=findings, advice=_ADVICE[risk])
 
 
 def wrap_untrusted(passages: list[str]) -> WrappedText:

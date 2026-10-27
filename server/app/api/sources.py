@@ -44,6 +44,7 @@ def upload_source(project_id: str, background_tasks: BackgroundTasks, file: Uplo
         _, size, sha256 = storage.save_upload(file.file, filename, project_id, source_id)
     except storage.UploadError as e:
         raise HTTPException(e.status_code, e.detail) from e
+        
     duplicate = next((s for s in db.sources.values() if s.project_id == project_id and s.sha256 == sha256), None)
     if duplicate:
         storage.delete_source_files(project_id, source_id)

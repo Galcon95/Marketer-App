@@ -41,7 +41,9 @@ def test_validate_input_flags_long_repetition_as_warning_only():
     "This eBook is for the use of anyone anywhere at no cost and with almost no restrictions whatsoever.",
 ])
 def test_ordinary_text_is_not_flagged(text):
-    assert guard.check_prompt_injection(text).risk == "none"
+    report = guard.check_prompt_injection(text)
+    assert report.risk == "none"
+    assert report.passed
 
 
 @pytest.mark.parametrize(("text", "rule"), [
@@ -56,11 +58,14 @@ def test_ordinary_text_is_not_flagged(text):
 def test_attacks_are_high_risk_with_the_matching_rule(text, rule):
     report = guard.check_prompt_injection(text)
     assert report.risk == "high"
+    assert not report.passed
     assert rule in [f.rule for f in report.findings]
 
 
 def test_hidden_characters_alone_are_low_risk():
-    assert guard.check_prompt_injection("Normal looking​ text").risk == "low"
+    report = guard.check_prompt_injection("Normal looking​ text")
+    assert report.risk == "low"
+    assert report.passed
 
 
 # ---------- quote_untrusted / wrap_untrusted ----------

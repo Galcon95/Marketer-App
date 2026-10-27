@@ -74,7 +74,7 @@ in `app/core/guard.py` (pure functions, no model calls), so the API can call it 
 | Tool | Returns |
 |---|---|
 | `validate_input(text, kind)` | cleaned text, ok, problems (empty, too long, hidden characters, repetition); limits per kind |
-| `check_prompt_injection(text)` | risk none/low/high, findings with rule and excerpt, advice |
+| `check_prompt_injection(text)` | passed (false on high risk), risk none/low/high, findings with rule and excerpt, advice |
 | `wrap_untrusted(passages)` | passages in `<passage n="...">` tags, the system prompt rule, passages flagged as risky |
 
 The injection check is rule-based (override phrases, role changes, prompt leaks, fake role markers, exfiltration

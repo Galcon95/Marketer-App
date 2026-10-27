@@ -74,6 +74,7 @@ def record(rec: UsageRecord) -> None:
                 f.write(rec.model_dump_json() + "\n")
         except OSError as e:
             logger.warning("Could not write %s: %s", USAGE_FILE, e)
+            
     logger.info(
         "%-38s %-28s in %7s tok %s | out %6s tok %s | call %s || total so far: in %s, out %s, all %s (%d calls)",
         rec.operation, rec.model, f"{rec.input_tokens:,}", _usd(rec.input_cost), f"{rec.output_tokens:,}",

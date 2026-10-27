@@ -54,6 +54,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# inlcude the API routers
 for module in (health, projects, sources, knowledge, assets, campaigns, mcp_console):
     app.include_router(module.router)
 

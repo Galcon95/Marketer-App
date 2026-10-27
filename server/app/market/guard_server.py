@@ -54,8 +54,8 @@ def validate_input(text: str, kind: InputKind = "question") -> ValidationResult:
 def check_prompt_injection(text: str) -> InjectionReport:
     """Check text for prompt injection: attempts to give the model instructions, such as "ignore previous
     instructions", role changes ("you are now ..."), requests to reveal the system prompt, fake chat role
-    markers, hidden characters or data exfiltration links. Returns the risk (none, low, high), each finding
-    with an excerpt, and advice. Rule-based, so it catches common phrasings, not every attack.
+    markers, hidden characters or data exfiltration links. Returns whether the text passed (false on a high
+    risk), the risk (none, low, high), each finding with an excerpt, and advice. Rule-based, so it catches common phrasings, not every attack.
 
     Args:
         text: User input or outside text (a pasted social post, a document, a retrieved passage).
