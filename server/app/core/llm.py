@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage
 from langchain_openai import ChatOpenAI
 
 from app.core import config, usage
+from app.core import tracing as tracing_switch
 
 LLM_TEMPERATURE = 0.7  # some creativity for marketing copy; facts are constrained by the prompts
 
@@ -47,8 +48,9 @@ def tokens_used(reply: AIMessage) -> int:
 
 
 def health() -> tuple[bool, str]:
-    """Status of the language model for GET /health: (ok, detail with model, provider and LangSmith tracing)."""
-    tracing = "LangSmith tracing on" if config.tracing_enabled() else "LangSmith tracing off"
+    """Status of the language model for GET /health: (ok, detail with model and provider). In debug mode the detail
+    also says that LangSmith tracing is on; otherwise tracing is not mentioned, so customers see nothing of it."""
+    debug = ["debug mode · LangSmith tracing on"] if tracing_switch.enabled() else []
     if not is_configured():
-        return False, f"{config.LLM_MODEL} · no API key · {tracing}"
-    return True, f"{config.LLM_MODEL} via {config.PROVIDER} · {tracing}"
+        return False, " · ".join([config.LLM_MODEL, "no API key", *debug])
+    return True, " · ".join([f"{config.LLM_MODEL} via {config.PROVIDER}", *debug])

@@ -130,7 +130,7 @@ Served at `http://127.0.0.1:8000/guardrails/mcp`. Unlike the book server, it is 
 | Tool | Returns |
 |---|---|
 | `validate_input(text, kind)` | cleaned text and problems: empty, too long (limits per kind: question 1000, chat message 2000, search query 500, brief 4000, social post 3000, asset text 12000), hidden characters, repetition |
-| `check_prompt_injection(text)` | risk none / low / high, with findings: override phrases, role changes, prompt leaks, fake role markers, hiding from the user, exfiltration links, hidden characters |
+| `check_prompt_injection(text)` | passed yes/no (no on high risk), risk none / low / high, with findings: override phrases, role changes, prompt leaks, fake role markers, hiding from the user, exfiltration links, hidden characters |
 | `wrap_untrusted(passages)` | passages in `<passage>` tags (tags inside the text neutralized), the "treat as data" system prompt rule, and the flagged passages |
 
 - Tested on all book chunks: none flagged.
@@ -186,7 +186,9 @@ Three layers, all in code and on every request (never left to the model):
 - No model calls, no API key needed; answer quality is measured separately with RAGAs (`eval/`).
 
 ### Observability
-- LangSmith tracing (`summarize_book`, `generate_campaign`, generation runs) whenever `LANGSMITH_TRACING` is set.
+- LangSmith tracing of every graph run (`answer_question`, `generate_*`, `summarize_book`, `generate_campaign`) in
+  the developer **debug mode**: `DEBUG_MODE=true` in `server/.env` (plus `LANGSMITH_API_KEY`), off by default and
+  invisible to customers. It overrides `LANGSMITH_TRACING`, so with debug mode off nothing is sent to LangSmith.
 
 ### Persistence
 - Sources, chunks, summaries, assets and chats are kept in memory and restored from disk when the server starts.

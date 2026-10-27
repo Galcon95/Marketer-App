@@ -35,6 +35,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.graph import END, START, StateGraph
 
+from app.core import tracing
 from app.core.config import LLM_MODEL
 from app.core.guard import UNTRUSTED_RULE
 from app.core.llm import GenerationError, chat_model, is_configured, tokens_used
@@ -131,12 +132,13 @@ def answer_question(project_id: str, question: str, k: int, source_ids: list[str
     if not is_configured():
         raise GenerationError(503, "No API key set. Add OPENROUTER_API_KEY (or OPENAI_API_KEY) and restart the server.")
     try:
-        state = _graph().invoke(
-            {"project_id": project_id, "question": question, "history": (history or [])[-HISTORY_TURNS:], "k": k,
-             "source_ids": source_ids, "operation": operation, "use_tools": use_tools},
-            config={"run_name": "answer_question", "tags": ["qa"],
-                    "metadata": {"project_id": project_id, "llm_model": LLM_MODEL, "operation": operation}},
-        )
+        with tracing.scope():
+            state = _graph().invoke(
+                {"project_id": project_id, "question": question, "history": (history or [])[-HISTORY_TURNS:], "k": k,
+                 "source_ids": source_ids, "operation": operation, "use_tools": use_tools},
+                config={"run_name": "answer_question", "tags": ["qa"],
+                        "metadata": {"project_id": project_id, "llm_model": LLM_MODEL, "operation": operation}},
+            )
     except GenerationError:
         raise
     except vectorstore.VectorStoreError as e:

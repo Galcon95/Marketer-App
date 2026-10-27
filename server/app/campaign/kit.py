@@ -27,6 +27,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
+from app.core import tracing
 from app.core.config import LLM_MODEL
 from app.core.llm import GenerationError, chat_model, is_configured, tokens_used
 from app.core.schemas import CampaignRequest, Platform
@@ -144,11 +145,12 @@ def generate_campaign(req: CampaignRequest) -> CampaignState:
     if not is_configured():
         raise GenerationError(503, "No API key set. Add OPENROUTER_API_KEY (or OPENAI_API_KEY) and restart the server.")
     try:
-        return _graph().invoke(
-            {"req": req},
-            config={"run_name": "generate_campaign", "tags": ["zero-shot", "campaign"],
-                    "metadata": {"llm_model": LLM_MODEL, "operation": "generate_campaign", "source_id": req.source_id}},
-        )
+        with tracing.scope():
+            return _graph().invoke(
+                {"req": req},
+                config={"run_name": "generate_campaign", "tags": ["zero-shot", "campaign"],
+                        "metadata": {"llm_model": LLM_MODEL, "operation": "generate_campaign", "source_id": req.source_id}},
+            )
     except GenerationError:
         raise
     except Exception as e:

@@ -35,7 +35,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
 from app.core import state as db
-from app.core import storage
+from app.core import storage, tracing
 from app.core.config import LLM_MODEL
 from app.core.guard import UNTRUSTED_RULE, quote_untrusted
 from app.core.llm import GenerationError, chat_model, is_configured, tokens_used
@@ -212,11 +212,12 @@ def generate_asset(project_id: str, req: GenerateRequest) -> GenerationState:
         raise GenerationError(503, "No API key set. Add OPENROUTER_API_KEY (or OPENAI_API_KEY) and restart the server.")
     mode = "grounded" if req.grounded else "zero-shot"
     try:
-        state = _graph().invoke(
-            {"project_id": project_id, "req": req},
-            config={"run_name": f"generate_{req.asset_type}", "tags": [mode, req.asset_type],
-                    "metadata": {"project_id": project_id, "llm_model": LLM_MODEL, "operation": f"generate_{req.asset_type}"}},
-        )
+        with tracing.scope():
+            state = _graph().invoke(
+                {"project_id": project_id, "req": req},
+                config={"run_name": f"generate_{req.asset_type}", "tags": [mode, req.asset_type],
+                        "metadata": {"project_id": project_id, "llm_model": LLM_MODEL, "operation": f"generate_{req.asset_type}"}},
+            )
     except GenerationError:
         raise
     except vectorstore.VectorStoreError as e:

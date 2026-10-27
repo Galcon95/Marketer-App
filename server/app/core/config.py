@@ -7,7 +7,9 @@ Read once on import from environment variables (and server/.env, if present), fi
                           embeddings "text-embedding-3-large")
     LLM_MODEL           → optional, overrides the chat model
     EMBEDDING_MODEL     → optional, overrides the embedding model
-    LANGSMITH_TRACING=true + LANGSMITH_API_KEY → runs are traced in LangSmith (LangChain picks these up itself)
+    DEBUG_MODE=true     → developer debug mode: every graph run is traced in LangSmith (needs LANGSMITH_API_KEY;
+                          see tracing.py). Default off; keep it off for customers and in production
+    LANGSMITH_PROJECT   → optional, the LangSmith project the traces go to (default "marketer-app")
 """
 
 import os
@@ -32,7 +34,15 @@ else:
     LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 
 
+DEBUG_MODE = os.getenv("DEBUG_MODE", "false").strip().lower() in ("true", "1", "on", "yes")
+LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT") or os.getenv("LANGCHAIN_PROJECT") or "marketer-app"
+
+
+def langsmith_key_set() -> bool:
+    """True if a LangSmith API key is set (also accepts the older LANGCHAIN_API_KEY name)."""
+    return bool(os.getenv("LANGSMITH_API_KEY") or os.getenv("LANGCHAIN_API_KEY"))
+
+
 def tracing_enabled() -> bool:
-    """True if LangSmith tracing is switched on and has an API key (also accepts the older LANGCHAIN_* names)."""
-    on = (os.getenv("LANGSMITH_TRACING") or os.getenv("LANGCHAIN_TRACING_V2") or "").lower() == "true"
-    return on and bool(os.getenv("LANGSMITH_API_KEY") or os.getenv("LANGCHAIN_API_KEY"))
+    """True if LangSmith tracing is on: debug mode and a LangSmith API key. LANGSMITH_TRACING plays no part."""
+    return DEBUG_MODE and langsmith_key_set()

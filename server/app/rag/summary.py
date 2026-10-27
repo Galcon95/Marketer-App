@@ -23,7 +23,7 @@ from langgraph.types import Send
 from pydantic import BaseModel, Field
 
 from app.core import state as db
-from app.core import storage
+from app.core import storage, tracing
 from app.core.config import LLM_MODEL
 from app.core.llm import GenerationError, chat_model, is_configured, tokens_used
 from app.core.schemas import BookSummary, ChapterSummary, Chunk, Source
@@ -101,12 +101,13 @@ def summarize_source(source: Source) -> BookSummary:
     if not sections:
         raise GenerationError(409, f"'{source.filename}' has no chunks to summarize. Process it first.")
     try:
-        state = _graph().invoke(
-            {"book": source_name(source.id) or source.filename, "sections": sections, "tokens": 0, "chapter_summaries": []},
-            config={"run_name": "summarize_book", "tags": ["summary"], "max_concurrency": MAX_PARALLEL_CALLS,
-                    "metadata": {"source_id": source.id, "project_id": source.project_id, "llm_model": LLM_MODEL,
-                                 "operation": "summarize_book"}},
-        )
+        with tracing.scope():
+            state = _graph().invoke(
+                {"book": source_name(source.id) or source.filename, "sections": sections, "tokens": 0, "chapter_summaries": []},
+                config={"run_name": "summarize_book", "tags": ["summary"], "max_concurrency": MAX_PARALLEL_CALLS,
+                        "metadata": {"source_id": source.id, "project_id": source.project_id, "llm_model": LLM_MODEL,
+                                     "operation": "summarize_book"}},
+            )
     except GenerationError:
         raise
     except Exception as e:
