@@ -54,14 +54,16 @@ def format_context(context: list[tuple[Chunk, float]]) -> str:
 
 
 def format_background(context: list[tuple[Chunk, float]]) -> str:
-    """Summaries of the books the excerpts come from, e.g. "Garden Cities — Ebenezer Howard: <summary>".
+    """Summaries of the books the excerpts come from, each as data in a <background source="..."> block.
 
+    The summaries were written by the model from book text, so they are quoted like the passages
+    (guard.quote_untrusted): a summary that picked up "ignore your instructions" from a book is read, not obeyed.
     Returns "(none)" if no summary has been created for these books yet.
     """
     parts = []
     for source_id in dict.fromkeys(chunk.source_id for chunk, _ in context):  # unique, in order
         if summary := db.summaries.get(source_id):
-            parts.append(f"{source_name(source_id)}: {summary.summary}")
+            parts.append(quote_untrusted(summary.summary, "background", source=source_name(source_id) or source_id))
     return "\n\n".join(parts) or "(none)"
 
 

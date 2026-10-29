@@ -34,12 +34,15 @@ from typing import TypedDict
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from app.core import prompts, tracing
 from app.core.config import LLM_MODEL
 from app.core.guard import UNTRUSTED_RULE
 from app.core.logs import current_request_id
-from app.core.llm import GenerationError, chat_model, is_configured, model_failure, tokens_used
+from app.core.llm import (
+    STRUCTURED_ATTEMPTS, GenerationError, chat_model, is_configured, model_failure, structured, tokens_used,
+)
 from app.core.schemas import AskResponse, ChatTurn, Chunk, Citation, SearchHit, ToolCallRecord
 from app.rag import vectorstore
 from app.rag.chat_tools import make_tools, run_tool_calls
@@ -72,7 +75,8 @@ QA_PROMPT = ChatPromptTemplate.from_messages([
 # Added to the system prompt when the model gets the chat tools.
 TOOLS_NOTE = (
     "\nYou can also call tools, but only when the question needs them: list_books for questions about the "
-    "library itself (which books, authors, themes), check_platform_fit to check a post for a social platform, and "
+    "library itself (which books, authors, themes); always call it for those, because the passages and background "
+    "show only the books that matched the search. check_platform_fit to check a post for a social platform, and "
     "draft_social_post when the user asks you to write a post. Questions about what the books say are answered "
     "from the passages, without tools. You may use facts from tool results too; do not put [n] markers on them. "
     "When you present a drafted post, show it in full and mention that it was saved to the asset library."
@@ -83,9 +87,33 @@ CONDENSE_PROMPT = ChatPromptTemplate.from_messages([
      "You turn the user's latest message in a conversation about books into a standalone search question. "
      "Use the conversation only to resolve what the message refers to (pronouns, 'that chapter', 'the second "
      "point', 'and what about ...'). Keep the user's language and intent; do not answer it and add nothing new. "
-     "If the message is already standalone, return it unchanged. Reply with the question only."),
+     "If the message is already standalone, return it unchanged."),
     ("human", "Conversation so far:\n{history}\n\nLatest message: {question}"),
 ])
+
+
+class StandaloneQuestion(BaseModel):
+    """Structured output of the condense step."""
+
+    question: str = Field(description="The latest message as a standalone search question, in the user's language.")
+
+
+class QAAnswer(BaseModel):
+    """Give your final answer to the user's question."""
+
+    # The answer is a tool call too (see _invoke_answer), so this docstring is the description the model reads; the
+    # passages it lists in used_sources become citations as well (like generation.GeneratedText), so the citations do
+    # not depend on [n] markers in prose alone.
+
+    answer: str = Field(description="The answer in plain text, with [n] right after each statement that uses passage n.")
+    used_sources: list[int] = Field(description="Numbers of all passages the answer draws on; empty if they do not "
+                                                "answer the question.")
+
+    @model_validator(mode="after")
+    def _has_answer(self) -> "QAAnswer":
+        if not self.answer.strip():
+            raise ValueError("the answer is empty")
+        return self
 
 
 class _QAState(TypedDict, total=False):
@@ -110,7 +138,8 @@ class _QAState(TypedDict, total=False):
 
 
 # Version of this feature's prompts, e.g. "qa@3f9a1c2e"; changes by itself when a prompt changes (core/prompts.py).
-PROMPT_VERSION = prompts.register("qa", QA_PROMPT, TOOLS_NOTE, CONDENSE_PROMPT, FILTER_PROMPT, QueryFilters)
+PROMPT_VERSION = prompts.register("qa", QA_PROMPT, TOOLS_NOTE, CONDENSE_PROMPT, FILTER_PROMPT, QueryFilters,
+                                  StandaloneQuestion, QAAnswer)
 
 
 # ---------- Public API ----------
@@ -191,15 +220,15 @@ def _graph():
 
 
 def _condense(state: _QAState) -> _QAState:
-    """Condense node (follow-ups only): rewrite the question into a standalone search question.
+    """Condense node (follow-ups only): rewrite the question into a standalone search question (structured output).
 
     Low temperature, because the rewrite should be faithful, not creative. Falls back to the original
-    question if the model returns nothing.
+    question if the model returns an empty one.
     """
     history = "\n\n".join(f"User: {t.question}\nAssistant: {_plain(t.answer, 600)}" for t in state["history"])
-    reply = (CONDENSE_PROMPT | chat_model(0.0)).invoke({"history": history, "question": state["question"]})
-    query = str(reply.content).strip().strip('"') or state["question"]
-    return {"search_query": query, "tokens": tokens_used(reply)}
+    rewritten, tokens = structured(CONDENSE_PROMPT, {"history": history, "question": state["question"]},
+                                   StandaloneQuestion, "standalone question", 0.0)
+    return {"search_query": rewritten.question.strip() or state["question"], "tokens": tokens}
 
 
 def _filter(state: _QAState) -> _QAState:
@@ -239,7 +268,7 @@ def _retrieve(state: _QAState) -> _QAState:
 def _answer(state: _QAState) -> _QAState:
     """Answer node: fill the prompt (recent turns, question, background, numbered passages) and call the model.
 
-    Without tools, or when the model calls none, its reply is the answer (cited passages kept). When it
+    Without tools, or when the model calls none, its reply is the answer (a QAAnswer; cited passages kept). When it
     calls tools, the prompt and its reply are kept in "messages" and the graph goes on to the tools node.
     """
     use_tools = state.get("use_tools", False)
@@ -248,12 +277,11 @@ def _answer(state: _QAState) -> _QAState:
         background=format_background(state["context"]), context=format_context(state["context"]),
         tools_note=TOOLS_NOTE if use_tools else "",
     )
-    model = chat_model().bind_tools(make_tools(state["project_id"])) if use_tools else chat_model()
-    reply = model.invoke(messages)
-    tokens = state.get("tokens", 0) + tokens_used(reply)
-    if getattr(reply, "tool_calls", None):
+    reply, answer, used = _invoke_answer(messages, make_tools(state["project_id"]) if use_tools else None)
+    tokens = state.get("tokens", 0) + used
+    if answer is None:  # tool calls
         return {"messages": [*messages, reply], "tokens": tokens}
-    return {**_final(reply, state["context"]), "tokens": tokens}
+    return {**_final(answer, state["context"]), "tokens": tokens}
 
 
 def _tools(state: _QAState) -> _QAState:
@@ -266,16 +294,49 @@ def _tools(state: _QAState) -> _QAState:
 
 def _respond(state: _QAState) -> _QAState:
     """Respond node: the model writes the final answer from the passages and the tool results. The tools stay
-    bound (the request contains tool calls) but tool_choice "none" forbids new calls: one round, no loop."""
-    model = chat_model().bind_tools(make_tools(state["project_id"]), tool_choice="none")
-    reply = model.invoke(state["messages"])
-    return {**_final(reply, state["context"]), "tokens": state.get("tokens", 0) + tokens_used(reply)}
+    bound (the request contains tool calls) but only the QAAnswer call is allowed: one round, no loop."""
+    _, answer, used = _invoke_answer(state["messages"], make_tools(state["project_id"]), final=True)
+    return {**_final(answer, state["context"]), "tokens": state.get("tokens", 0) + used}
 
 
 # ---------- Helpers ----------
-def _final(reply: AIMessage, context: list[tuple[Chunk, float]]) -> _QAState:
-    """The answer and its citations from the model's final reply (only the passages it cited are kept)."""
-    cited = keep_cited(str(reply.content).strip(), context)
+def _invoke_answer(messages: list[BaseMessage], tools: list | None = None,
+                   final: bool = False) -> tuple[AIMessage, QAAnswer | None, int]:
+    """Call the answer model, where giving the answer is itself a tool call (QAAnswer).
+
+    The model must call a tool (tool_choice "required"): one of the chat tools, or QAAnswer with the answer and its
+    used_sources. Choosing between tools is what function calling does well; a JSON response format next to the
+    tools made the model answer from the prompt instead of calling list_books. Without chat tools, or for the final
+    answer after the tool round (`final`), QAAnswer is the only allowed call. Like llm.structured, an answer that
+    does not fit the schema is logged and requested once more.
+
+    Returns:
+        The reply, its validated answer (None if the reply calls chat tools; QAAnswer calls made next to them are
+        dropped from the reply, since every call in it needs a tool result) and the tokens of all attempts.
+
+    Raises:
+        GenerationError: 502 if no attempt gives a usable answer.
+    """
+    model = (chat_model().bind_tools([*tools, QAAnswer], tool_choice="required") if tools and not final
+             else chat_model().bind_tools([*(tools or []), QAAnswer], tool_choice=QAAnswer.__name__))
+    tokens = 0
+    for attempt in range(1, STRUCTURED_ATTEMPTS + 1):
+        reply: AIMessage = model.invoke(messages)
+        tokens += tokens_used(reply)
+        tool_calls = [c for c in reply.tool_calls if c["name"] != QAAnswer.__name__]
+        if tool_calls:
+            return reply.model_copy(update={"tool_calls": tool_calls}), None, tokens
+        answers = [c for c in reply.tool_calls if c["name"] == QAAnswer.__name__]
+        try:
+            return reply, QAAnswer.model_validate(answers[0]["args"] if answers else {}), tokens
+        except ValidationError as e:
+            logger.warning("answer: reply %d/%d does not fit QAAnswer: %s", attempt, STRUCTURED_ATTEMPTS, e)
+    raise GenerationError(502, "The model returned no usable answer. Please try again.")
+
+
+def _final(answer: QAAnswer, context: list[tuple[Chunk, float]]) -> _QAState:
+    """The answer and its citations: the passages marked [n] in the text plus those listed in used_sources."""
+    cited = keep_cited(answer.answer.strip(), context, also_cited=answer.used_sources)
     return {"answer": cited["text"], "citations": cited["citations"]}
 
 

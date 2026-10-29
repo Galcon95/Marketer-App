@@ -25,7 +25,6 @@ core/llm.py and core/config.py.
 """
 
 import logging
-import re
 from functools import cache
 from typing import TypedDict
 
@@ -39,7 +38,7 @@ from app.core import state as db
 from app.core.config import LLM_MODEL
 from app.core.guard import UNTRUSTED_RULE, quote_untrusted
 from app.core.logs import current_request_id
-from app.core.llm import GenerationError, chat_model, is_configured, model_failure, tokens_used
+from app.core.llm import GenerationError, chat_model, is_configured, model_failure, structured, tokens_used
 from app.core.schemas import Asset, AssetType, Chunk, Citation, GenerateRequest, Length
 from app.core.style import (
     PLATFORM_POST, PLATFORM_REPLY, PLATFORM_VIDEO, REWRITE_FROM, REWRITE_PROMPT, TONES, find_ai_tells,
@@ -121,7 +120,7 @@ PLAN_QUERY_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
      "You help find passages in a book that are useful for replying to a social media post. Read the post and "
      "the user's angle, then write ONE search query of at most 25 words that names the topics, claims or "
-     "questions the reply should address. Reply with the query only. " + UNTRUSTED_RULE),
+     "questions the reply should address. " + UNTRUSTED_RULE),
     ("human", "{request}"),
 ])
 
@@ -133,8 +132,16 @@ class GeneratedText(BaseModel):
     used_sources list makes sure their sources are still known.
     """
 
-    text: str = Field(description="The asset text, with [n] citation markers after statements that use an excerpt.")
+    text: str = Field(min_length=1, description="The asset text, with [n] citation markers after statements that "
+                                                "use an excerpt.")
     used_sources: list[int] = Field(description="Numbers of all source excerpts the text draws on (facts, ideas or quotes).")
+
+
+class SearchQuery(BaseModel):
+    """Structured output of the query planning step (replies)."""
+
+    query: str = Field(min_length=3, max_length=300, description="One search query of at most 25 words naming the "
+                                                                 "topics, claims or questions the reply should address.")
 
 
 class GenerationState(TypedDict, total=False):
@@ -159,7 +166,7 @@ class GenerationState(TypedDict, total=False):
 
 # Version of this feature's prompts, e.g. "generation@3f9a1c2e"; changes by itself when a prompt changes (core/prompts.py).
 PROMPT_VERSION = prompts.register("generation", GROUNDED_PROMPT, ZERO_SHOT_PROMPT, PLAN_QUERY_PROMPT, ASSET_INSTRUCTIONS,
-                                 GeneratedText, REWRITE_PROMPT, style.PLATFORM_POST, style.PLATFORM_REPLY,
+                                 GeneratedText, SearchQuery, REWRITE_PROMPT, style.PLATFORM_POST, style.PLATFORM_REPLY,
                                  style.PLATFORM_VIDEO, style.TONES, style.HUMAN_LEVELS, style.AI_TELLS)
 
 
@@ -313,11 +320,9 @@ def _plan_query(state: GenerationState) -> GenerationState:
     A pasted post is often long and full of things the book has nothing to say about; searching with
     a short query of its key topics finds better passages than searching with the whole post.
     """
-    reply: AIMessage = (PLAN_QUERY_PROMPT | chat_model()).invoke({"request": build_request(state["req"])})
-    # The model sometimes labels its answer ("Search query: ..."); keep only the query itself.
-    query = re.sub(r"^\s*(search\s+)?query\s*:\s*", "", str(reply.content), flags=re.IGNORECASE).strip().strip('"').strip()
-    query = query or state["req"].reply_to[:500]
-    return {"query": query, "tokens": tokens_used(reply)}
+    planned, tokens = structured(PLAN_QUERY_PROMPT, {"request": build_request(state["req"])}, SearchQuery,
+                                 "search query")
+    return {"query": planned.query.strip(), "tokens": tokens}
 
 
 def _retrieve(state: GenerationState) -> GenerationState:
@@ -351,12 +356,10 @@ def _generate(state: GenerationState) -> GenerationState:
         return {"draft": str(reply.content).strip(), "used": [], "tokens": tokens_before + tokens_used(reply)}
 
     context = state["context"]
-    result = (GROUNDED_PROMPT | model.with_structured_output(GeneratedText, include_raw=True)).invoke(
-        {**values, "background": format_background(context), "context": format_context(context)})
-    parsed: GeneratedText | None = result.get("parsed")
-    text = parsed.text if parsed else str(result["raw"].content)  # fall back to the raw reply if parsing failed
-    return {"draft": text.strip(), "used": parsed.used_sources if parsed else [],
-            "tokens": tokens_before + tokens_used(result["raw"])}
+    parsed, tokens = structured(
+        GROUNDED_PROMPT, {**values, "background": format_background(context), "context": format_context(context)},
+        GeneratedText, "asset text", temperature=temperature_for(req.humanize))
+    return {"draft": parsed.text.strip(), "used": parsed.used_sources, "tokens": tokens_before + tokens}
 
 
 def _check_style(state: GenerationState) -> GenerationState:

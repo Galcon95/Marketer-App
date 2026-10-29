@@ -23,7 +23,7 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 
-from app.core import config, usage
+from app.core import usage
 from app.core.config import (API_KEY, BASE_URL, DATA_DIR, EMBEDDING_MODEL, EMBEDDING_TIMEOUT_SECONDS, LLM_MAX_RETRIES,
                              PROVIDER)
 from app.core.schemas import Chunk

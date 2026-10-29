@@ -10,15 +10,18 @@ against the books and chapters that exist, so a filter can never contain an inve
 nothing is dropped (and reported), never turned into an empty search. Used by the Q&A graph (qa.py, "filter" node).
 """
 
+import logging
 import re
 
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from app.core import state as db
-from app.core.llm import chat_model, tokens_used
+from app.core.llm import GenerationError, structured
 from app.rag.library import book_title, find_book, ready_books
 from app.rag.retrieval import source_name
+
+logger = logging.getLogger(__name__)
 
 # Words that suggest the question is about a part of a book; without them (and without a book or author named),
 # no filter is extracted and no model call is made.
@@ -42,9 +45,9 @@ class QueryFilters(BaseModel):
                                                "as written in the question; empty if none is named.")
     chapter: str | None = Field(None, description="The chapter, part, book or section the question names, e.g. '17', "
                                                   "'IV', 'Short Selling', 'preface'; empty if none.")
-    page_from: int | None = Field(None, description="First page if the question names a page or page range.")
-    page_to: int | None = Field(None, description="Last page if the question names a page range; same as page_from "
-                                                  "for a single page.")
+    page_from: int | None = Field(None, ge=1, description="First page if the question names a page or page range.")
+    page_to: int | None = Field(None, ge=1, description="Last page if the question names a page range; same as "
+                                                        "page_from for a single page.")
 
 
 class ResolvedFilters(BaseModel):
@@ -91,11 +94,17 @@ def might_filter(project_id: str, question: str) -> bool:
 
 
 def extract_filters(project_id: str, question: str) -> tuple[QueryFilters, int]:
-    """The filters the question states (model call with structured output, temperature 0) and the tokens used."""
+    """The filters the question states (model call with structured output, temperature 0) and the tokens used.
+
+    Filters only narrow the search, so a reply that fits the schema in no attempt means no filters (logged), not a
+    failed answer.
+    """
     books = "\n".join(f"- {source_name(s.id) or s.filename}" for s in ready_books(project_id)) or "(none)"
-    model = chat_model(0.0).with_structured_output(QueryFilters, include_raw=True)
-    result = (FILTER_PROMPT | model).invoke({"books": books, "question": question})
-    return result.get("parsed") or QueryFilters(), tokens_used(result["raw"])
+    try:
+        return structured(FILTER_PROMPT, {"books": books, "question": question}, QueryFilters, "search filters", 0.0)
+    except GenerationError:
+        logger.warning("No usable filters for %r; searching without filters", question)
+        return QueryFilters(), 0
 
 
 def resolve_filters(project_id: str, filters: QueryFilters, source_ids: list[str] | None) -> ResolvedFilters:

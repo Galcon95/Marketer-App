@@ -22,6 +22,7 @@ from functools import cache
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, ToolException, tool
 
+from app.core.guard import quote_untrusted
 from app.core.platforms import check_platform_fit as platform_fit
 from app.core.schemas import GenerateRequest, Platform, Tone, ToolCallRecord
 from app.rag import generation
@@ -87,7 +88,9 @@ def run_tool_calls(project_id: str, tool_calls: list[dict]) -> tuple[list[ToolMe
     """Run the tool calls of a model reply, in order.
 
     Every call gets a ToolMessage answer (the API requires one per call id): the result as JSON, or an
-    error text for unknown tools, invalid arguments, failures and calls beyond MAX_TOOL_CALLS.
+    error text for unknown tools, invalid arguments, failures and calls beyond MAX_TOOL_CALLS. Either way it is
+    quoted as data in a <tool_result name="..."> block (guard.quote_untrusted): results carry text from books,
+    summaries and generated posts, which must not act as instructions.
 
     Returns:
         The ToolMessages for the model and a ToolCallRecord per call for the GUI.
@@ -112,6 +115,6 @@ def run_tool_calls(project_id: str, tool_calls: list[dict]) -> tuple[list[ToolMe
         records.append(ToolCallRecord(name=name, arguments=args, ok=ok, result=result,
                                       duration_ms=round((time.perf_counter() - started) * 1000)))
         content = json.dumps(result, ensure_ascii=False, default=str) if ok else str(result)
-        messages.append(ToolMessage(content=content[:MAX_RESULT_CHARS], tool_call_id=call["id"], name=name,
-                                    status="success" if ok else "error"))
+        messages.append(ToolMessage(content=quote_untrusted(content[:MAX_RESULT_CHARS], "tool_result", name=name),
+                                    tool_call_id=call["id"], name=name, status="success" if ok else "error"))
     return messages, records

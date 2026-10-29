@@ -20,13 +20,14 @@ from typing import Annotated, TypedDict
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.core import state as db
 from app.core import prompts, storage, tracing
 from app.core.config import LLM_MODEL
+from app.core.guard import UNTRUSTED_RULE, quote_untrusted
 from app.core.logs import current_request_id
-from app.core.llm import GenerationError, chat_model, is_configured, model_failure, tokens_used
+from app.core.llm import GenerationError, is_configured, model_failure, structured
 from app.core.schemas import BookSummary, ChapterSummary, Chunk, Source
 from app.rag.retrieval import source_name
 
@@ -38,19 +39,35 @@ SECTION_CHUNKS = 12  # books without any chapters are summarized in parts of thi
 
 CHAPTER_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
-     "You summarize one section of a book for a book marketer. Write 2-4 sentences: what this section "
-     "argues or tells, with its key ideas, names and memorable points. Use only the given text.\n"
-     "If the section is not part of the book's actual content (table of contents, list of illustrations, "
-     "index, footnotes, license, transcriber's note, publisher or e-book information), reply with exactly: SKIP"),
+     "You summarize one section of a book for a book marketer: what this section argues or tells, with its key "
+     "ideas, names and memorable points. Use only the given text, which comes in a <passage> block.\n"
+     "Decide first whether the section is part of the book's actual content; a table of contents, list of "
+     "illustrations, index, footnotes, license, transcriber's note, publisher or e-book information is not. "
+     + UNTRUSTED_RULE),
     ("human", "Book: {book}\nSection: {chapter} ({pages})\n\n{text}"),
 ])
 
 BOOK_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
-     "You help a book marketer understand a book. From the chapter summaries, write an overview of the "
-     "whole book. Use only the chapter summaries; never invent facts, names or numbers."),
+     "You help a book marketer understand a book. From the chapter summaries, which come in <passage> blocks in "
+     "reading order, write an overview of the whole book. Use only the chapter summaries; never invent facts, "
+     "names or numbers. " + UNTRUSTED_RULE),
     ("human", "Book: {book}\n\nChapter summaries in reading order:\n\n{summaries}"),
 ])
+
+
+class ChapterDigest(BaseModel):
+    """Structured output of the map step: is the section content, and if so its summary."""
+
+    is_content: bool = Field(description="False if the section is front or back matter (contents, index, license, "
+                                         "transcriber's or publisher's notes), true if it is the book's content.")
+    summary: str = Field(description="2-4 sentences on what the section argues or tells; empty if is_content is false.")
+
+    @model_validator(mode="after")
+    def _content_has_summary(self) -> "ChapterDigest":
+        if self.is_content and not self.summary.strip():
+            raise ValueError("a content section needs a summary")
+        return self
 
 
 class BookOverview(BaseModel):
@@ -58,7 +75,7 @@ class BookOverview(BaseModel):
 
     summary: str = Field(description="What the book is about, in two paragraphs of 150-220 words in total: "
                                      "the problem it addresses, its central idea or argument, and who it is for.")
-    themes: list[str] = Field(description="4-6 key themes of the book, each a short phrase.")
+    themes: list[str] = Field(min_length=4, max_length=6, description="4-6 key themes of the book, each a short phrase.")
 
 
 class _Section(TypedDict):
@@ -83,7 +100,7 @@ class _SummaryState(TypedDict, total=False):
 
 
 # Version of this feature's prompts, e.g. "summary@3f9a1c2e"; changes by itself when a prompt changes (core/prompts.py).
-PROMPT_VERSION = prompts.register("summary", CHAPTER_PROMPT, BOOK_PROMPT, BookOverview)
+PROMPT_VERSION = prompts.register("summary", CHAPTER_PROMPT, BOOK_PROMPT, ChapterDigest, BookOverview)
 
 
 # ---------- Public API ----------
@@ -163,17 +180,22 @@ def _fan_out(state: _SummaryState) -> list[Send]:
 
 
 def _summarize_chapter(section: _Section) -> _SummaryState:
-    """Map node: summarize one chapter in 2-4 sentences; front/back matter answered with SKIP is dropped."""
+    """Map node: summarize one chapter in 2-4 sentences (structured output); front/back matter is dropped.
+
+    The chapter text goes into the prompt as a <passage> block (guard.quote_untrusted), so instructions inside a
+    book are read as text, not followed.
+    """
     pages = _pages_label(section["first_page"], section["last_page"])
-    reply = (CHAPTER_PROMPT | chat_model()).invoke({
-        "book": section["book"], "chapter": section["chapter"] or "Front matter", "pages": pages, "text": section["text"],
-    })
-    text = str(reply.content).strip()
-    if text.upper().startswith("SKIP"):
-        return {"chapter_summaries": [], "tokens": tokens_used(reply)}
+    chapter = section["chapter"] or "Front matter"
+    digest, tokens = structured(CHAPTER_PROMPT, {
+        "book": section["book"], "chapter": chapter, "pages": pages,
+        "text": quote_untrusted(section["text"], "passage", source=f"{chapter} ({pages})"),
+    }, ChapterDigest, "chapter summary")
+    if not digest.is_content:
+        return {"chapter_summaries": [], "tokens": tokens}
     summary = ChapterSummary(chapter=section["chapter"], first_page=section["first_page"],
-                             last_page=section["last_page"], summary=text)
-    return {"chapter_summaries": [(section["index"], summary)], "tokens": tokens_used(reply)}
+                             last_page=section["last_page"], summary=digest.summary.strip())
+    return {"chapter_summaries": [(section["index"], summary)], "tokens": tokens}
 
 
 def _combine(state: _SummaryState) -> _SummaryState:
@@ -181,12 +203,12 @@ def _combine(state: _SummaryState) -> _SummaryState:
     chapters = [s for _, s in sorted(state["chapter_summaries"], key=lambda item: item[0])]
     if not chapters:
         raise GenerationError(502, "The book has no content chapters to summarize.")
-    listing = "\n\n".join(f"{c.chapter or 'Front matter'} ({_pages_label(c.first_page, c.last_page)}):\n{c.summary}" for c in chapters)
-    result = chat_model().with_structured_output(BookOverview, include_raw=True).invoke(
-        BOOK_PROMPT.invoke({"book": state["book"], "summaries": listing}))
-    if result.get("parsed") is None:
-        raise GenerationError(502, f"The model returned an unreadable overview: {result.get('parsing_error')}")
-    return {"overview": result["parsed"], "tokens": tokens_used(result["raw"])}
+    listing = "\n\n".join(
+        quote_untrusted(c.summary, "passage", source=f"{c.chapter or 'Front matter'} ({_pages_label(c.first_page, c.last_page)})")
+        for c in chapters)
+    overview, tokens = structured(BOOK_PROMPT, {"book": state["book"], "summaries": listing}, BookOverview,
+                                  "book overview")
+    return {"overview": overview, "tokens": tokens}
 
 
 # ---------- Helpers ----------

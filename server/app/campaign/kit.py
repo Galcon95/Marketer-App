@@ -25,12 +25,12 @@ from typing import Annotated, Literal, TypedDict
 from langchain_core.messages import AIMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.core import prompts, style, tracing
 from app.core.config import LLM_MODEL
 from app.core.logs import current_request_id
-from app.core.llm import GenerationError, chat_model, is_configured, model_failure, tokens_used
+from app.core.llm import GenerationError, chat_model, is_configured, model_failure, structured, tokens_used
 from app.core.schemas import CampaignRequest, Platform
 from app.core.style import PLATFORM_POST, REWRITE_FROM, REWRITE_PROMPT, find_ai_tells, style_guidance, temperature_for
 
@@ -87,7 +87,7 @@ class Persona(BaseModel):
 class PersonaSet(BaseModel):
     """Structured output of the personas step."""
 
-    personas: list[Persona] = Field(description="Exactly three distinct reader personas.")
+    personas: list[Persona] = Field(min_length=3, max_length=3, description="Exactly three distinct reader personas.")
 
 
 class Post(BaseModel):
@@ -102,7 +102,15 @@ class Post(BaseModel):
 class PostSet(BaseModel):
     """Structured output of the posts step."""
 
-    posts: list[Post] = Field(description="Exactly five posts, one per angle, in the given order.")
+    posts: list[Post] = Field(min_length=5, max_length=5, description="Exactly five posts, one per angle, in the given order.")
+
+    @model_validator(mode="after")
+    def _one_post_per_angle(self) -> "PostSet":
+        """Each angle exactly once; the posts are put into ANGLES order (a mere reordering is no reason to fail)."""
+        if sorted(p.angle for p in self.posts) != sorted(ANGLES):
+            raise ValueError(f"need exactly one post per angle {ANGLES}, got {[p.angle for p in self.posts]}")
+        self.posts.sort(key=lambda p: ANGLES.index(p.angle))
+        return self
 
 
 class Piece(TypedDict):
@@ -206,27 +214,20 @@ def _personas(state: CampaignState) -> CampaignState:
     """Personas node: the brief → three reader personas (structured output)."""
     req = state["req"]
     audience = f" Focus the personas on this audience: {req.audience.strip()}." if req.audience.strip() else ""
-    result = (PERSONAS_PROMPT | chat_model().with_structured_output(PersonaSet, include_raw=True)).invoke(
-        {"brief": format_brief(req), "audience": audience})
-    parsed: PersonaSet | None = result.get("parsed")
-    if not parsed or not parsed.personas:
-        raise GenerationError(502, "The model returned no usable personas. Try again.")
-    tokens = tokens_used(result["raw"])
-    return {"personas": parsed.personas[:3], "persona_tokens": tokens, "tokens": tokens}
+    parsed, tokens = structured(PERSONAS_PROMPT, {"brief": format_brief(req), "audience": audience}, PersonaSet,
+                                "reader personas")
+    return {"personas": parsed.personas, "persona_tokens": tokens, "tokens": tokens}
 
 
 def _posts(state: CampaignState) -> CampaignState:
     """Posts node: brief + personas → five posts, one per angle, each for one persona on one of its platforms."""
     req = state["req"]
     rules = "\n".join(f"- {platform}: {rule}" for platform, rule in PLATFORM_POST.items())
-    result = (POSTS_PROMPT | chat_model(temperature_for(req.humanize)).with_structured_output(PostSet, include_raw=True)).invoke(
-        {"brief": format_brief(req), "personas": _persona_list(state["personas"]), "platform_rules": rules,
-         "style": style_guidance(req.humanize)})
-    parsed: PostSet | None = result.get("parsed")
-    if not parsed or not parsed.posts:
-        raise GenerationError(502, "The model returned no usable posts. Try again.")
-    tokens = tokens_used(result["raw"])
-    return {"posts": parsed.posts[:5], "posts_tokens": tokens, "tokens": tokens}
+    parsed, tokens = structured(
+        POSTS_PROMPT, {"brief": format_brief(req), "personas": _persona_list(state["personas"]), "platform_rules": rules,
+                       "style": style_guidance(req.humanize)},
+        PostSet, "campaign posts", temperature=temperature_for(req.humanize))
+    return {"posts": parsed.posts, "posts_tokens": tokens, "tokens": tokens}
 
 
 def _blurb(state: CampaignState) -> CampaignState:
