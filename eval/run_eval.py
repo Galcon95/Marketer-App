@@ -13,6 +13,10 @@ Usage (from eval/, with the API running on http://127.0.0.1:8000):
 A separate project (own environment) because RAGAs needs older library versions than the app. Each
 question becomes a chat on the server; the script deletes it again right after reading the answer. It
 waits when the app's rate limit answers 429. Needs OPENROUTER_API_KEY (environment variable or server/.env).
+
+Each run records the app's prompt version (from the answers, e.g. "qa@5c14fd46", see server/app/core/prompts.py)
+and the git commit (with "-dirty" if tracked files were changed), so the report can tie score changes to
+prompt or code changes instead of relying on --label alone.
 """
 
 import argparse
@@ -20,6 +24,7 @@ import csv
 import json
 import math
 import os
+import subprocess
 import sys
 import time
 import warnings
@@ -45,11 +50,12 @@ def main() -> None:
     items = json.loads((EVAL_DIR / "testset.json").read_text(encoding="utf-8"))[: args.limit or None]
 
     print(f"Asking the app {len(items)} questions (k={args.k}) ...")
-    rows, app_model = [], ""
+    rows, app_model, prompt_versions = [], "", set()
     with httpx.Client(base_url=args.api, timeout=300) as api:
         for i, item in enumerate(items, start=1):
             result = _ask(api, args.project, item["question"], args.k)
             app_model = result["model"]
+            prompt_versions.add(result.get("prompt_version") or "unversioned")
             rows.append({
                 "id": item["id"], "book": item["book"], "question": item["question"], "reference": item["reference"],
                 "answer": result["answer"], "contexts": [h["chunk"]["text"] for h in result["passages"]],
@@ -67,6 +73,7 @@ def main() -> None:
     run = {
         "run_id": run_id,
         "config": {"k": args.k, "label": args.label, "app_model": app_model, "judge_model": args.judge,
+                   "prompt_version": ", ".join(sorted(prompt_versions)), "git_commit": _git_commit(),
                    "questions": len(rows), "api": args.api, "workers": args.workers},
         "averages": {key: _mean(r["scores"].get(key) for r in rows) for key, _, _ in METRICS},
         # How many questions got a score per metric; below "questions", the average rests on fewer questions.
@@ -190,6 +197,19 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
                              r["citations"], r["tokens"], r["answer"], r["reference"]])
 
 
+def _git_commit() -> str:
+    """Short hash of the checked-out commit, "-dirty" appended if tracked files differ from it; "" without git."""
+    def git(*command: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *command], cwd=EVAL_DIR, capture_output=True, text=True)
+    try:
+        head = git("rev-parse", "--short", "HEAD")
+        if head.returncode != 0:
+            return ""
+        return head.stdout.strip() + ("-dirty" if git("diff", "--quiet", "HEAD").returncode else "")
+    except OSError:  # git not installed
+        return ""
+
+
 def _history() -> list[dict]:
     """All runs so far (results.json in reports/), oldest first."""
     runs = []
@@ -205,6 +225,7 @@ def _print_summary(run: dict, report: Path) -> None:
     """The averages as bars in the terminal, plus where the report is."""
     cfg = run["config"]
     print(f"\nRAG evaluation · {cfg['questions']} questions · k={cfg['k']} · {cfg['app_model']}"
+          + f" · prompts {cfg['prompt_version']} · commit {cfg['git_commit'] or 'unknown'}"
           + (f" · {cfg['label']}" if cfg["label"] else ""))
     for key, label, _ in METRICS:
         v, scored = run["averages"].get(key), run["scored"][key]

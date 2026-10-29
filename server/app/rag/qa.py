@@ -35,14 +35,17 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.graph import END, START, StateGraph
 
-from app.core import tracing
+from app.core import prompts, tracing
 from app.core.config import LLM_MODEL
 from app.core.guard import UNTRUSTED_RULE
-from app.core.llm import GenerationError, chat_model, is_configured, tokens_used
+from app.core.logs import current_request_id
+from app.core.llm import GenerationError, chat_model, is_configured, model_failure, tokens_used
 from app.core.schemas import AskResponse, ChatTurn, Chunk, Citation, SearchHit, ToolCallRecord
 from app.rag import vectorstore
 from app.rag.chat_tools import make_tools, run_tool_calls
-from app.rag.filters import ResolvedFilters, extract_filters, might_filter, resolve_filters
+from app.rag.filters import (
+    FILTER_PROMPT, QueryFilters, ResolvedFilters, extract_filters, might_filter, resolve_filters,
+)
 from app.rag.retrieval import format_background, format_context, keep_cited, retrieve_chunks
 
 logger = logging.getLogger(__name__)
@@ -106,6 +109,10 @@ class _QAState(TypedDict, total=False):
     tokens: int
 
 
+# Version of this feature's prompts, e.g. "qa@3f9a1c2e"; changes by itself when a prompt changes (core/prompts.py).
+PROMPT_VERSION = prompts.register("qa", QA_PROMPT, TOOLS_NOTE, CONDENSE_PROMPT, FILTER_PROMPT, QueryFilters)
+
+
 # ---------- Public API ----------
 def answer_question(project_id: str, question: str, k: int, source_ids: list[str] | None = None,
                     operation: str = "ask", history: list[ChatTurn] | None = None, use_tools: bool = False) -> AskResponse:
@@ -127,7 +134,7 @@ def answer_question(project_id: str, question: str, k: int, source_ids: list[str
 
     Raises:
         GenerationError: 503 if no API key is configured, 409 if there is nothing to search,
-            502 if retrieval or the model call fails.
+            502 if retrieval or the model call fails, 504 if the provider timed out after all retries.
     """
     if not is_configured():
         raise GenerationError(503, "No API key set. Add OPENROUTER_API_KEY (or OPENAI_API_KEY) and restart the server.")
@@ -137,15 +144,16 @@ def answer_question(project_id: str, question: str, k: int, source_ids: list[str
                 {"project_id": project_id, "question": question, "history": (history or [])[-HISTORY_TURNS:], "k": k,
                  "source_ids": source_ids, "operation": operation, "use_tools": use_tools},
                 config={"run_name": "answer_question", "tags": ["qa"],
-                        "metadata": {"project_id": project_id, "llm_model": LLM_MODEL, "operation": operation}},
+                        "metadata": {"request_id": current_request_id(), "prompt_version": PROMPT_VERSION,
+                                     "project_id": project_id, "llm_model": LLM_MODEL, "operation": operation}},
             )
     except GenerationError:
         raise
     except vectorstore.VectorStoreError as e:
-        raise GenerationError(502, str(e)) from e
+        raise model_failure(e, None) from e
     except Exception as e:
         logger.exception("Answering failed")
-        raise GenerationError(502, f"The language model call failed: {e}") from e
+        raise model_failure(e) from e
     return AskResponse(
         question=question,
         search_query=state["search_query"],
@@ -154,6 +162,7 @@ def answer_question(project_id: str, question: str, k: int, source_ids: list[str
         citations=state["citations"],
         passages=[SearchHit(chunk=chunk, score=score) for chunk, score in state["context"]],
         model=LLM_MODEL,
+        prompt_version=PROMPT_VERSION,
         tokens=state["tokens"],
         tool_calls=state.get("tool_calls", []),
     )

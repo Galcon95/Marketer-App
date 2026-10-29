@@ -12,16 +12,21 @@ lives in the app package (see README.md, "Project layout"):
     app/api       FastAPI routers, one per area
 """
 
+import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import assets, campaigns, health, knowledge, mcp_console, projects, sources
-from app.core import state, storage, usage
-from app.market.book_server import book_server
-from app.market.guard_server import guard_server
-from app.rag import ingestion
+from app.core import logs
+
+logs.setup()  # first, so the imports below already log through it (JSON lines with the request id)
+
+from app.api import assets, campaigns, health, knowledge, mcp_console, projects, sources  # noqa: E402
+from app.core import state, storage, usage  # noqa: E402
+from app.market.book_server import book_server  # noqa: E402
+from app.market.guard_server import guard_server  # noqa: E402
+from app.rag import ingestion, retrieval, summary  # noqa: E402
 
 # Restore uploaded sources (with their chunks) and generated assets from disk, so they survive
 # server restarts.
@@ -29,6 +34,11 @@ ingestion.restore_sources()
 state.assets.update(storage.load_assets())
 state.conversations.update(storage.load_conversations())
 usage.load()  # totals of all model calls so far (usage.jsonl)
+if old := summary.outdated_summaries():
+    logging.getLogger("app.startup").warning(
+        "%d book summaries were written with older prompts than %s; regenerate them in the Knowledge Hub: %s",
+        len(old), summary.PROMPT_VERSION, "; ".join(f"{retrieval.source_name(s.source_id) or s.source_id} ({s.prompt_version or 'unversioned'})"
+                                                  for s in old))
 
 # MCP servers over Streamable HTTP; stateless + JSON responses: each request stands alone, no SSE streams.
 mcp_app = book_server.streamable_http_app(streamable_http_path="/mcp", stateless_http=True, json_response=True)
@@ -52,7 +62,10 @@ app.add_middleware(
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=[logs.HEADER],  # so the client can read a response's request id
 )
+# Added last = outermost: every request (API and MCP) gets its id first, and the id is on every response.
+app.add_middleware(logs.RequestIdMiddleware)
 
 # inlcude the API routers
 for module in (health, projects, sources, knowledge, assets, campaigns, mcp_console):

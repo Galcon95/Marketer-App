@@ -98,6 +98,8 @@ export interface Asset {
   campaign_id: string; // set for assets of a campaign kit (POST /campaigns), "" otherwise
   persona: string; // campaign posts: the persona the post is written for
   angle: string; // campaign posts: hook, teaser, question, behind the scenes or call to action
+  model?: string | null; // chat model that wrote it; missing for older assets
+  prompt_version?: string | null; // prompts that wrote it, e.g. "generation@d229d08e"; missing for older assets
 }
 /** Body of POST /generate. `k` = number of chunks to retrieve as context (server default 5). */
 /**
@@ -147,6 +149,7 @@ export interface AskResponse {
   citations: Citation[];
   passages: SearchHit[]; // all retrieved passages, best first
   model: string;
+  prompt_version?: string | null; // prompts that wrote it, e.g. "qa@5c14fd46"
   tokens: number;
   conversation_id: string | null; // send it with the next question to continue the chat
   tool_calls: ToolCallRecord[]; // tools the model called for this answer, in call order
@@ -236,6 +239,7 @@ export interface UsageRecord {
   cost_source: "provider" | "estimate"; // provider = exact cost reported by OpenRouter
   project_id: string | null;
   source_id: string | null;
+  request_id?: string | null; // the HTTP request that caused the call; missing in older records
 }
 /** Sums over a set of model calls (costs in USD). */
 export interface UsageTotals { calls: number; input_tokens: number; output_tokens: number; input_cost: number; output_cost: number; cost: number }
@@ -251,6 +255,7 @@ export interface BookSummary {
   themes: string[];
   chapters: ChapterSummary[]; // content chapters in reading order
   model: string; // chat model that wrote it
+  prompt_version?: string | null; // prompts that wrote it, e.g. "summary@f7b6882e"; missing = made before versioning
   tokens: number; // LLM tokens used to create it
   created_at: string; // ISO 8601 timestamp (UTC)
 }

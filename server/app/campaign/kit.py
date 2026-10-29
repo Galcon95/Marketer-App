@@ -27,9 +27,10 @@ from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
-from app.core import tracing
+from app.core import prompts, style, tracing
 from app.core.config import LLM_MODEL
-from app.core.llm import GenerationError, chat_model, is_configured, tokens_used
+from app.core.logs import current_request_id
+from app.core.llm import GenerationError, chat_model, is_configured, model_failure, tokens_used
 from app.core.schemas import CampaignRequest, Platform
 from app.core.style import PLATFORM_POST, REWRITE_FROM, REWRITE_PROMPT, find_ai_tells, style_guidance, temperature_for
 
@@ -128,6 +129,11 @@ class CampaignState(TypedDict, total=False):
     tokens: Annotated[int, operator.add]  # all tokens of the kit (summed over the parallel steps)
 
 
+# Version of this feature's prompts, e.g. "campaign@3f9a1c2e"; changes by itself when a prompt changes (core/prompts.py).
+PROMPT_VERSION = prompts.register("campaign", PERSONAS_PROMPT, POSTS_PROMPT, BLURB_PROMPT, PersonaSet, PostSet,
+                                 REWRITE_PROMPT, style.PLATFORM_POST, style.HUMAN_LEVELS, style.AI_TELLS)
+
+
 # ---------- Public API ----------
 def generate_campaign(req: CampaignRequest) -> CampaignState:
     """Run the campaign graph for one brief.
@@ -140,7 +146,8 @@ def generate_campaign(req: CampaignRequest) -> CampaignState:
         the per-step token counts and "tokens" (all tokens of the kit).
 
     Raises:
-        GenerationError: 503 if no API key is configured, 502 if a model call fails or returns no usable result.
+        GenerationError: 503 if no API key is configured, 502 if a model call fails or returns no usable result,
+            504 if the provider timed out after all retries.
     """
     if not is_configured():
         raise GenerationError(503, "No API key set. Add OPENROUTER_API_KEY (or OPENAI_API_KEY) and restart the server.")
@@ -149,13 +156,14 @@ def generate_campaign(req: CampaignRequest) -> CampaignState:
             return _graph().invoke(
                 {"req": req},
                 config={"run_name": "generate_campaign", "tags": ["zero-shot", "campaign"],
-                        "metadata": {"llm_model": LLM_MODEL, "operation": "generate_campaign", "source_id": req.source_id}},
+                        "metadata": {"request_id": current_request_id(), "prompt_version": PROMPT_VERSION,
+                                     "llm_model": LLM_MODEL, "operation": "generate_campaign", "source_id": req.source_id}},
             )
     except GenerationError:
         raise
     except Exception as e:
         logger.exception("Campaign generation failed")
-        raise GenerationError(502, f"The language model call failed: {e}") from e
+        raise model_failure(e) from e
 
 
 def format_brief(req: CampaignRequest) -> str:

@@ -212,6 +212,8 @@ class Asset(BaseModel):
     ai_tells: list[str] = []  # AI-typical phrases still found in the final text (empty = none)
     edited: bool = False  # True once the user changed the text
     campaign_id: str = ""  # set for assets made together by POST /campaigns (personas, posts, blurb)
+    model: str | None = None  # chat model that wrote it; None for assets saved before this was recorded
+    prompt_version: str | None = None  # prompts that wrote it, e.g. "generation@3f9a1c2e" (core/prompts.py); None = older
     persona: str = ""  # campaign posts: name of the persona the post is written for
     angle: str = ""  # campaign posts: "hook", "teaser", "question", "behind the scenes" or "call to action"
 
@@ -270,6 +272,7 @@ class AskResponse(BaseModel):
     citations: list[Citation]  # the passages cited in the answer, numbered like the markers
     passages: list[SearchHit]  # all retrieved passages, best first (what the answer could draw on)
     model: str  # chat model that wrote the answer
+    prompt_version: str | None = None  # prompts that wrote it, e.g. "qa@3f9a1c2e" (core/prompts.py)
     tokens: int  # LLM tokens (prompt + completion) used
     conversation_id: str | None = None  # the conversation this turn belongs to (None for stateless callers like MCP)
     tool_calls: list["ToolCallRecord"] = []  # tools the model called for this answer (chat only), in call order
@@ -375,6 +378,7 @@ class UsageRecord(BaseModel):
     cost_source: Literal["provider", "estimate"]  # provider = exact cost reported by OpenRouter; estimate = price list
     project_id: str | None = None
     source_id: str | None = None
+    request_id: str | None = None  # the HTTP request that caused the call (logs.py); None for older records
 
 
 class UsageTotals(BaseModel):
@@ -418,6 +422,7 @@ class BookSummary(BaseModel):
     themes: list[str]  # 4-6 key themes as short phrases
     chapters: list[ChapterSummary]  # content chapters in reading order (front/back matter skipped)
     model: str  # chat model that wrote it
+    prompt_version: str | None = None  # prompts that wrote it, e.g. "summary@3f9a1c2e"; None = made before versioning
     tokens: int  # LLM tokens (prompt + completion) used to create it
     created_at: datetime  # creation time in UTC
 

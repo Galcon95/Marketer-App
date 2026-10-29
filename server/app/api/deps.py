@@ -10,6 +10,7 @@ from fastapi import HTTPException, Request
 
 from app.core import guard
 from app.core import state as db
+from app.core.llm import model_failure
 from app.core.schemas import Chunk, Project, Source
 from app.rag import vectorstore
 from app.rag.retrieval import retrieve_chunks
@@ -128,9 +129,13 @@ def retrieve(project_id: str, query: str, k: int, source_ids: list[str] | None =
         (chunk, similarity) pairs, best first.
 
     Raises:
-        HTTPException: 503 if no embedding API key is configured, 502 if the search fails.
+        HTTPException: 503 if no embedding API key is configured, 502 if the search fails, 504 if the embedding
+            request timed out after all retries.
     """
     try:
         return retrieve_chunks(project_id, query, k, source_ids, operation=operation)
     except vectorstore.VectorStoreError as e:
-        raise HTTPException(503 if not vectorstore.is_configured() else 502, str(e)) from e
+        if not vectorstore.is_configured():
+            raise HTTPException(503, str(e)) from e
+        failure = model_failure(e, None)
+        raise HTTPException(failure.status_code, str(failure)) from e

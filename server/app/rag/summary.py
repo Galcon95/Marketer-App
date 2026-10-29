@@ -23,9 +23,10 @@ from langgraph.types import Send
 from pydantic import BaseModel, Field
 
 from app.core import state as db
-from app.core import storage, tracing
+from app.core import prompts, storage, tracing
 from app.core.config import LLM_MODEL
-from app.core.llm import GenerationError, chat_model, is_configured, tokens_used
+from app.core.logs import current_request_id
+from app.core.llm import GenerationError, chat_model, is_configured, model_failure, tokens_used
 from app.core.schemas import BookSummary, ChapterSummary, Chunk, Source
 from app.rag.retrieval import source_name
 
@@ -81,6 +82,10 @@ class _SummaryState(TypedDict, total=False):
     overview: BookOverview
 
 
+# Version of this feature's prompts, e.g. "summary@3f9a1c2e"; changes by itself when a prompt changes (core/prompts.py).
+PROMPT_VERSION = prompts.register("summary", CHAPTER_PROMPT, BOOK_PROMPT, BookOverview)
+
+
 # ---------- Public API ----------
 def summarize_source(source: Source) -> BookSummary:
     """Create (or recreate) the summary of a processed book, save it, and keep it in memory.
@@ -93,7 +98,7 @@ def summarize_source(source: Source) -> BookSummary:
 
     Raises:
         GenerationError: 503 if no API key is configured, 409 if the book has no chunks,
-            502 if a model call fails.
+            502 if a model call fails, 504 if the provider timed out after all retries.
     """
     if not is_configured():
         raise GenerationError(503, "No API key set. Add OPENROUTER_API_KEY (or OPENAI_API_KEY) and restart the server.")
@@ -105,14 +110,15 @@ def summarize_source(source: Source) -> BookSummary:
             state = _graph().invoke(
                 {"book": source_name(source.id) or source.filename, "sections": sections, "tokens": 0, "chapter_summaries": []},
                 config={"run_name": "summarize_book", "tags": ["summary"], "max_concurrency": MAX_PARALLEL_CALLS,
-                        "metadata": {"source_id": source.id, "project_id": source.project_id, "llm_model": LLM_MODEL,
+                        "metadata": {"request_id": current_request_id(), "prompt_version": PROMPT_VERSION,
+                                     "source_id": source.id, "project_id": source.project_id, "llm_model": LLM_MODEL,
                                      "operation": "summarize_book"}},
             )
     except GenerationError:
         raise
     except Exception as e:
         logger.exception("Summary of %s failed", source.id)
-        raise GenerationError(502, f"The language model call failed: {e}") from e
+        raise model_failure(e) from e
 
     summary = BookSummary(
         source_id=source.id,
@@ -120,6 +126,7 @@ def summarize_source(source: Source) -> BookSummary:
         themes=state["overview"].themes,
         chapters=[s for _, s in sorted(state["chapter_summaries"], key=lambda item: item[0])],
         model=LLM_MODEL,
+        prompt_version=PROMPT_VERSION,
         tokens=state["tokens"],
         created_at=datetime.now(timezone.utc),
     )
@@ -127,6 +134,14 @@ def summarize_source(source: Source) -> BookSummary:
     db.summaries[source.id] = summary
     logger.info("Summarized %s: %d chapters, %d tokens", source.id, len(summary.chapters), summary.tokens)
     return summary
+
+
+def outdated_summaries() -> list[BookSummary]:
+    """Saved summaries written with other prompts than the current ones (or before prompts were versioned).
+
+    Summaries are reused as background for later answers, so these are worth regenerating ("Regenerate" in the GUI).
+    """
+    return [s for s in db.summaries.values() if s.prompt_version != PROMPT_VERSION]
 
 
 # ---------- Graph ----------

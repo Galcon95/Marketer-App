@@ -32,7 +32,7 @@ def generate(project_id: str, body: GenerateRequest):
     Raises:
         HTTPException: 400 if the brief or audience is a likely prompt injection; 422 if a text is empty or too
             long; 429 if the rate limit is reached; 503 if no API key is configured; 502 if retrieval or the
-            model call fails.
+            model call fails; 504 if the model timed out after all retries.
     """
     get_project_or_404(project_id)
     reply = body.asset_type == "social_reply"

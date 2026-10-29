@@ -8,6 +8,7 @@ from app.api.deps import checked_optional, checked_text, get_project_or_404, get
 from app.campaign import kit
 from app.core import state as db
 from app.core import storage
+from app.core.config import LLM_MODEL
 from app.core.llm import GenerationError
 from app.core.schemas import Asset, CampaignRequest, CampaignResponse
 
@@ -33,8 +34,8 @@ def create_campaign(project_id: str, body: CampaignRequest):
     Raises:
         HTTPException: 400 if a field is a likely prompt injection; 404 if the project or the given book is
             unknown; 422 if a field is empty, too long or there are more than MAX_THEMES themes; 429 if the
-            rate limit is reached; 503 if no API key is configured; 502 if a model call fails; 500 if the
-            assets cannot be saved.
+            rate limit is reached; 503 if no API key is configured; 502 if a model call fails; 504 if it timed
+            out after all retries; 500 if the assets cannot be saved.
     """
     get_project_or_404(project_id)
     if body.source_id:
@@ -55,7 +56,7 @@ def create_campaign(project_id: str, body: CampaignRequest):
         return Asset(id=db.new_id("ast"), project_id=project_id, asset_type=asset_type, grounded=False, brief=brief,
                      text=text, citations=[], created_at=created + timedelta(microseconds=next(order)), tokens=tokens, audience=body.audience,
                      humanize=body.humanize, source_ids=[body.source_id] if body.source_id else [],
-                     campaign_id=campaign_id, **extra)
+                     campaign_id=campaign_id, model=LLM_MODEL, prompt_version=kit.PROMPT_VERSION, **extra)
 
     # Each step's tokens go to its first asset, so the project's token count still adds up.
     personas = [make("persona", kit.format_persona(p), result["persona_tokens"] if i == 0 else 0)

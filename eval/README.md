@@ -29,6 +29,12 @@ Each run writes `reports/<date_time>/`:
   reference and retrieved passages.
 - `results.json` (everything, also the input for the history) and `results.csv` (for Excel).
 
+Every run also records the app's **prompt version** (taken from the answers, e.g. `qa@5c14fd46`; it changes by
+itself whenever a prompt changes, see `server/app/core/prompts.py`) and the **git commit** (`-dirty` if tracked
+files were changed). The report shows both, and the history chart marks with a dashed line where the prompt
+version changed, so a score change can be tied to a prompt edit without relying on `--label`. Runs made before
+versioning show as "unversioned".
+
 A run with 13 questions takes about 2 minutes and uses roughly 50k app tokens and 225k judge tokens
 (gpt-4o-mini, a few cents). Each question is a new chat on the server, deleted again right after; the
 script waits when the app's rate limit answers 429.

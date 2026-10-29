@@ -8,8 +8,9 @@ vectorstore.py: LangChain does not pass their usage on, so their tokens are coun
 (the embedding models' own tokenizer) and priced from PRICES.
 
 Each call is
-  - appended to USAGE_FILE (server/assets/usage/usage.jsonl), one JSON object per line, and
-  - printed to the server console with the totals so far (input cost, output cost, all costs).
+  - appended to USAGE_FILE (server/assets/usage/usage.jsonl), one JSON object per line, with the id of the HTTP
+    request that caused it (logs.py), and
+  - logged to the server console with the totals so far (input cost, output cost, all costs).
 The operation name comes from the run's metadata: "operation" set by the graph invocation plus the
 LangGraph node, e.g. "summarize_book/summarize_chapter".
 """
@@ -28,6 +29,7 @@ from langchain_core.outputs import LLMResult
 from pydantic import ValidationError
 
 from app.core.config import DATA_DIR
+from app.core.logs import current_request_id
 from app.core.schemas import UsageRecord, UsageReport, UsageTotals
 
 USAGE_FILE = DATA_DIR / "usage" / "usage.jsonl"
@@ -41,14 +43,7 @@ PRICES: dict[str, tuple[float, float]] = {
     "text-embedding-3-small": (0.02, 0.0),
 }
 
-# Console output: own handler, because uvicorn does not show INFO logs of application modules.
-logger = logging.getLogger("usage")
-if not logger.handlers:
-    _console = logging.StreamHandler()
-    _console.setFormatter(logging.Formatter("USAGE  %(message)s"))
-    logger.addHandler(_console)
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
+logger = logging.getLogger("usage")  # goes to the console handler set up in logs.py
 
 _lock = threading.Lock()
 _records: list[UsageRecord] = []  # all calls so far (loaded from USAGE_FILE on startup)
@@ -62,8 +57,10 @@ def record(rec: UsageRecord) -> None:
     Logging must never break the actual request, so file errors are only reported.
 
     Args:
-        rec: The call to log.
+        rec: The call to log; its request_id is filled in from the current HTTP request if not set.
     """
+    if rec.request_id is None:
+        rec.request_id = current_request_id()
     with _lock:
         _records.append(rec)
         _add(_totals, rec)

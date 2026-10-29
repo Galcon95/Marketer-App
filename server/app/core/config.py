@@ -7,6 +7,11 @@ Read once on import from environment variables (and server/.env, if present), fi
                           embeddings "text-embedding-3-large")
     LLM_MODEL           → optional, overrides the chat model
     EMBEDDING_MODEL     → optional, overrides the embedding model
+    LLM_TIMEOUT_SECONDS → optional, seconds one chat model request may take before it is retried (default 45)
+    EMBEDDING_TIMEOUT_SECONDS → optional, the same for one embedding request (default 30)
+    LLM_MAX_RETRIES     → optional, retries of a failed or timed-out model request (default 3)
+    LOG_FORMAT          → optional, "json" (default: one JSON object per log line) or "text" (readable lines)
+    LOG_LEVEL           → optional, the lowest level that is logged (default "INFO"; "DEBUG" also logs GET requests)
     DEBUG_MODE=true     → developer debug mode: every graph run is traced in LangSmith (needs LANGSMITH_API_KEY;
                           see tracing.py). Default off; keep it off for customers and in production
     LANGSMITH_PROJECT   → optional, the LangSmith project the traces go to (default "marketer-app")
@@ -33,6 +38,12 @@ else:
     EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
     LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 
+LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "45"))
+EMBEDDING_TIMEOUT_SECONDS = float(os.getenv("EMBEDDING_TIMEOUT_SECONDS", "30"))
+LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "3"))
+
+LOG_FORMAT = "text" if os.getenv("LOG_FORMAT", "json").strip().lower() == "text" else "json"
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()
 
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").strip().lower() in ("true", "1", "on", "yes")
 LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT") or os.getenv("LANGCHAIN_PROJECT") or "marketer-app"

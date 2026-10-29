@@ -59,7 +59,7 @@ def create_summary(source_id: str):
 
     Raises:
         HTTPException: 409 if the book is not processed ("ready"); 503 if no API key is configured;
-            502 if a model call fails.
+            502 if a model call fails; 504 if it timed out after all retries.
     """
     source = get_source_or_404(source_id)
     if source.status != "ready":
@@ -95,7 +95,8 @@ def ask(project_id: str, body: AskRequest):
     Raises:
         HTTPException: 400 for a likely prompt injection; 404 for an unknown conversation; 409 if there is
             nothing to search or the conversation is full; 422 for an empty or too long question; 429 if the
-            rate limit is reached; 503 if no API key is configured; 502 if retrieval or the model call fails.
+            rate limit is reached; 503 if no API key is configured; 502 if retrieval or the model call fails;
+            504 if the model timed out after all retries.
     """
     get_project_or_404(project_id)
     question = checked_text(body.question, "chat_message", "question")
@@ -173,7 +174,7 @@ def search(project_id: str, body: SearchRequest):
 
     Raises:
         HTTPException: 422 if the query is empty or too long; 503 if no embedding API key is configured,
-            502 if the search fails.
+            502 if the search fails, 504 if it timed out after all retries.
     """
     get_project_or_404(project_id)
     query = checked_text(body.query, "search_query", "query", check_injection=False)  # only embedded, never a prompt
@@ -199,7 +200,7 @@ def verify(project_id: str, body: VerifyRequest):
 
     Raises:
         HTTPException: 422 if the text is empty or too long; 503 if no embedding API key is configured,
-            502 if the search fails.
+            502 if the search fails, 504 if it timed out after all retries.
     """
     get_project_or_404(project_id)
     text = checked_text(body.text, "asset_text", "text", check_injection=False)  # only embedded, never a prompt

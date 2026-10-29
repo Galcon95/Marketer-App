@@ -23,8 +23,9 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 
-from app.core import usage
-from app.core.config import API_KEY, BASE_URL, DATA_DIR, EMBEDDING_MODEL, PROVIDER
+from app.core import config, usage
+from app.core.config import (API_KEY, BASE_URL, DATA_DIR, EMBEDDING_MODEL, EMBEDDING_TIMEOUT_SECONDS, LLM_MAX_RETRIES,
+                             PROVIDER)
 from app.core.schemas import Chunk
 
 logger = logging.getLogger(__name__)
@@ -153,8 +154,10 @@ def _embeddings() -> OpenAIEmbeddings:
 
     check_embedding_ctx_length=False makes LangChain send plain text instead of pre-tokenized input,
     which OpenRouter does not accept; chunks are far below the model's input limit anyway.
+    Each request times out after EMBEDDING_TIMEOUT_SECONDS and is retried up to LLM_MAX_RETRIES times (config.py).
     """
-    return OpenAIEmbeddings(model=EMBEDDING_MODEL, api_key=API_KEY, base_url=BASE_URL, check_embedding_ctx_length=False)
+    return OpenAIEmbeddings(model=EMBEDDING_MODEL, api_key=API_KEY, base_url=BASE_URL, check_embedding_ctx_length=False,
+                            timeout=EMBEDDING_TIMEOUT_SECONDS, max_retries=LLM_MAX_RETRIES)
 
 
 @cache

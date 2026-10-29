@@ -2,7 +2,8 @@
 
     tiles      the four metric averages of this run
     heatmap    questions × metrics, one cell per score (sequential blue by the shortfall from 1: strong = weak spot), hover for details
-    history    one line per metric over all runs so far (from the second run on), with a table view
+    history    one line per metric over all runs so far (from the second run on), with a table view; a dashed
+               marker shows where the app's prompt version changed (runs before versioning count as "unversioned")
     details    per question: answer, reference, retrieved passages (collapsed)
 
 Light and dark mode follow the viewer's system setting. Colors are the dataviz reference palette
@@ -121,6 +122,7 @@ def build_report(run: dict, history: list[dict]) -> str:
 <body><div class="viz-root">
 <h1>RAG evaluation · {e(run["run_id"])}</h1>
 <p class="sub">{len(run["rows"])} questions · k={cfg["k"]} · app model {e(cfg["app_model"])} · judge {e(cfg["judge_model"])}
+ · prompts {e(_prompts(run))} · commit {e(cfg.get("git_commit") or "unknown")}
  · app tokens {run["tokens"]["app"]:,} · judge tokens {run["tokens"]["judge"]:,}{" · " + e(cfg["label"]) if cfg.get("label") else ""}</p>
 {incomplete}<div class="tiles">{tiles}</div>
 <h2>Scores per question</h2>
@@ -204,6 +206,12 @@ def _history(history: list[dict]) -> str:
     )
     xlabels = "".join(f'<text x="{x:.1f}" y="{h - 12}" text-anchor="middle">{e(_run_label(r["run_id"]))}</text>'
                       for x, r in zip(xs, history))
+    # Where the prompt version changed from the previous run: a dashed line, so score changes can be tied to it.
+    changes = "".join(
+        f'<line x1="{x:.1f}" x2="{x:.1f}" y1="{top}" y2="{h - bottom}" stroke="var(--text-muted)" stroke-width="1" '
+        f'stroke-dasharray="4 3"/><text x="{x + 4:.1f}" y="{top + 10}">prompts changed</text>'
+        for j, (x, r) in enumerate(zip(xs, history)) if j and _prompts(r) != _prompts(history[j - 1])
+    )
     lines, labels = [], []
     for i, (key, label, _) in enumerate(METRICS, start=1):
         pts = [(x, r["averages"].get(key)) for x, r in zip(xs, history)]
@@ -222,23 +230,30 @@ def _history(history: list[dict]) -> str:
         ly = max(ly, last + 14)
         placed.append(f'<text x="{w - right + 10}" y="{ly + 4:.1f}" style="fill:var(--text-primary)">{e(text)}</text>')
         last = ly
-    tips = ["\n".join([r["run_id"] + (f' · {r["config"]["label"]}' if r["config"].get("label") else "")]
+    tips = ["\n".join([r["run_id"] + (f' · {r["config"]["label"]}' if r["config"].get("label") else ""),
+                       f"prompts {_prompts(r)} · commit {r['config'].get('git_commit') or 'unknown'}"]
                       + [f"{label}: {_fmt_avg(r, key)}" for key, label, _ in METRICS]) for r in history]
     svg = (f'<svg id="history" viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="Metric averages per run" '
            f"data-runs='{e(json.dumps(tips))}' data-xs='{json.dumps([round(x, 1) for x in xs])}'>"
-           f'{grid}{xlabels}<line class="cross" y1="{top}" y2="{h - bottom}" stroke="var(--text-muted)" stroke-width="1" style="display:none"/>'
+           f'{grid}{xlabels}{changes}<line class="cross" y1="{top}" y2="{h - bottom}" stroke="var(--text-muted)" stroke-width="1" style="display:none"/>'
            f'{"".join(lines)}{"".join(placed)}</svg>')
     legend = "".join(f'<span><span class="ln" style="background:var(--series-{i})"></span>{e(label)}</span>'
                      for i, (_, label, _) in enumerate(METRICS, start=1))
     head = "".join(f"<th>{e(label)}</th>" for _, label, _ in METRICS)
     rows = "".join(
-        f'<tr><td>{e(r["run_id"])}<div class="hint">{e(r["config"].get("label") or "")} k={r["config"]["k"]}</div></td>'
+        f'<tr><td>{e(r["run_id"])}<div class="hint">{e(r["config"].get("label") or "")} k={r["config"]["k"]}'
+        f' · {e(_prompts(r))} · {e(r["config"].get("git_commit") or "commit unknown")}</div></td>'
         + "".join(f"<td>{_fmt_avg(r, key)}</td>" for key, _, _ in METRICS) + "</tr>"
         for r in history
     )
     return (f'<div class="card">{svg}<div class="legend">{legend}</div></div>'
             f'<details><summary class="hint">Table view</summary><div class="card scroll"><table><thead><tr><th>Run</th>{head}</tr></thead>'
             f"<tbody>{rows}</tbody></table></div></details>")
+
+
+def _prompts(run: dict) -> str:
+    """The app's prompt version of a run, "unversioned" for runs made before prompts were versioned."""
+    return run["config"].get("prompt_version") or "unversioned"
 
 
 def _run_label(run_id: str) -> str:

@@ -34,11 +34,12 @@ from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
+from app.core import prompts, storage, style, tracing
 from app.core import state as db
-from app.core import storage, tracing
 from app.core.config import LLM_MODEL
 from app.core.guard import UNTRUSTED_RULE, quote_untrusted
-from app.core.llm import GenerationError, chat_model, is_configured, tokens_used
+from app.core.logs import current_request_id
+from app.core.llm import GenerationError, chat_model, is_configured, model_failure, tokens_used
 from app.core.schemas import Asset, AssetType, Chunk, Citation, GenerateRequest, Length
 from app.core.style import (
     PLATFORM_POST, PLATFORM_REPLY, PLATFORM_VIDEO, REWRITE_FROM, REWRITE_PROMPT, TONES, find_ai_tells,
@@ -156,6 +157,12 @@ class GenerationState(TypedDict, total=False):
     tokens: int  # LLM tokens used (prompt + completion), from the model's usage metadata
 
 
+# Version of this feature's prompts, e.g. "generation@3f9a1c2e"; changes by itself when a prompt changes (core/prompts.py).
+PROMPT_VERSION = prompts.register("generation", GROUNDED_PROMPT, ZERO_SHOT_PROMPT, PLAN_QUERY_PROMPT, ASSET_INSTRUCTIONS,
+                                 GeneratedText, REWRITE_PROMPT, style.PLATFORM_POST, style.PLATFORM_REPLY,
+                                 style.PLATFORM_VIDEO, style.TONES, style.HUMAN_LEVELS, style.AI_TELLS)
+
+
 # ---------- Public API ----------
 def create_asset(project_id: str, req: GenerateRequest) -> Asset:
     """Generate an asset (generate_asset), store it in the project and save it to disk.
@@ -186,6 +193,8 @@ def create_asset(project_id: str, req: GenerateRequest) -> Asset:
         search_query=result.get("query", ""),
         humanize=req.humanize,
         ai_tells=result.get("ai_tells", []),
+        model=LLM_MODEL,
+        prompt_version=PROMPT_VERSION,
     )
     storage.write_asset(asset)
     db.assets[asset.id] = asset
@@ -206,7 +215,8 @@ def generate_asset(project_id: str, req: GenerateRequest) -> GenerationState:
         (AI-typical phrases that remain in the text).
 
     Raises:
-        GenerationError: 503 if no API key is configured, 502 if retrieval or the model call fails.
+        GenerationError: 503 if no API key is configured, 502 if retrieval or the model call fails,
+            504 if the provider timed out after all retries.
     """
     if not is_configured():
         raise GenerationError(503, "No API key set. Add OPENROUTER_API_KEY (or OPENAI_API_KEY) and restart the server.")
@@ -216,15 +226,16 @@ def generate_asset(project_id: str, req: GenerateRequest) -> GenerationState:
             state = _graph().invoke(
                 {"project_id": project_id, "req": req},
                 config={"run_name": f"generate_{req.asset_type}", "tags": [mode, req.asset_type],
-                        "metadata": {"project_id": project_id, "llm_model": LLM_MODEL, "operation": f"generate_{req.asset_type}"}},
+                        "metadata": {"request_id": current_request_id(), "prompt_version": PROMPT_VERSION,
+                                     "project_id": project_id, "llm_model": LLM_MODEL, "operation": f"generate_{req.asset_type}"}},
             )
     except GenerationError:
         raise
     except vectorstore.VectorStoreError as e:
-        raise GenerationError(502, str(e)) from e
+        raise model_failure(e, None) from e
     except Exception as e:
         logger.exception("Generation failed")
-        raise GenerationError(502, f"The language model call failed: {e}") from e
+        raise model_failure(e) from e
     return state
 
 
