@@ -1,9 +1,10 @@
 """Basic endpoints: smoke tests, health of the API and its services (open, no sign-in), LLM usage and costs
-(signed-in users only)."""
+(the admin only: they are app-wide)."""
 
 from fastapi import APIRouter, Depends, Query
 
-from app.core import auth, llm, usage
+from app.api.deps import admin_only
+from app.core import llm, usage
 from app.core.schemas import Health, ServiceStatus, UsageReport
 from app.rag import vectorstore
 
@@ -40,7 +41,7 @@ def health():
     return Health(ok=services[0].ok, services=services)
 
 
-@router.get("/usage", response_model=UsageReport, dependencies=[Depends(auth.current_user)])
+@router.get("/usage", response_model=UsageReport, dependencies=[Depends(admin_only)])
 def get_usage(limit: int = Query(50, ge=1, le=1000)):
     """Tokens and costs of all model calls so far (see usage.py).
 

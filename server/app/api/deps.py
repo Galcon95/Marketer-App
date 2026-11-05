@@ -1,17 +1,19 @@
-"""Shared helpers of the API routers: 404 lookups, vector search with HTTP errors, input checks (guardrails)
-and the rate limit of the endpoints that call the language model."""
+"""Shared helpers of the API routers: the ownership checks (authorization: a user only reaches their own project
+and what belongs to it), vector search with HTTP errors, input checks (guardrails) and the rate limit of the
+endpoints that call the language model."""
 
 import logging
 import threading
 import time
 from collections import defaultdict, deque
 
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 
-from app.core import guard
+from app.core import accounts, guard
 from app.core import state as db
+from app.core.auth import User, current_user
 from app.core.llm import model_failure
-from app.core.schemas import Chunk, Project, Source
+from app.core.schemas import Asset, Chunk, Conversation, Project, Source
 from app.rag import vectorstore
 from app.rag.retrieval import retrieve_chunks
 
@@ -76,40 +78,86 @@ def checked_optional(text: str, kind: guard.InputKind, field: str, *, check_inje
     return checked_text(text, kind, field, check_injection=check_injection) if text.strip() else ""
 
 
-def get_project_or_404(project_id: str) -> Project:
-    """Look up a project by id, or abort the request with 404 if it does not exist.
+# ---------- Authorization: a user may only use their own project and what belongs to it ----------
+# Anything of another user answers 404 exactly like an unknown id, so nobody can find out which ids exist.
 
-    Args:
-        project_id: Id of the project to find.
-
-    Returns:
-        The stored Project (without computed counts).
+def owned_project(project_id: str, user: User = Depends(current_user)) -> Project:
+    """FastAPI dependency for routes with {project_id}: the project, if it belongs to the signed-in user.
 
     Raises:
-        HTTPException: 404 when no project has this id.
+        HTTPException: 404 if the project is unknown or not the user's.
     """
     project = db.projects.get(project_id)
-    if project is None:
+    if project is None or not accounts.owns(user, project):
         raise HTTPException(404, f"Project '{project_id}' not found")
     return project
 
 
-def get_source_or_404(source_id: str) -> Source:
-    """Look up a source by id, or abort the request with 404 if it does not exist.
-
-    Args:
-        source_id: Id of the source to find.
-
-    Returns:
-        The stored Source.
+def owned_source(source_id: str, user: User = Depends(current_user)) -> Source:
+    """FastAPI dependency for routes with {source_id}: the source, if its project belongs to the signed-in user.
 
     Raises:
-        HTTPException: 404 when no source has this id.
+        HTTPException: 404 if the source is unknown or not the user's.
     """
     source = db.sources.get(source_id)
-    if source is None:
+    if source is None or not _owns_project(user, source.project_id):
         raise HTTPException(404, f"Source '{source_id}' not found")
     return source
+
+
+def owned_asset(asset_id: str, user: User = Depends(current_user)) -> Asset:
+    """FastAPI dependency for routes with {asset_id}: the asset, if its project belongs to the signed-in user.
+
+    Raises:
+        HTTPException: 404 if the asset is unknown or not the user's.
+    """
+    asset = db.assets.get(asset_id)
+    if asset is None or not _owns_project(user, asset.project_id):
+        raise HTTPException(404, f"Asset '{asset_id}' not found")
+    return asset
+
+
+def owned_conversation(conversation_id: str, user: User = Depends(current_user)) -> Conversation:
+    """FastAPI dependency for routes with {conversation_id}: the conversation, if its project belongs to the
+    signed-in user.
+
+    Raises:
+        HTTPException: 404 if the conversation is unknown or not the user's.
+    """
+    conversation = db.conversations.get(conversation_id)
+    if conversation is None or not _owns_project(user, conversation.project_id):
+        raise HTTPException(404, f"Conversation '{conversation_id}' not found")
+    return conversation
+
+
+def admin_only(user: User = Depends(current_user)) -> User:
+    """FastAPI dependency for app-wide endpoints (usage and costs of all users, MCP console): the admin only
+    (DEFAULT_CLIENT_OWNER, accounts.is_admin).
+
+    Raises:
+        HTTPException: 403 for every other user.
+    """
+    if not accounts.is_admin(user):
+        raise HTTPException(403, "Only the app's administrator can use this.")
+    return user
+
+
+def check_sources(project_id: str, source_ids: list[str] | None) -> None:
+    """Check that the books a request names (e.g. a book filter) belong to the project; call it after owned_project.
+
+    Raises:
+        HTTPException: 404 for a source that is unknown or belongs to another project.
+    """
+    for source_id in source_ids or []:
+        source = db.sources.get(source_id)
+        if source is None or source.project_id != project_id:
+            raise HTTPException(404, f"Source '{source_id}' not found")
+
+
+def _owns_project(user: User, project_id: str) -> bool:
+    """True if the project with this id exists and belongs to the user."""
+    project = db.projects.get(project_id)
+    return project is not None and accounts.owns(user, project)
 
 
 def retrieve(project_id: str, query: str, k: int, source_ids: list[str] | None = None,

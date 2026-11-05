@@ -8,7 +8,7 @@
 
 import { useState, type SubmitEvent } from "react";
 import { BookOpen, Check, FileText, Megaphone, Sparkles, Users, Wand2 } from "lucide-react";
-import { api, bookTitle, errorMessage, humanizeLabel, PROJECT_ID, type Asset, type Source } from "@/lib/api";
+import { api, bookTitle, errorMessage, humanizeLabel, type Asset, type Source } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import AssetCard from "../AssetCard";
 import BookCover from "../BookCover";
@@ -171,7 +171,7 @@ function BriefForm({ books, assets, onDone }: { books: Source[]; assets: Asset[]
 
         <Button type="submit" icon={Sparkles} loading={pending}>{pending ? "Writing personas, posts and blurb…" : "Generate campaign (zero-shot)"}</Button>
         <span className="bc-hint">
-          {pending ? "Takes about 20-40 seconds." : `3 personas → 5 posts + 1 blurb · POST /projects/${PROJECT_ID}/campaigns`}
+          {pending ? "Takes about 20-40 seconds." : "3 personas → 5 posts + 1 blurb · POST /projects/{id}/campaigns"}
         </span>
         {error && <ErrorNote>{error}</ErrorNote>}
       </form>

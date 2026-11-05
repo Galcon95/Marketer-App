@@ -9,8 +9,6 @@ import { accessToken, signOut } from "./supabase";
 /** Base URL of the FastAPI server; override with NEXT_PUBLIC_API_URL. */
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
-/** The one client (the API calls it a project) until several clients are supported. */
-export const PROJECT_ID = "demo-campaign";
 
 /* ---------- Types (mirror server/app/core/schemas.py) ---------- */
 /** Kind of content a source holds; decides how it will be ingested (parsed vs. transcribed). */
@@ -47,6 +45,14 @@ export interface Project {
   chunk_count: number;
   asset_count: number;
   token_count: number; // LLM tokens used by all generated assets of the project
+}
+
+/** Response of GET /me: the signed-in user, their own project (client) and whether they are the app's admin. */
+export interface Me {
+  user_id: string;
+  email: string;
+  admin: boolean; // may see the app-wide usage and costs and use the MCP console
+  project: Project; // with counts
 }
 
 /** One uploaded file in a project, plus its ingestion state. */
@@ -451,20 +457,38 @@ function postJson(body: unknown): RequestInit {
   return { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
 }
 
-/** One typed function per API endpoint. Project-scoped calls use PROJECT_ID. All reject with an Error on failure. */
+/** GET /me, loaded once per page load (a sign-out reloads the page); forgotten again if it fails. */
+let meRequest: Promise<Me> | null = null;
+function loadMe() {
+  meRequest ??= request<Me>("/me").catch((e: unknown) => {
+    meRequest = null;
+    throw e;
+  });
+  return meRequest;
+}
+
+/** Id of the signed-in user's own project (client), which every project-scoped call uses. */
+async function projectId() {
+  return (await loadMe()).project.id;
+}
+
+/** One typed function per API endpoint. Project-scoped calls use the user's own project (projectId). All reject with
+ * an Error on failure. */
 export const api = {
   /** GET /health: status of the API and its services. */
   health: () => request<Health>("/health"),
   /**
-   * GET /usage: tokens and costs of all model calls so far.
+   * GET /usage: tokens and costs of all model calls so far (the admin only; 403 for other users).
    * @param limit Number of latest calls to include (default 50).
    */
   usage: (limit = 50) => request<UsageReport>(`/usage?limit=${limit}`),
+  /** GET /me: the signed-in user, their project and whether they are the admin (cached for the page load). */
+  me: () => loadMe(),
   /** GET /projects/{id}: the current project with its counts. */
-  getProject: () => request<Project>(`/projects/${PROJECT_ID}`),
+  getProject: async () => request<Project>(`/projects/${await projectId()}`),
 
   /** GET /projects/{id}/sources: all sources of the current project. */
-  listSources: () => request<Source[]>(`/projects/${PROJECT_ID}/sources`),
+  listSources: async () => request<Source[]>(`/projects/${await projectId()}/sources`),
   /** GET /sources/{sourceId}: one source, used to poll ingestion status. */
   getSource: (sourceId: string) => request<Source>(`/sources/${sourceId}`),
   /**
@@ -475,10 +499,10 @@ export const api = {
    * @returns The created Source (status "queued"); rejects with the server's error detail on failure.
    */
   uploadSource: async (file: File, onProgress?: (percent: number) => void) => {
-    const token = await accessToken();
+    const [token, project] = await Promise.all([accessToken(), projectId()]);
     return new Promise<Source>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.open("POST", `${API_URL}/projects/${PROJECT_ID}/sources`);
+      xhr.open("POST", `${API_URL}/projects/${project}/sources`);
       if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
       xhr.responseType = "json";
       xhr.upload.onprogress = (e) => {
@@ -538,7 +562,7 @@ export const api = {
    * @param query Natural-language search text.
    * @param k Number of hits to return (default 5).
    */
-  search: (query: string, k = 5) => request<SearchResponse>(`/projects/${PROJECT_ID}/search`, postJson({ query, k })),
+  search: async (query: string, k = 5) => request<SearchResponse>(`/projects/${await projectId()}/search`, postJson({ query, k })),
   /**
    * POST /projects/{id}/ask: answer a question from the books (NotebookLM-style), with citations, as a turn of a chat.
    * @param question Natural-language question (follow-ups like "and in chapter 3?" are fine inside a chat).
@@ -546,22 +570,22 @@ export const api = {
    * @param sourceIds Optional: only use these books (omitted = all books).
    * @param conversationId Optional: continue this chat (omitted = start a new one; the response has its id).
    */
-  ask: (question: string, k = 6, sourceIds?: string[], conversationId?: string) =>
-    request<AskResponse>(`/projects/${PROJECT_ID}/ask`,
+  ask: async (question: string, k = 6, sourceIds?: string[], conversationId?: string) =>
+    request<AskResponse>(`/projects/${await projectId()}/ask`,
       postJson({ question, k, source_ids: sourceIds, conversation_id: conversationId })),
   /** GET /projects/{id}/conversations: past "Ask your book" chats without their turns, most recent first. */
-  listConversations: () => request<ConversationInfo[]>(`/projects/${PROJECT_ID}/conversations`),
+  listConversations: async () => request<ConversationInfo[]>(`/projects/${await projectId()}/conversations`),
   /** GET /conversations/{id}: one chat with all its turns. */
   getConversation: (conversationId: string) => request<Conversation>(`/conversations/${conversationId}`),
   /** DELETE /conversations/{id}: delete a chat. */
   deleteConversation: (conversationId: string) => request<void>(`/conversations/${conversationId}`, { method: "DELETE" }),
 
   /** POST /projects/{id}/generate: generate and store a new asset from a brief. */
-  generate: (body: GenerateRequest) => request<Asset>(`/projects/${PROJECT_ID}/generate`, postJson(body)),
+  generate: async (body: GenerateRequest) => request<Asset>(`/projects/${await projectId()}/generate`, postJson(body)),
   /** POST /projects/{id}/campaigns: generate a zero-shot campaign kit (3 personas, 5 posts, 1 blurb); takes some seconds. */
-  createCampaign: (body: CampaignRequest) => request<CampaignResponse>(`/projects/${PROJECT_ID}/campaigns`, postJson(body)),
+  createCampaign: async (body: CampaignRequest) => request<CampaignResponse>(`/projects/${await projectId()}/campaigns`, postJson(body)),
   /** GET /projects/{id}/assets: all generated assets of the current project, oldest first. */
-  listAssets: () => request<Asset[]>(`/projects/${PROJECT_ID}/assets`),
+  listAssets: async () => request<Asset[]>(`/projects/${await projectId()}/assets`),
   /** PATCH /assets/{assetId}: replace an asset's text with the user's edited version. */
   updateAsset: (assetId: string, text: string) =>
     request<Asset>(`/assets/${assetId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }),
@@ -582,7 +606,7 @@ export const api = {
   listMcpCalls: () => request<McpCall[]>("/mcp-calls"),
 
   /** POST /projects/{id}/verify: check each claim of `text` against the project's sources. */
-  verify: (text: string) => request<VerifyResponse>(`/projects/${PROJECT_ID}/verify`, postJson({ text })),
+  verify: async (text: string) => request<VerifyResponse>(`/projects/${await projectId()}/verify`, postJson({ text })),
 };
 
 /**

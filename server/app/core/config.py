@@ -17,6 +17,8 @@ Read once on import from environment variables (and server/.env, if present), fi
     LANGSMITH_PROJECT   → optional, the LangSmith project the traces go to (default "marketer-app")
     SUPABASE_URL        → URL of the Supabase project whose users may sign in (auth.py checks their access tokens
                           with its public signing keys); without it every API request except /health gets 503
+    DEFAULT_CLIENT_OWNER → email of the user who owns the default client ("demo-campaign", the data from before
+                          sign-in existed) and is the app's admin (app-wide usage, MCP console); see accounts.py
 """
 
 import os
@@ -51,6 +53,7 @@ DEBUG_MODE = os.getenv("DEBUG_MODE", "false").strip().lower() in ("true", "1", "
 LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT") or os.getenv("LANGCHAIN_PROJECT") or "marketer-app"
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+DEFAULT_CLIENT_OWNER = os.getenv("DEFAULT_CLIENT_OWNER", "").strip().lower()
 
 
 def langsmith_key_set() -> bool:

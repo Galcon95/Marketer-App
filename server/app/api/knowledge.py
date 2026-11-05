@@ -5,13 +5,15 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import checked_text, get_project_or_404, get_source_or_404, llm_rate_limit, retrieve
+from app.api.deps import (
+    check_sources, checked_text, llm_rate_limit, owned_conversation, owned_project, owned_source, retrieve,
+)
 from app.core import storage
 from app.core import state as db
 from app.core.llm import GenerationError
 from app.core.schemas import (
     AskRequest, AskResponse, BookSummary, ChatTurn, Conversation, ConversationInfo, SearchHit, SearchRequest,
-    SearchResponse, VerifyItem, VerifyRequest, VerifyResponse,
+    SearchResponse, Source, VerifyItem, VerifyRequest, VerifyResponse,
 )
 from app.rag import qa, summary
 
@@ -25,7 +27,7 @@ MAX_TURNS = 50  # turns per conversation; after that the user starts a new chat
 VERIFY_MIN_SCORE = 0.5
 
 
-@router.get("/sources/{source_id}/summary", response_model=BookSummary)
+@router.get("/sources/{source_id}/summary", response_model=BookSummary, dependencies=[Depends(owned_source)])
 def get_summary(source_id: str):
     """Return the saved summary of a book.
 
@@ -35,7 +37,6 @@ def get_summary(source_id: str):
     Raises:
         HTTPException: 404 if the source is unknown or has no summary yet.
     """
-    get_source_or_404(source_id)
     found = db.summaries.get(source_id)
     if found is None:
         raise HTTPException(404, "No summary yet")
@@ -44,7 +45,7 @@ def get_summary(source_id: str):
 
 @router.post("/sources/{source_id}/summary", response_model=BookSummary, status_code=201,
              dependencies=[Depends(llm_rate_limit)])
-def create_summary(source_id: str):
+def create_summary(source: Source = Depends(owned_source)):
     """Create (or recreate) the summary of a processed book: chapter summaries + book overview.
 
     Runs the LangGraph map-reduce in summary.py over all of the book's chunks, which takes some
@@ -61,7 +62,6 @@ def create_summary(source_id: str):
         HTTPException: 409 if the book is not processed ("ready"); 503 if no API key is configured;
             502 if a model call fails; 504 if it timed out after all retries.
     """
-    source = get_source_or_404(source_id)
     if source.status != "ready":
         raise HTTPException(409, f"'{source.filename}' must be processed (status ready) before it can be summarized")
     try:
@@ -72,7 +72,8 @@ def create_summary(source_id: str):
         raise HTTPException(500, "The summary was created but could not be saved") from e
 
 
-@router.post("/projects/{project_id}/ask", response_model=AskResponse, dependencies=[Depends(llm_rate_limit)])
+@router.post("/projects/{project_id}/ask", response_model=AskResponse,
+             dependencies=[Depends(owned_project), Depends(llm_rate_limit)])
 def ask(project_id: str, body: AskRequest):
     """Answer a question from the project's books, NotebookLM-style, as one turn of a conversation.
 
@@ -93,16 +94,17 @@ def ask(project_id: str, body: AskRequest):
         the conversation id to send with the next question.
 
     Raises:
-        HTTPException: 400 for a likely prompt injection; 404 for an unknown conversation; 409 if there is
+        HTTPException: 400 for a likely prompt injection; 404 for an unknown conversation or a book of the filter
+            that is not in the project; 409 if there is
             nothing to search or the conversation is full; 422 for an empty or too long question; 429 if the
             rate limit is reached; 503 if no API key is configured; 502 if retrieval or the model call fails;
             504 if the model timed out after all retries.
     """
-    get_project_or_404(project_id)
+    check_sources(project_id, body.source_ids)
     question = checked_text(body.question, "chat_message", "question")
-    conversation = _get_conversation_or_404(body.conversation_id) if body.conversation_id else None
-    if conversation and conversation.project_id != project_id:
-        raise HTTPException(404, f"Conversation '{conversation.id}' not found")
+    conversation = db.conversations.get(body.conversation_id) if body.conversation_id else None
+    if body.conversation_id and (conversation is None or conversation.project_id != project_id):
+        raise HTTPException(404, f"Conversation '{body.conversation_id}' not found")
     if conversation and len(conversation.turns) >= MAX_TURNS:
         raise HTTPException(409, f"This chat has reached {MAX_TURNS} questions. Start a new chat to continue.")
     try:
@@ -126,10 +128,10 @@ def ask(project_id: str, body: AskRequest):
     return result
 
 
-@router.get("/projects/{project_id}/conversations", response_model=list[ConversationInfo])
+@router.get("/projects/{project_id}/conversations", response_model=list[ConversationInfo],
+            dependencies=[Depends(owned_project)])
 def list_conversations(project_id: str):
     """The project's "Ask your book" conversations without their turns, most recently used first."""
-    get_project_or_404(project_id)
     conversations = sorted((c for c in db.conversations.values() if c.project_id == project_id),
                            key=lambda c: c.updated_at, reverse=True)
     return [ConversationInfo(id=c.id, title=c.title, created_at=c.created_at, updated_at=c.updated_at,
@@ -137,28 +139,19 @@ def list_conversations(project_id: str):
 
 
 @router.get("/conversations/{conversation_id}", response_model=Conversation)
-def get_conversation(conversation_id: str):
+def get_conversation(conversation: Conversation = Depends(owned_conversation)):
     """One conversation with all its turns, oldest first. 404 if unknown."""
-    return _get_conversation_or_404(conversation_id)
-
-
-@router.delete("/conversations/{conversation_id}", status_code=204)
-def delete_conversation(conversation_id: str):
-    """Delete a conversation and its saved file. 404 if unknown."""
-    conversation = _get_conversation_or_404(conversation_id)
-    del db.conversations[conversation.id]
-    storage.delete_conversation(conversation)
-
-
-def _get_conversation_or_404(conversation_id: str) -> Conversation:
-    """A conversation by id, or HTTPException 404."""
-    conversation = db.conversations.get(conversation_id)
-    if conversation is None:
-        raise HTTPException(404, f"Conversation '{conversation_id}' not found")
     return conversation
 
 
-@router.post("/projects/{project_id}/search", response_model=SearchResponse)
+@router.delete("/conversations/{conversation_id}", status_code=204)
+def delete_conversation(conversation: Conversation = Depends(owned_conversation)):
+    """Delete a conversation and its saved file. 404 if unknown."""
+    db.conversations.pop(conversation.id, None)
+    storage.delete_conversation(conversation)
+
+
+@router.post("/projects/{project_id}/search", response_model=SearchResponse, dependencies=[Depends(owned_project)])
 def search(project_id: str, body: SearchRequest):
     """Find the passages of a project's sources that best match a query (semantic vector search).
 
@@ -173,17 +166,17 @@ def search(project_id: str, body: SearchRequest):
         The query and up to k hits, best first.
 
     Raises:
-        HTTPException: 422 if the query is empty or too long; 503 if no embedding API key is configured,
+        HTTPException: 404 for a book of the filter that is not in the project; 422 if the query is empty or too long; 503 if no embedding API key is configured,
             502 if the search fails, 504 if it timed out after all retries.
     """
-    get_project_or_404(project_id)
+    check_sources(project_id, body.source_ids)
     query = checked_text(body.query, "search_query", "query", check_injection=False)  # only embedded, never a prompt
     hits = [SearchHit(chunk=c, score=score) for c, score in retrieve(project_id, query, body.k, body.source_ids)]
     return SearchResponse(query=query, hits=hits)
 
 
 # ---------- Verification ----------
-@router.post("/projects/{project_id}/verify", response_model=VerifyResponse)
+@router.post("/projects/{project_id}/verify", response_model=VerifyResponse, dependencies=[Depends(owned_project)])
 def verify(project_id: str, body: VerifyRequest):
     """Check each claim (sentence) of a text against the project's sources.
 
@@ -202,7 +195,6 @@ def verify(project_id: str, body: VerifyRequest):
         HTTPException: 422 if the text is empty or too long; 503 if no embedding API key is configured,
             502 if the search fails, 504 if it timed out after all retries.
     """
-    get_project_or_404(project_id)
     text = checked_text(body.text, "asset_text", "text", check_injection=False)  # only embedded, never a prompt
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text.replace("\n", " ")) if s.strip()]
     items = []

@@ -1,44 +1,43 @@
-"""Projects (marketing campaigns) with their live source, chunk, asset and token counts."""
+"""The signed-in user and their project (client) with its live source, chunk, asset and token counts. Each user
+has exactly one project (accounts.py); it is created on their first GET /me."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import get_project_or_404
+from app.api.deps import owned_project
+from app.core import accounts
 from app.core import state as db
-from app.core.schemas import Project, ProjectCreate
+from app.core.auth import User, current_user
+from app.core.schemas import Me, Project
 
 router = APIRouter()
 
 
-# ---------- Projects ----------
-@router.post("/projects", response_model=Project, status_code=201)
-def create_project(body: ProjectCreate):
-    """Create a new, empty project.
+# ---------- Signed-in user ----------
+@router.get("/me", response_model=Me)
+def me(user: User = Depends(current_user)):
+    """The signed-in user with their project (created on the first call) and whether they are the admin.
 
-    Args:
-        body: Name and optional description of the project.
-
-    Returns:
-        The created project with a new "prj_" id and zero counts.
+    Raises:
+        HTTPException: 500 if a new project cannot be saved.
     """
-    project = Project(id=db.new_id("prj"), name=body.name, description=body.description, created_at=db.now())
-    db.projects[project.id] = project
-    return project
+    try:
+        project = accounts.client_of(user)
+    except OSError as e:
+        raise HTTPException(500, "Your library could not be created, please try again.") from e
+    return Me(user_id=user.id, email=user.email, admin=accounts.is_admin(user), project=with_counts(project))
 
 
+# ---------- Projects ----------
 @router.get("/projects", response_model=list[Project])
-def list_projects():
-    """List all projects, each with its current source, chunk and asset counts."""
-    return [with_counts(p) for p in db.projects.values()]
+def list_projects(user: User = Depends(current_user)):
+    """List the user's projects (one), each with its current source, chunk and asset counts."""
+    return [with_counts(p) for p in db.projects.values() if accounts.owns(user, p)]
 
 
 @router.get("/projects/{project_id}", response_model=Project)
-def get_project(project_id: str):
-    """Return one project with its current counts.
-
-    Args:
-        project_id: Id of the project (path parameter). 404 if unknown.
-    """
-    return with_counts(get_project_or_404(project_id))
+def get_project(project: Project = Depends(owned_project)):
+    """Return one of the user's projects with its current counts. 404 if unknown or another user's."""
+    return with_counts(project)
 
 
 def with_counts(project: Project) -> Project:

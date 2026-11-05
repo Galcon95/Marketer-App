@@ -13,6 +13,7 @@ from app.core import state as db
 from app.core import storage
 from app.core.schemas import Asset, ChatTurn, Chunk, ChunkLocation, Conversation, SearchHit, Source
 from app.rag import vectorstore
+from tests.conftest import sign_in
 
 PROJECT = "demo-campaign"
 NOW = datetime.now(timezone.utc)
@@ -59,6 +60,7 @@ def client(tmp_path, monkeypatch):
     (tmp_path / "upload_dir" / PROJECT / "src_a").mkdir(parents=True)
     app = FastAPI()
     app.include_router(sources.router)
+    sign_in(app)
     with TestClient(app) as test_client:
         yield test_client
 

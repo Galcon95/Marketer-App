@@ -10,6 +10,7 @@ from app.api import sources
 from app.core import state as db
 from app.core import storage
 from app.rag import ingestion
+from tests.conftest import sign_in
 
 UPLOAD = "/projects/demo-campaign/sources"
 PDF = b"%PDF-1.4\n% a tiny test file, not a real book\n"
@@ -23,6 +24,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(ingestion, "ingest_source", lambda source_id: None)
     app = FastAPI()
     app.include_router(sources.router)
+    sign_in(app)
     with TestClient(app) as test_client:
         yield test_client
 

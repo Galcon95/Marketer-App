@@ -1,9 +1,9 @@
 """Sources (uploaded books): upload, processing into chunks, listing, deletion, chunks, file and cover."""
 
-from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
-from app.api.deps import get_project_or_404, get_source_or_404
+from app.api.deps import owned_project, owned_source
 from app.core import state as db
 from app.core import storage
 from app.core.schemas import Asset, ChunkPage, Conversation, Source, SourceDeletion
@@ -14,7 +14,8 @@ router = APIRouter()
 
 
 # ---------- Sources (content upload & ingestion) ----------
-@router.post("/projects/{project_id}/sources", response_model=Source, status_code=201)
+@router.post("/projects/{project_id}/sources", response_model=Source, status_code=201,
+             dependencies=[Depends(owned_project)])
 def upload_source(project_id: str, background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     """Store an uploaded file on disk and start processing it into chunks in the background.
 
@@ -33,11 +34,10 @@ def upload_source(project_id: str, background_tasks: BackgroundTasks, file: Uplo
         The new Source record (status "queued").
 
     Raises:
-        HTTPException: 404 for an unknown project; 400/413/415 when storage rejects the file; 409 when the
-            same file is already in the project; 500 when the record cannot be saved (the stored file is
-            removed again).
+        HTTPException: 404 for an unknown project (or another user's); 400/413/415 when storage rejects the file;
+            409 when the same file is already in the project; 500 when the record cannot be saved (the stored
+            file is removed again).
     """
-    get_project_or_404(project_id)
     source_id = db.new_id("src")
     filename = storage.safe_filename(file.filename or "")
     try:
@@ -74,7 +74,7 @@ def upload_source(project_id: str, background_tasks: BackgroundTasks, file: Uplo
 
 
 @router.post("/sources/{source_id}/ingest", response_model=Source, status_code=202)
-def ingest_source(source_id: str, background_tasks: BackgroundTasks):
+def ingest_source(source_id: str, background_tasks: BackgroundTasks, source: Source = Depends(owned_source)):
     """(Re)build the chunks of an uploaded source in the background: Process / Re-index / Retry.
 
     Sets the source to "queued" and schedules ingestion.ingest_source. Existing chunks stay
@@ -90,7 +90,6 @@ def ingest_source(source_id: str, background_tasks: BackgroundTasks):
     Raises:
         HTTPException: 409 if it is already being processed or its stored file is missing.
     """
-    source = get_source_or_404(source_id)
     if source.status in ingestion.PROCESSING_STATUSES:
         raise HTTPException(409, f"'{source.filename}' is already being processed")
     if not storage.source_file_path(source).is_file():
@@ -105,39 +104,33 @@ def ingest_source(source_id: str, background_tasks: BackgroundTasks):
     return source
 
 
-@router.get("/projects/{project_id}/sources", response_model=list[Source])
+@router.get("/projects/{project_id}/sources", response_model=list[Source], dependencies=[Depends(owned_project)])
 def list_sources(project_id: str):
     """List all sources of a project.
 
     Args:
         project_id: Id of the project (path parameter). 404 if unknown.
     """
-    get_project_or_404(project_id)
     return [s for s in db.sources.values() if s.project_id == project_id]
 
 
 @router.get("/sources/{source_id}", response_model=Source)
-def get_source(source_id: str):
-    """Return one source, e.g. to poll its ingestion status.
-
-    Args:
-        source_id: Id of the source (path parameter). 404 if unknown.
-    """
-    return get_source_or_404(source_id)
+def get_source(source: Source = Depends(owned_source)):
+    """Return one source, e.g. to poll its ingestion status. 404 if unknown."""
+    return source
 
 
 @router.get("/sources/{source_id}/deletion", response_model=SourceDeletion)
-def preview_deletion(source_id: str):
+def preview_deletion(source: Source = Depends(owned_source)):
     """What deleting this book would remove besides the book itself (for the confirmation): the generated assets
     made only from it and the chats that only used its passages. Nothing is deleted. 404 if unknown."""
-    source = get_source_or_404(source_id)
     assets, conversations = _dependents(source)
     return SourceDeletion(source_id=source.id, name=source_name(source.id) or source.filename,
                           assets=len(assets), conversations=len(conversations))
 
 
 @router.delete("/sources/{source_id}", response_model=SourceDeletion)
-def delete_source(source_id: str):
+def delete_source(source_id: str, source: Source = Depends(owned_source)):
     """Delete a book with everything that belongs only to it: its stored files (PDF, cover, summary), chunks and
     vectors, the generated assets made only from it (incl. its campaign kits) and the chats that only used its
     passages. Assets and chats that also draw on other books are kept. Works while the book is processing.
@@ -148,7 +141,6 @@ def delete_source(source_id: str):
     Returns:
         What was removed besides the book itself.
     """
-    source = get_source_or_404(source_id)
     name = source_name(source.id) or source.filename
     assets, conversations = _dependents(source)
     # Remove the record first, so a running ingestion sees the deletion and stops writing.
@@ -176,7 +168,7 @@ def _dependents(source: Source) -> tuple[list[Asset], list[Conversation]]:
     return assets, conversations
 
 
-@router.get("/sources/{source_id}/chunks", response_model=ChunkPage)
+@router.get("/sources/{source_id}/chunks", response_model=ChunkPage, dependencies=[Depends(owned_source)])
 def list_chunks(source_id: str, offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100)):
     """Return one page of the chunks produced from a source.
 
@@ -188,13 +180,12 @@ def list_chunks(source_id: str, offset: int = Query(0, ge=0), limit: int = Query
     Returns:
         A ChunkPage with the requested slice and the total chunk count.
     """
-    get_source_or_404(source_id)
     items = [c for c in db.chunks.values() if c.source_id == source_id]
     return ChunkPage(items=items[offset:offset + limit], total=len(items), offset=offset, limit=limit)
 
 
 @router.get("/sources/{source_id}/file", response_class=FileResponse)
-def get_source_file(source_id: str):
+def get_source_file(source: Source = Depends(owned_source)):
     """Return the uploaded file itself (e.g. the PDF), for viewing in the browser (not as a download).
 
     Browsers' PDF viewers accept a page in the link, e.g. /sources/{id}/file#page=13, which the GUI
@@ -206,7 +197,6 @@ def get_source_file(source_id: str):
     Raises:
         HTTPException: 404 if the source is unknown or its file is missing.
     """
-    source = get_source_or_404(source_id)
     path = storage.source_file_path(source)
     if not path.is_file():
         raise HTTPException(404, "The file of this source is missing")
@@ -215,7 +205,7 @@ def get_source_file(source_id: str):
 
 
 @router.get("/sources/{source_id}/cover", response_class=FileResponse)
-def get_cover(source_id: str):
+def get_cover(source: Source = Depends(owned_source)):
     """Return the cover image (PNG) of a book, creating it on first request if needed.
 
     Args:
@@ -224,7 +214,6 @@ def get_cover(source_id: str):
     Raises:
         HTTPException: 404 if the source is unknown or no cover can be made (no stored PDF).
     """
-    source = get_source_or_404(source_id)
     if not storage.source_file_path(source).is_file() or not ingestion.make_cover(source):
         raise HTTPException(404, "No cover available")
     return FileResponse(storage.cover_path(source), media_type="image/png")

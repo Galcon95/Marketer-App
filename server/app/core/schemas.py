@@ -43,27 +43,31 @@ class Health(BaseModel):
 
 
 # ---------- Projects ----------
-class ProjectCreate(BaseModel):
-    """Request body for POST /projects: the user-editable fields of a new project."""
-
-    name: str  # display name of the project / campaign
-    description: str = ""  # optional free-text description
-
-
 class Project(BaseModel):
-    """A project (marketing campaign) that groups sources, their chunks and the generated assets.
+    """A project (a client, shown as "Current client" in the GUI) that groups sources, their chunks and the generated
+    assets. Each project belongs to one signed-in user (owner_id); every user has exactly one (accounts.py).
 
-    The *_count fields are not stored; they are computed on read (see server.with_counts).
+    The *_count fields are not stored; they are computed on read (see projects.with_counts).
     """
 
     id: str  # unique id, e.g. "prj_1a2b3c4d"
     name: str
     description: str
     created_at: datetime  # creation time in UTC
+    owner_id: str = ""  # Supabase user id of the owner; "" = nobody yet (the default project before it is claimed)
     source_count: int = 0  # number of uploaded sources in the project
     chunk_count: int = 0  # number of chunks across all sources of the project
     asset_count: int = 0  # number of generated assets in the project
     token_count: int = 0  # LLM tokens (prompt + completion) used by the project's generated assets and book summaries
+
+
+class Me(BaseModel):
+    """Response of GET /me: the signed-in user, their project (client) and whether they are the app's admin."""
+
+    user_id: str  # Supabase user id
+    email: str
+    admin: bool  # may see the app-wide usage and costs and use the MCP console (DEFAULT_CLIENT_OWNER)
+    project: Project  # the user's own project, with counts
 
 
 # ---------- Sources ----------

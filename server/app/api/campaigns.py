@@ -4,7 +4,7 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import checked_optional, checked_text, get_project_or_404, get_source_or_404, llm_rate_limit
+from app.api.deps import check_sources, checked_optional, checked_text, llm_rate_limit, owned_project
 from app.campaign import kit
 from app.core import state as db
 from app.core import storage
@@ -16,7 +16,7 @@ router = APIRouter()
 
 
 @router.post("/projects/{project_id}/campaigns", response_model=CampaignResponse, status_code=201,
-             dependencies=[Depends(llm_rate_limit)])
+             dependencies=[Depends(owned_project), Depends(llm_rate_limit)])
 def create_campaign(project_id: str, body: CampaignRequest):
     """Generate a zero-shot campaign kit from a book brief: 3 personas, 5 social posts, 1 blurb.
 
@@ -37,9 +37,7 @@ def create_campaign(project_id: str, body: CampaignRequest):
             rate limit is reached; 503 if no API key is configured; 502 if a model call fails; 504 if it timed
             out after all retries; 500 if the assets cannot be saved.
     """
-    get_project_or_404(project_id)
-    if body.source_id:
-        get_source_or_404(body.source_id)
+    check_sources(project_id, [body.source_id] if body.source_id else None)
     body = _checked_brief(body)
     try:
         result = kit.generate_campaign(body)

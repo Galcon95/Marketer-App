@@ -18,3 +18,6 @@ assets/conversations/
 
 # Usage and cost log of model calls
 assets/usage/
+
+# Projects (clients) and their owners: user ids (user data)
+assets/projects.json

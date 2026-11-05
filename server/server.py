@@ -30,6 +30,7 @@ from app.rag import ingestion, retrieval, summary  # noqa: E402
 
 # Restore uploaded sources (with their chunks) and generated assets from disk, so they survive
 # server restarts.
+state.projects.update(storage.load_projects())  # the clients and their owners
 ingestion.restore_sources()
 state.assets.update(storage.load_assets())
 state.conversations.update(storage.load_conversations())

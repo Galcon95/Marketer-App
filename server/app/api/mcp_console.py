@@ -1,16 +1,17 @@
 """Market Intelligence: the MCP console. Lists our MCP servers with their tools, runs tool calls and
-keeps a call log. The app talks to the servers as a real MCP client (market/client.py)."""
+keeps a call log. The app talks to the servers as a real MCP client (market/client.py). The admin only: the
+servers serve the default project and the call log is shared (until MCP gets per-user API keys)."""
 
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.api.deps import llm_rate_limit
+from app.api.deps import admin_only, llm_rate_limit
 
 from app.core.schemas import McpCallRequest, McpCallResult, McpServerStatus
 from app.market import client
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(admin_only)])
 
 
 @router.get("/mcp-servers", response_model=list[McpServerStatus])

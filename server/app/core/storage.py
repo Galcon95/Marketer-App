@@ -1,6 +1,7 @@
 """File storage for uploaded sources: server/assets/uploads/{project_id}/{source_id}/{filename},
 for generated assets: server/assets/generated/{project_id}/{asset_id}.json, and for "Ask your book"
-conversations: server/assets/conversations/{project_id}/{conversation_id}.json.
+conversations: server/assets/conversations/{project_id}/{conversation_id}.json. The projects (clients, with
+their owners) are kept in one file, server/assets/projects.json.
 
 Each source directory also holds META_FILENAME, the source's record as JSON, and after ingestion
 CHUNKS_FILENAME with its chunks. The upload directory
@@ -9,6 +10,7 @@ deleting a source deletes its directory, so the GUI and the files on disk always
 """
 
 import hashlib
+import json
 import logging
 import re
 import shutil
@@ -20,7 +22,7 @@ import pymupdf
 from pydantic import ValidationError
 
 from app.core.config import DATA_DIR
-from app.core.schemas import Asset, BookSummary, Chunk, Conversation, Source, SourceKind
+from app.core.schemas import Asset, BookSummary, Chunk, Conversation, Project, Source, SourceKind
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,8 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 GENERATED_DIR = DATA_DIR / "generated"
 # Conversations of "Ask your book": assets/conversations/{project_id}/{conversation_id}.json
 CONVERSATIONS_DIR = DATA_DIR / "conversations"
+# Projects (clients) with their owners, all in one JSON list (until they move to a database)
+PROJECTS_FILE = DATA_DIR / "projects.json"
 
 # Source record stored next to the uploaded file. It starts with "." and safe_filename strips
 # leading dots from uploads, so it can never collide with an uploaded file.
@@ -443,3 +447,33 @@ def _recover_source_meta(source_dir: Path, project_id: str, source_id: str) -> S
         logger.warning("Could not save recovered record for %s", source_dir)
     logger.info("Recovered source record for %s", source_dir)
     return source
+
+
+def write_projects(projects: list[Project]) -> None:
+    """Save all projects (without their computed counts) to PROJECTS_FILE, via a temporary file like write_asset.
+
+    Raises:
+        OSError: If the file cannot be written.
+    """
+    PROJECTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = PROJECTS_FILE.with_name(f".{PROJECTS_FILE.name}.tmp")
+    data = [p.model_dump(mode="json", exclude={"source_count", "chunk_count", "asset_count", "token_count"})
+            for p in projects]
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(PROJECTS_FILE)
+
+
+def load_projects() -> dict[str, Project]:
+    """Read the saved projects (called once on server startup); an unreadable file is logged and ignored.
+
+    Returns:
+        Projects by id; empty if none were saved yet.
+    """
+    if not PROJECTS_FILE.is_file():
+        return {}
+    try:
+        projects = [Project.model_validate(p) for p in json.loads(PROJECTS_FILE.read_text(encoding="utf-8"))]
+    except (OSError, ValueError) as e:  # ValidationError is a ValueError
+        logger.error("Could not read %s, starting without saved projects: %s", PROJECTS_FILE, e)
+        return {}
+    return {p.id: p for p in projects}

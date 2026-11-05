@@ -125,3 +125,17 @@ describe("errorMessage", () => {
     expect(errorMessage("plain text")).toBe("plain text");
   });
 });
+
+describe("the user's own project", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("comes from GET /me (loaded once) and is used by project-scoped calls", async () => {
+    const me = { user_id: "u1", email: "ada@example.com", admin: false, project: { id: "prj_ada" } };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+      new Response(JSON.stringify(url.endsWith("/me") ? me : []), { status: 200 })));
+    await api.listSources();
+    await api.listAssets();
+    const urls = vi.mocked(fetch).mock.calls.map(([url]) => url);
+    expect(urls).toEqual([`${API_URL}/me`, `${API_URL}/projects/prj_ada/sources`, `${API_URL}/projects/prj_ada/assets`]);
+  });
+});

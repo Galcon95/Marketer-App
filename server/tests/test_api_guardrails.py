@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import assets, campaigns, deps, knowledge
+from tests.conftest import sign_in
 
 PROJECT = "/projects/demo-campaign"
 
@@ -18,6 +19,7 @@ def client():
     app = FastAPI()
     for module in (knowledge, assets, campaigns):
         app.include_router(module.router)
+    sign_in(app)
     with TestClient(app) as test_client:
         yield test_client
     deps._llm_calls.clear()
