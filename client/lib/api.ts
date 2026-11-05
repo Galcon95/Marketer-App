@@ -1,7 +1,10 @@
 /**
  * Typed client for the Marketer App API (server/server.py, models in server/app/core/schemas.py).
- * Called from the browser; the server allows http://localhost:3000 via CORS.
+ * Called from the browser; the server allows http://localhost:3000 via CORS. Every request carries the signed-in
+ * user's Supabase access token (Authorization: Bearer …).
  */
+
+import { accessToken, signOut } from "./supabase";
 
 /** Base URL of the FastAPI server; override with NEXT_PUBLIC_API_URL. */
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
@@ -359,21 +362,20 @@ export function assetTypeLabel(type: AssetType) {
  * @returns "ch_04 · p.112" for documents, "00:12:34–00:13:20" for media.
  */
 /**
- * URL of a book's cover image (PNG, extracted from the PDF by the server on first request).
+ * API path of a book's cover image (PNG, extracted from the PDF by the server on first request); load it with
+ * fileBlobUrl, since it needs the access token.
  * @param sourceId The book (source).
  */
-export function coverUrl(sourceId: string) {
-  return `${API_URL}/sources/${sourceId}/cover`;
+export function coverPath(sourceId: string) {
+  return `/sources/${sourceId}/cover`;
 }
 
 /**
- * URL of a source's uploaded file (the PDF), opened in the browser's viewer; with a page, the viewer
- * jumps to it (#page=N is understood by the PDF viewers of Chrome, Edge, Firefox and Safari).
+ * API path of a source's uploaded file (the PDF); load it with fileBlobUrl, since it needs the access token.
  * @param sourceId The source.
- * @param page Optional 1-based page to open at.
  */
-export function fileUrl(sourceId: string, page?: number | null) {
-  return `${API_URL}/sources/${sourceId}/file${page ? `#page=${page}` : ""}`;
+export function filePath(sourceId: string) {
+  return `/sources/${sourceId}/file`;
 }
 
 /**
@@ -402,17 +404,43 @@ export function locationLabel(loc: ChunkLocation) {
  * @throws ApiError (non-2xx response, with its status) or Error (server unreachable), with a user-presentable message.
  */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await send(path, init);
+  return (res.status === 204 ? undefined : await res.json()) as T;
+}
+
+/**
+ * Send a request to the API with the user's access token; the error handling of request() without parsing the body.
+ * @param path API path starting with "/", appended to API_URL.
+ * @param init Optional fetch options (method, headers, body).
+ * @returns The successful (2xx) response.
+ * @throws ApiError (non-2xx response, with its status) or Error (server unreachable).
+ */
+async function send(path: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  const token = await accessToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
   let res: Response;
   try {
-    res = await fetch(`${API_URL}${path}`, init);
+    res = await fetch(`${API_URL}${path}`, { ...init, headers });
   } catch {
     throw new Error(`Could not reach the API at ${API_URL}`);
   }
+  if (res.status === 401 && token) await signOut(); // the server no longer accepts the session
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     throw new ApiError(typeof body?.detail === "string" ? body.detail : `API error ${res.status}`, res.status);
   }
-  return (res.status === 204 ? undefined : await res.json()) as T;
+  return res;
+}
+
+/**
+ * Download a file from the API (with the access token, which a plain <img src> or link cannot send) and return a
+ * blob: URL for it, valid in this tab until URL.revokeObjectURL.
+ * @param path API path of the file, e.g. "/sources/src_1/cover".
+ */
+export async function fileBlobUrl(path: string) {
+  const res = await send(path);
+  return URL.createObjectURL(await res.blob());
 }
 
 /**
@@ -446,10 +474,12 @@ export const api = {
    * @param onProgress Optional callback receiving the sent percentage (0-100).
    * @returns The created Source (status "queued"); rejects with the server's error detail on failure.
    */
-  uploadSource: (file: File, onProgress?: (percent: number) => void) =>
-    new Promise<Source>((resolve, reject) => {
+  uploadSource: async (file: File, onProgress?: (percent: number) => void) => {
+    const token = await accessToken();
+    return new Promise<Source>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", `${API_URL}/projects/${PROJECT_ID}/sources`);
+      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
       xhr.responseType = "json";
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) onProgress?.(Math.round((e.loaded / e.total) * 100));
@@ -465,7 +495,8 @@ export const api = {
       const form = new FormData();
       form.append("file", file);
       xhr.send(form);
-    }),
+    });
+  },
   /**
    * POST /sources/{sourceId}/ingest: (re)build a source's chunks in the background (Process / Re-index / Retry).
    * @returns The source with status "queued"; poll it to follow the progress.

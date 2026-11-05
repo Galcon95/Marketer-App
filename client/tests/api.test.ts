@@ -3,8 +3,13 @@
  * handling (with fetch replaced by a stub, so no server is needed). Run with `npm test`.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { signOut } from "../lib/supabase";
+
+// A signed-in user's token, instead of the real Supabase session (lib/supabase.ts).
+const TOKEN = "test-access-token";
+vi.mock("../lib/supabase", () => ({ accessToken: async () => TOKEN, signOut: vi.fn() }));
 import {
-  API_URL, ApiError, api, assetTypeLabel, bookTitle, cleanText, errorMessage, fileUrl, hasCharLimit, humanizeLabel,
+  API_URL, ApiError, api, assetTypeLabel, bookTitle, cleanText, errorMessage, fileBlobUrl, filePath, hasCharLimit, humanizeLabel,
   locationLabel, usesPlatform,
 } from "../lib/api";
 
@@ -55,10 +60,17 @@ describe("asset type rules", () => {
   });
 });
 
-describe("fileUrl", () => {
-  it("opens the PDF at a page when one is given", () => {
-    expect(fileUrl("src_1", 13)).toBe(`${API_URL}/sources/src_1/file#page=13`);
-    expect(fileUrl("src_1")).toBe(`${API_URL}/sources/src_1/file`);
+describe("fileBlobUrl", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("downloads a file with the access token and returns a blob: URL", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Blob(["%PDF"]), { status: 200 })));
+    const url = await fileBlobUrl(filePath("src_1"));
+    expect(url).toMatch(/^blob:/);
+    const [address, init] = vi.mocked(fetch).mock.calls[0];
+    expect(address).toBe(`${API_URL}/sources/src_1/file`);
+    expect(new Headers(init?.headers).get("Authorization")).toBe(`Bearer ${TOKEN}`);
+    URL.revokeObjectURL(url);
   });
 });
 
@@ -86,6 +98,19 @@ describe("API client errors", () => {
   it("returns null for a book without summary (404) instead of failing", async () => {
     answer(404, { detail: "No summary yet" });
     await expect(api.getSummary("src_1")).resolves.toBeNull();
+  });
+
+  it("sends the user's access token as a Bearer token", async () => {
+    answer(200, { ok: true, services: [] });
+    await api.health();
+    const init = vi.mocked(fetch).mock.calls[0][1];
+    expect(new Headers(init?.headers).get("Authorization")).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it("signs the user out when the server rejects the session (401)", async () => {
+    answer(401, { detail: "Your session has expired, please sign in again." });
+    await expect(api.listSources()).rejects.toThrow("session has expired");
+    expect(signOut).toHaveBeenCalled();
   });
 
   it("reports when the API cannot be reached", async () => {

@@ -15,7 +15,7 @@ lives in the app package (see README.md, "Project layout"):
 import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core import logs
@@ -23,7 +23,7 @@ from app.core import logs
 logs.setup()  # first, so the imports below already log through it (JSON lines with the request id)
 
 from app.api import assets, campaigns, health, knowledge, mcp_console, projects, sources  # noqa: E402
-from app.core import state, storage, usage  # noqa: E402
+from app.core import auth, state, storage, usage  # noqa: E402
 from app.market.book_server import book_server  # noqa: E402
 from app.market.guard_server import guard_server  # noqa: E402
 from app.rag import ingestion, retrieval, summary  # noqa: E402
@@ -67,9 +67,10 @@ app.add_middleware(
 # Added last = outermost: every request (API and MCP) gets its id first, and the id is on every response.
 app.add_middleware(logs.RequestIdMiddleware)
 
-# inlcude the API routers
-for module in (health, projects, sources, knowledge, assets, campaigns, mcp_console):
-    app.include_router(module.router)
+# Include the API routers. /health is open; every other endpoint needs a signed-in user (auth.py → 401 otherwise).
+app.include_router(health.router)
+for module in (projects, sources, knowledge, assets, campaigns, mcp_console):
+    app.include_router(module.router, dependencies=[Depends(auth.current_user)])
 
 # Last, so the API routes match first. /guardrails before the catch-all "/", which only serves POST/GET /mcp.
 app.mount("/guardrails", guard_app)  # → /guardrails/mcp

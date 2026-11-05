@@ -15,6 +15,8 @@ Read once on import from environment variables (and server/.env, if present), fi
     DEBUG_MODE=true     → developer debug mode: every graph run is traced in LangSmith (needs LANGSMITH_API_KEY;
                           see tracing.py). Default off; keep it off for customers and in production
     LANGSMITH_PROJECT   → optional, the LangSmith project the traces go to (default "marketer-app")
+    SUPABASE_URL        → URL of the Supabase project whose users may sign in (auth.py checks their access tokens
+                          with its public signing keys); without it every API request except /health gets 503
 """
 
 import os
@@ -47,6 +49,8 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()
 
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").strip().lower() in ("true", "1", "on", "yes")
 LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT") or os.getenv("LANGCHAIN_PROJECT") or "marketer-app"
+
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
 
 
 def langsmith_key_set() -> bool:

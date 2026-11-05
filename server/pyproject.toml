@@ -14,6 +14,7 @@ dependencies = [
     "langgraph>=1.2.16",
     "langsmith>=0.14.11",
     "mcp>=2.3.0",
+    "pyjwt[crypto]>=2.15.1",
     "pymupdf>=2.0",
     "python-dotenv>=1.2.4",
     "tiktoken>=0.14.0",
