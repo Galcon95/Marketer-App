@@ -22,8 +22,9 @@ from app.core import logs
 
 logs.setup()  # first, so the imports below already log through it (JSON lines with the request id)
 
-from app.api import assets, campaigns, health, knowledge, mcp_console, projects, sources  # noqa: E402
-from app.core import auth, state, storage, usage  # noqa: E402
+from app.api import assets, campaigns, health, keys, knowledge, mcp_console, projects, sources  # noqa: E402
+from app.core import api_keys, auth, state, storage, usage  # noqa: E402
+from app.core.mcp_auth import RequireMcpAuth  # noqa: E402
 from app.market.book_server import book_server  # noqa: E402
 from app.market.guard_server import guard_server  # noqa: E402
 from app.rag import ingestion, retrieval, summary  # noqa: E402
@@ -31,6 +32,7 @@ from app.rag import ingestion, retrieval, summary  # noqa: E402
 # Restore uploaded sources (with their chunks) and generated assets from disk, so they survive
 # server restarts.
 state.projects.update(storage.load_projects())  # the clients and their owners
+api_keys.load()  # personal API keys for the MCP servers
 ingestion.restore_sources()
 state.assets.update(storage.load_assets())
 state.conversations.update(storage.load_conversations())
@@ -70,12 +72,13 @@ app.add_middleware(logs.RequestIdMiddleware)
 
 # Include the API routers. /health is open; every other endpoint needs a signed-in user (auth.py → 401 otherwise).
 app.include_router(health.router)
-for module in (projects, sources, knowledge, assets, campaigns, mcp_console):
+for module in (projects, sources, knowledge, assets, campaigns, mcp_console, keys):
     app.include_router(module.router, dependencies=[Depends(auth.current_user)])
 
 # Last, so the API routes match first. /guardrails before the catch-all "/", which only serves POST/GET /mcp.
-app.mount("/guardrails", guard_app)  # → /guardrails/mcp
-app.mount("/", mcp_app)
+# Both need a personal API key or a sign-in token (mcp_auth.py → 401 otherwise).
+app.mount("/guardrails", RequireMcpAuth(guard_app))  # → /guardrails/mcp
+app.mount("/", RequireMcpAuth(mcp_app))
 
 # run the server
 # cd server

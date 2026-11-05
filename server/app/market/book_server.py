@@ -13,27 +13,31 @@ It runs inside the API process, so it serves the same in-memory books, chunks an
 GUI, and newly processed books are available at once. The tools are thin wrappers around app/rag;
 their docstrings are the descriptions MCP clients (and the agents reading them) see, so they say
 exactly what each tool returns and when to use it. Expected failures (unknown book, no summary, no
-API key) raise ToolError, whose message reaches the client; anything else shows only a generic error. Tools work on the books of the default project.
+API key) raise ToolError, whose message reaches the client; anything else shows only a generic error.
 
-Local use only: there is no authentication, and the SDK's DNS-rebinding protection accepts only
-localhost hosts and origins. Model calls are logged in the usage panel like all others.
+Every request needs a personal API key or a sign-in token (core/mcp_auth.py checks it before the server sees the
+request). The tools work on the caller's own library (accounts.client_of), never another user's. The tools that
+call a model (search_book, ask_book) have the same limits as the app (deps.llm_limits: budgets, requests per
+minute), and their costs are logged for the caller. The SDK's DNS-rebinding protection accepts only localhost
+hosts and origins.
 """
 
 from pydantic import BaseModel, Field
 
-from mcp.server.mcpserver import MCPServer
+from fastapi import HTTPException
+from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from app.core import guard
+from app.api.deps import llm_limits
+from app.core import accounts, guard, mcp_auth
 from app.core import state as db
+from app.core.auth import User
 from app.core.llm import GenerationError
 from app.core.schemas import Source
 from app.rag import qa, vectorstore
 from app.rag.library import BookInfo, book_info, book_title, find_book, known_books, ready_books
 from app.rag.retrieval import retrieve_chunks, source_name
-
-PROJECT_ID = db.DEFAULT_PROJECT_ID  # the project whose books the tools serve
 
 book_server = MCPServer(
     name="mcp-book-knowledge",
@@ -99,14 +103,15 @@ class Answer(BaseModel):
 
 # ---------- Tools ----------
 @book_server.tool(annotations=READ_ONLY)
-def list_books() -> list[BookInfo]:
+def list_books(ctx: Context) -> list[BookInfo]:
     """List the author's processed books (ready to search): id, title, author, number of passages,
     whether a summary exists and its key themes. Call this first to get the book_id for the other tools."""
-    return [book_info(s) for s in ready_books(PROJECT_ID)]
+    _, project_id = _caller(ctx)
+    return [book_info(s) for s in ready_books(project_id)]
 
 
 @book_server.tool(annotations=READ_ONLY)
-def search_book(query: str, book_id: str | None = None, k: int = 5) -> list[Passage]:
+def search_book(ctx: Context, query: str, book_id: str | None = None, k: int = 5) -> list[Passage]:
     """Semantic search in the books: the k passages most similar to the query, best first, each with
     book, chapter, page and similarity score. Use it to find what a book says about a topic, quotes,
     or evidence for a claim. Searches all books unless book_id is given.
@@ -116,10 +121,12 @@ def search_book(query: str, book_id: str | None = None, k: int = 5) -> list[Pass
         book_id: Optional: only search this book, by its id from list_books, its title (or part of it) or its author.
         k: Number of passages to return, 1-20 (default 5).
     """
+    user, project_id = _caller(ctx)
     query = _checked(query, "search_query", check_injection=False)  # only embedded, never a prompt
-    source_ids = [_book(book_id).id] if book_id else None
+    source_ids = [_book(project_id, book_id).id] if book_id else None
+    _within_limits(user)
     try:
-        hits = retrieve_chunks(PROJECT_ID, query, max(1, min(k, 20)), source_ids, operation="mcp_search_book")
+        hits = retrieve_chunks(project_id, query, max(1, min(k, 20)), source_ids, operation="mcp_search_book")
     except vectorstore.VectorStoreError as e:
         raise ToolError(str(e)) from e
     return [
@@ -130,7 +137,7 @@ def search_book(query: str, book_id: str | None = None, k: int = 5) -> list[Pass
 
 
 @book_server.tool(annotations=READ_ONLY)
-def get_book_summary(book_id: str) -> BookSummaryResult:
+def get_book_summary(ctx: Context, book_id: str) -> BookSummaryResult:
     """The summary of a whole book: what it is about (two paragraphs), its key themes and a short summary
     of every chapter with page ranges. Use it to understand a book before searching it or writing about it.
     Fails if the book has no summary yet (list_books shows has_summary).
@@ -138,7 +145,8 @@ def get_book_summary(book_id: str) -> BookSummaryResult:
     Args:
         book_id: The book, by its id from list_books, its title (or part of it) or its author.
     """
-    source = _book(book_id)
+    _, project_id = _caller(ctx)
+    source = _book(project_id, book_id)
     summary = db.summaries.get(source.id)
     if summary is None:
         raise ToolError(f"'{_title(source)}' has no summary yet. Create one in the Knowledge Hub of the marketer app.")
@@ -152,7 +160,7 @@ def get_book_summary(book_id: str) -> BookSummaryResult:
 
 @book_server.tool(annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=False,
                                               open_world_hint=False))
-def ask_book(question: str, book_id: str | None = None) -> Answer:
+def ask_book(ctx: Context, question: str, book_id: str | None = None) -> Answer:
     """Answer a question from the books, with citations: retrieves the most relevant passages and writes
     an answer using only them, marking sources as [n]. Says so when the books do not answer it. Uses a
     language model call (costs tokens); prefer search_book when you only need passages.
@@ -161,10 +169,12 @@ def ask_book(question: str, book_id: str | None = None) -> Answer:
         question: The question, e.g. "What does Howard propose against overcrowded cities?".
         book_id: Optional: only use this book, by its id from list_books, its title (or part of it) or its author.
     """
+    user, project_id = _caller(ctx)
     question = _checked(question, "question", check_injection=True)
-    source_ids = [_book(book_id).id] if book_id else None
+    source_ids = [_book(project_id, book_id).id] if book_id else None
+    _within_limits(user)
     try:
-        result = qa.answer_question(PROJECT_ID, question, 6, source_ids, operation="mcp_ask_book")
+        result = qa.answer_question(project_id, question, 6, source_ids, operation="mcp_ask_book")
     except GenerationError as e:
         raise ToolError(str(e)) from e
     return Answer(answer=result.answer, citations=[
@@ -175,12 +185,38 @@ def ask_book(question: str, book_id: str | None = None) -> Answer:
 
 
 # ---------- Helpers ----------
-def _book(book_id: str) -> Source:
-    """A processed book by its id, (part of) its title or its author (library.find_book); ToolError (its message
-    reaches the client) listing the known books if nothing or several books match."""
-    source = find_book(PROJECT_ID, book_id)
+def _caller(ctx: Context) -> tuple[User, str]:
+    """The user whose key or sign-in token the request carries (mcp_auth.py) and the id of their own project
+    (created on first use, like GET /me in the app).
+
+    Raises:
+        ToolError: Without a checked user (cannot happen behind RequireMcpAuth), or if the project cannot be saved.
+    """
+    request = ctx.request_context.request
+    user = mcp_auth.user_of(request.scope) if request is not None else None
+    if user is None:
+        raise ToolError("Not signed in: send a personal API key.")
+    try:
+        return user, accounts.client_of(user).id
+    except OSError as e:
+        raise ToolError("Your library could not be opened, please try again.") from e
+
+
+def _within_limits(user: User) -> None:
+    """The app's limits for model calls (limits.toml via deps.llm_limits); ToolError with its message if one is
+    reached (daily or monthly budget, the app's budget, requests per minute)."""
+    try:
+        llm_limits(user)
+    except HTTPException as e:
+        raise ToolError(str(e.detail)) from e
+
+
+def _book(project_id: str, book_id: str) -> Source:
+    """A processed book of the project by its id, (part of) its title or its author (library.find_book); ToolError
+    (its message reaches the client) listing the project's books if nothing or several books match."""
+    source = find_book(project_id, book_id)
     if source is None:
-        raise ToolError(f"No single book matches '{book_id}'. Known books: {known_books(PROJECT_ID)}.")
+        raise ToolError(f"No single book matches '{book_id}'. Known books: {known_books(project_id)}.")
     return source
 
 

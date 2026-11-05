@@ -31,6 +31,7 @@ class PerUser:
     cost_per_month_usd: float = 10.00
     max_books: int = 20
     max_upload_mb: int = 100
+    max_api_keys: int = 10
 
 
 @dataclass(frozen=True)

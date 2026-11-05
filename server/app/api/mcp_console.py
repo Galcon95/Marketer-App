@@ -18,7 +18,8 @@ router = APIRouter(dependencies=[Depends(admin_only)])
 async def list_mcp_servers(request: Request):
     """All MCP servers the GUI shows, each with its live status and tools (connected in parallel)."""
     base_url = _base_url(request)
-    return await asyncio.gather(*(client.server_status(base_url, config) for config in client.SERVERS))
+    auth = _authorization(request)
+    return await asyncio.gather(*(client.server_status(base_url, config, auth) for config in client.SERVERS))
 
 
 @router.post("/mcp-servers/{name}/call", response_model=McpCallResult, dependencies=[Depends(llm_limits)])
@@ -36,7 +37,7 @@ async def call_mcp_tool(name: str, body: McpCallRequest, request: Request):
     except client.UnknownServerError as e:
         raise HTTPException(404, f"Unknown MCP server '{name}'") from e
     try:
-        return await client.call_tool(_base_url(request), config, body.tool, body.arguments)
+        return await client.call_tool(_base_url(request), config, body.tool, body.arguments, _authorization(request))
     except ValueError as e:
         raise HTTPException(413, str(e)) from e
 
@@ -45,6 +46,11 @@ async def call_mcp_tool(name: str, body: McpCallRequest, request: Request):
 def list_mcp_calls():
     """The most recent tool calls made from the console, newest first (kept in memory only)."""
     return list(client.CALL_LOG)
+
+
+def _authorization(request: Request) -> str:
+    """The signed-in user's Authorization header, forwarded to the MCP servers (they check it like an API key)."""
+    return request.headers.get("Authorization", "")
 
 
 def _base_url(request: Request) -> str:

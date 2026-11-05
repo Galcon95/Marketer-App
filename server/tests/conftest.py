@@ -1,14 +1,14 @@
 """Shared test setup: a signed-in test user who owns the default project, without Supabase.
 
-Every test gets a fresh project list (the default project, owned by OWNER) and a temporary projects.json, so the
-real one is never written. Tests that build an app with API routers call sign_in(app) to be OWNER (or another user).
+Every test gets a fresh project list (the default project, owned by OWNER) and a temporary projects.json, and no
+API keys with a temporary api_keys.json, so the real files are never written. Tests that build an app with API routers call sign_in(app) to be OWNER (or another user).
 """
 
 import pytest
 from fastapi import FastAPI
 
 from app.campaign import kit
-from app.core import auth, config, llm, storage, usage
+from app.core import api_keys, auth, config, llm, storage, usage
 from app.core import state as db
 from app.core.auth import User
 from app.core.schemas import Project, UsageTotals
@@ -31,6 +31,14 @@ def projects(tmp_path, monkeypatch):
                       owner_id=OWNER.id)
     monkeypatch.setattr(db, "projects", {default.id: default})
     return db.projects
+
+
+@pytest.fixture(autouse=True)
+def keys(tmp_path, monkeypatch):
+    """No API keys; api_keys.json goes to a temporary folder, so the real one is never read or written."""
+    monkeypatch.setattr(api_keys, "KEYS_FILE", tmp_path / "api_keys.json")
+    monkeypatch.setattr(api_keys, "_keys", {})
+    return api_keys._keys
 
 
 @pytest.fixture

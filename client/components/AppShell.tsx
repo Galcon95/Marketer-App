@@ -2,13 +2,13 @@
 
 /**
  * The app frame: sidebar (navigation, current client, system status from GET /health), top bar (title,
- * usage and costs button, export) and the four phase tabs, which render the phase views. Holds the state the
+ * usage and costs button, MCP keys, export) and the four phase tabs, which render the phase views. Holds the state the
  * views share (refresh counter, the book being worked on) and the Agent Workspace (Phase 4) placeholder.
  */
 
 import { useCallback, useState, useSyncExternalStore, type JSX } from "react";
 import {
-  Bot, Brain, Cpu, Database, FileText, LogOut, Menu, Moon, Network, Server, Settings,
+  Bot, Brain, Cpu, Database, FileText, KeyRound, LogOut, Menu, Moon, Network, Server, Settings,
   Sparkles, Sun, SunMoon, Target, Terminal, Users, UserCheck,
 } from "lucide-react";
 import { api, API_URL } from "@/lib/api";
@@ -17,6 +17,7 @@ import { useApi } from "@/lib/useApi";
 import ContentStudio from "./phases/ContentStudio";
 import KnowledgeHub from "./phases/KnowledgeHub";
 import MarketIntelligence from "./phases/MarketIntelligence";
+import KeysDrawer from "./KeysPanel";
 import UsageDrawer, { formatTokens, formatUsd } from "./UsagePanel";
 import { Badge, Button, Card, ErrorNote, Placeholder, SectionHeading, Sidebar, StatusRow, Tabs, type NavGroup, type TabItem } from "./ui";
 
@@ -138,6 +139,8 @@ export default function AppShell() {
   const usage = useApi(`usage:${refresh}`, () => api.usage(1));
   const [usageOpen, setUsageOpen] = useState(0); // > 0 while the usage panel is open; increases per opening
   const closeUsage = useCallback(() => setUsageOpen(0), []);
+  const [keysOpen, setKeysOpen] = useState(false); // the MCP keys panel
+  const closeKeys = useCallback(() => setKeysOpen(false), []);
   const totals = usage.data?.totals;
   const p = project.data;
   const View = VIEWS[tab];
@@ -209,6 +212,8 @@ export default function AppShell() {
             title={totals ? `Your model calls so far: input ${totals.input_tokens.toLocaleString()} tokens (${formatUsd(totals.input_cost)}), output ${totals.output_tokens.toLocaleString()} tokens (${formatUsd(totals.output_cost)}). Click for details.` : "LLM usage and costs"}>
             <span className="bc-mono">{totals ? `${formatUsd(totals.cost)} · ${formatTokens(totals.input_tokens + totals.output_tokens)} tok` : "usage"}</span>
           </Button>
+          <Button variant="secondary" size="sm" icon={KeyRound} onClick={() => setKeysOpen(true)}
+            title="Personal API keys for the MCP servers (Claude Desktop and other tools)">Keys</Button>
           <Button variant="secondary" size="sm" icon={FileText} disabled>Export</Button>
           <Button variant="ghost" size="sm" icon={LogOut} onClick={signOut} title={me.data ? `Signed in as ${me.data.email}` : undefined}>
             Log out
@@ -224,6 +229,7 @@ export default function AppShell() {
         </div>
       </main>
       {usageOpen > 0 && <UsageDrawer openCount={usageOpen} onClose={closeUsage} admin={me.data?.admin} />}
+      {keysOpen && <KeysDrawer onClose={closeKeys} />}
       <Button variant="secondary" size="sm" icon={theme === "dark" ? Sun : theme === "light" ? Moon : SunMoon}
         className="theme-toggle" onClick={toggleTheme} aria-label="Switch between light and dark theme">
         {theme === "dark" ? "Light mode" : theme === "light" ? "Dark mode" : "Theme"}

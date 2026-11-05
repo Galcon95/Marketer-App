@@ -6,9 +6,9 @@ Class docstrings also appear as schema descriptions in the generated OpenAPI doc
 """
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 # Kind of content a source holds; decides how it will be ingested (parsed vs. transcribed).
 SourceKind = Literal["document", "video", "audio", "text"]
@@ -68,6 +68,41 @@ class Me(BaseModel):
     email: str
     admin: bool  # may see the app-wide usage and costs and use the MCP console (DEFAULT_CLIENT_OWNER)
     project: Project  # the user's own project, with counts
+
+
+class ApiKey(BaseModel):
+    """A personal API key for the MCP servers (api_keys.py), as saved: never the key itself, only its hash."""
+
+    id: str  # "key_..."; used to revoke it
+    user_id: str  # Supabase user id of the owner
+    email: str  # the owner's email (the MCP servers act as this user, like a signed-in request)
+    name: str  # what it is for, e.g. "Claude Desktop"
+    shown: str  # the key's first characters, e.g. "mk_AbC123x7", so the user can tell keys apart
+    key_hash: str  # SHA-256 of the key (hex)
+    created_at: datetime
+    last_used_at: datetime | None = None  # updated at most every few minutes
+
+
+class ApiKeyInfo(BaseModel):
+    """One of the user's API keys as the app shows it (GET /api-keys): without the key and without its hash."""
+
+    id: str
+    name: str
+    shown: str  # the key's first characters, e.g. "mk_AbC123x7"
+    created_at: datetime
+    last_used_at: datetime | None = None
+
+
+class ApiKeyCreate(BaseModel):
+    """Request body of POST /api-keys."""
+
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]  # e.g. "Claude Desktop"
+
+
+class ApiKeyCreated(ApiKeyInfo):
+    """Response of POST /api-keys: the new key itself, shown this one time only."""
+
+    key: str
 
 
 # ---------- Sources ----------

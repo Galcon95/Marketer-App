@@ -21,3 +21,6 @@ assets/usage/
 
 # Projects (clients) and their owners: user ids (user data)
 assets/projects.json
+
+# Personal API keys for the MCP servers (only hashes, but user data)
+assets/api_keys.json

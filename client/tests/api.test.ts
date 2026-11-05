@@ -139,3 +139,22 @@ describe("the user's own project", () => {
     expect(urls).toEqual([`${API_URL}/me`, `${API_URL}/projects/prj_ada/sources`, `${API_URL}/projects/prj_ada/assets`]);
   });
 });
+
+describe("API keys", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("creates a key with its name, lists and revokes keys", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) =>
+      init?.method === "DELETE" ? new Response(null, { status: 204 })
+        : new Response(JSON.stringify(init?.method === "POST" ? { id: "key_1", key: "mk_x" } : []), { status: 200 })));
+    expect((await api.createApiKey("Claude Desktop")).key).toBe("mk_x");
+    expect(await api.listApiKeys()).toEqual([]);
+    expect(await api.revokeApiKey("key_1")).toBeUndefined();
+    const calls = vi.mocked(fetch).mock.calls.map(([url, init]) => [init?.method ?? "GET", url, init?.body]);
+    expect(calls).toEqual([
+      ["POST", `${API_URL}/api-keys`, JSON.stringify({ name: "Claude Desktop" })],
+      ["GET", `${API_URL}/api-keys`, undefined],
+      ["DELETE", `${API_URL}/api-keys/key_1`, undefined],
+    ]);
+  });
+});

@@ -48,6 +48,17 @@ export interface Project {
 }
 
 /** Response of GET /me: the signed-in user, their own project (client) and whether they are the app's admin. */
+/** One of the user's personal API keys for the MCP servers (GET /api-keys): never the key itself. */
+export interface ApiKeyInfo {
+  id: string;
+  name: string; // what it is for, e.g. "Claude Desktop"
+  shown: string; // the key's first characters, e.g. "mk_AbC123x7"
+  created_at: string;
+  last_used_at?: string | null; // updated at most every few minutes; null = never used
+}
+/** Response of POST /api-keys: the new key itself, shown this one time only. */
+export interface ApiKeyCreated extends ApiKeyInfo { key: string }
+
 export interface Me {
   user_id: string;
   email: string;
@@ -596,6 +607,13 @@ export const api = {
     request<Asset>(`/assets/${assetId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }),
   /** DELETE /assets/{assetId}: delete a generated asset. */
   deleteAsset: (assetId: string) => request<void>(`/assets/${assetId}`, { method: "DELETE" }),
+
+  /** GET /api-keys: the user's personal API keys for the MCP servers (without the keys themselves). */
+  listApiKeys: () => request<ApiKeyInfo[]>("/api-keys"),
+  /** POST /api-keys: create a key; the response holds the key itself, which cannot be shown again. */
+  createApiKey: (name: string) => request<ApiKeyCreated>("/api-keys", postJson({ name })),
+  /** DELETE /api-keys/{id}: revoke a key; it stops working at once. */
+  revokeApiKey: (keyId: string) => request<void>(`/api-keys/${keyId}`, { method: "DELETE" }),
 
   /** GET /mcp-servers: our MCP servers with their live status and tools. */
   listMcpServers: () => request<McpServer[]>("/mcp-servers"),

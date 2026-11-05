@@ -19,11 +19,15 @@ import json
 import logging
 import time
 from collections import deque
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Literal
 
 import anyio
 from mcp import Client
+from mcp.client.streamable_http import streamable_http_client
+from mcp.shared._httpx_utils import create_mcp_http_client
 
 from app.core import state as db
 from app.core.schemas import McpCallResult, McpServerStatus, McpTool
@@ -66,18 +70,27 @@ def server_config(name: str) -> ServerConfig:
     raise UnknownServerError(name)
 
 
-async def server_status(base_url: str, config: ServerConfig) -> McpServerStatus:
+@asynccontextmanager
+async def _connect(url: str, authorization: str) -> AsyncIterator[Client]:
+    """An MCP client session to `url` that sends this Authorization header with every request."""
+    async with create_mcp_http_client(headers={"Authorization": authorization}) as http:
+        async with Client(streamable_http_client(url, http_client=http)) as client:
+            yield client
+
+
+async def server_status(base_url: str, config: ServerConfig, authorization: str) -> McpServerStatus:
     """Connect to a server and list its tools; 'offline' with the error if that fails.
 
     Args:
         base_url: Where this API is reachable, e.g. "http://127.0.0.1:8000".
         config: The server to check.
+        authorization: The signed-in user's Authorization header (the servers need a key or access token).
     """
     url = base_url + config.path
     started = time.perf_counter()
     try:
         with anyio.fail_after(LIST_TIMEOUT):
-            async with Client(url) as client:
+            async with _connect(url, authorization) as client:
                 listing = await client.list_tools()
                 info = client.server_info
                 instructions = client.instructions
@@ -97,9 +110,13 @@ async def server_status(base_url: str, config: ServerConfig) -> McpServerStatus:
     )
 
 
-async def call_tool(base_url: str, config: ServerConfig, tool: str, arguments: dict[str, Any]) -> McpCallResult:
+async def call_tool(base_url: str, config: ServerConfig, tool: str, arguments: dict[str, Any],
+                    authorization: str) -> McpCallResult:
     """Call one tool of a server and log the call. Failures (tool errors, timeouts, connection problems)
     are returned as a result with ok=False, not raised, so the console can show them.
+
+    Args:
+        authorization: The signed-in user's Authorization header (the servers need a key or access token).
 
     Raises:
         ValueError: If the arguments are larger than MAX_ARGUMENTS_CHARS.
@@ -110,7 +127,7 @@ async def call_tool(base_url: str, config: ServerConfig, tool: str, arguments: d
     ok, structured, text = False, None, ""
     try:
         with anyio.fail_after(CALL_TIMEOUT):
-            async with Client(base_url + config.path) as client:
+            async with _connect(base_url + config.path, authorization) as client:
                 result = await client.call_tool(tool, arguments)
         ok = not result.is_error
         structured = result.structured_content
