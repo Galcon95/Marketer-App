@@ -1,6 +1,6 @@
 """Marketer App API: entry point. Run with `uv run fastapi dev server.py` (from server/).
 
-Creates the FastAPI app, restores the saved data and plugs in the routers of app/api/. The code
+Creates the FastAPI app, plugs in the routers of app/api/ and, on startup, restores the saved data. The code
 lives in the app package (see README.md, "Project layout"):
 
     app/core      configuration, chat model, schemas, in-memory state, disk storage, usage log, writing style
@@ -29,19 +29,24 @@ from app.market.book_server import book_server  # noqa: E402
 from app.market.guard_server import guard_server  # noqa: E402
 from app.rag import ingestion, retrieval, summary  # noqa: E402
 
-# Restore uploaded sources (with their chunks) and generated assets from disk, so they survive
-# server restarts.
-state.projects.update(storage.load_projects())  # the clients and their owners
-api_keys.load()  # personal API keys for the MCP servers
-ingestion.restore_sources()
-state.assets.update(storage.load_assets())
-state.conversations.update(storage.load_conversations())
-usage.load()  # totals of all model calls so far (usage.jsonl)
-if old := summary.outdated_summaries():
-    logging.getLogger("app.startup").warning(
-        "%d book summaries were written with older prompts than %s; regenerate them in the Knowledge Hub: %s",
-        len(old), summary.PROMPT_VERSION, "; ".join(f"{retrieval.source_name(s.source_id) or s.source_id} ({s.prompt_version or 'unversioned'})"
-                                                  for s in old))
+
+def restore_data() -> None:
+    """Restore the saved data from disk, so it survives server restarts: projects and their owners, API keys,
+    uploaded sources (with their chunks), generated assets, chats and the usage log. Runs on startup (lifespan),
+    not on import, so tests can import this module to check its routes without reading the real data."""
+    state.projects.update(storage.load_projects())  # the clients and their owners
+    api_keys.load()  # personal API keys for the MCP servers
+    ingestion.restore_sources()
+    state.assets.update(storage.load_assets())
+    state.conversations.update(storage.load_conversations())
+    usage.load()  # totals of all model calls so far (usage.jsonl)
+    if old := summary.outdated_summaries():
+        logging.getLogger("app.startup").warning(
+            "%d book summaries were written with older prompts than %s; regenerate them in the Knowledge Hub: %s",
+            len(old), summary.PROMPT_VERSION,
+            "; ".join(f"{retrieval.source_name(s.source_id) or s.source_id} ({s.prompt_version or 'unversioned'})"
+                      for s in old))
+
 
 # MCP servers over Streamable HTTP; stateless + JSON responses: each request stands alone, no SSE streams.
 mcp_app = book_server.streamable_http_app(streamable_http_path="/mcp", stateless_http=True, json_response=True)
@@ -50,7 +55,9 @@ guard_app = guard_server.streamable_http_app(streamable_http_path="/mcp", statel
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    """Run the MCP session managers while the API runs (a mounted app's own lifespan is not started)."""
+    """Restore the saved data, then run the MCP session managers while the API runs (a mounted app's own lifespan
+    is not started)."""
+    restore_data()
     async with AsyncExitStack() as stack:
         for server in (book_server, guard_server):
             await stack.enter_async_context(server.session_manager.run())
