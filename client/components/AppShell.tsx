@@ -134,8 +134,8 @@ export default function AppShell() {
   const theme = useTheme();
   // The signed-in user, their project and whether they are the admin (proxy.ts only lets signed-in users here).
   const me = useApi("me", api.me);
-  // Usage totals for the top bar, the admin only (app-wide; reloaded on every change); the panel loads its own data.
-  const usage = useApi(me.data?.admin ? `usage:${refresh}` : null, () => api.usage(1));
+  // The user's usage totals for the top bar (reloaded on every change); the panel loads its own data when opened.
+  const usage = useApi(`usage:${refresh}`, () => api.usage(1));
   const [usageOpen, setUsageOpen] = useState(0); // > 0 while the usage panel is open; increases per opening
   const closeUsage = useCallback(() => setUsageOpen(0), []);
   const totals = usage.data?.totals;
@@ -205,12 +205,10 @@ export default function AppShell() {
             <div className="bc-crumb">{p?.id ?? "…"} / {TITLES[tab][1]}</div>
             <h1>{TITLES[tab][0]}</h1>
           </div>
-          {me.data?.admin && (
-            <Button variant="success" size="sm" icon={Cpu} onClick={() => setUsageOpen((n) => n + 1)}
-              title={totals ? `All model calls so far: input ${totals.input_tokens.toLocaleString()} tokens (${formatUsd(totals.input_cost)}), output ${totals.output_tokens.toLocaleString()} tokens (${formatUsd(totals.output_cost)}). Click for details.` : "LLM usage and costs"}>
-              <span className="bc-mono">{totals ? `${formatUsd(totals.cost)} · ${formatTokens(totals.input_tokens + totals.output_tokens)} tok` : "usage"}</span>
-            </Button>
-          )}
+          <Button variant="success" size="sm" icon={Cpu} onClick={() => setUsageOpen((n) => n + 1)}
+            title={totals ? `Your model calls so far: input ${totals.input_tokens.toLocaleString()} tokens (${formatUsd(totals.input_cost)}), output ${totals.output_tokens.toLocaleString()} tokens (${formatUsd(totals.output_cost)}). Click for details.` : "LLM usage and costs"}>
+            <span className="bc-mono">{totals ? `${formatUsd(totals.cost)} · ${formatTokens(totals.input_tokens + totals.output_tokens)} tok` : "usage"}</span>
+          </Button>
           <Button variant="secondary" size="sm" icon={FileText} disabled>Export</Button>
           <Button variant="ghost" size="sm" icon={LogOut} onClick={signOut} title={me.data ? `Signed in as ${me.data.email}` : undefined}>
             Log out
@@ -225,7 +223,7 @@ export default function AppShell() {
           <View refresh={refresh} onChange={onChange} bookId={bookId} onSelectBook={setBookId} />
         </div>
       </main>
-      {usageOpen > 0 && <UsageDrawer openCount={usageOpen} onClose={closeUsage} />}
+      {usageOpen > 0 && <UsageDrawer openCount={usageOpen} onClose={closeUsage} admin={me.data?.admin} />}
       <Button variant="secondary" size="sm" icon={theme === "dark" ? Sun : theme === "light" ? Moon : SunMoon}
         className="theme-toggle" onClick={toggleTheme} aria-label="Switch between light and dark theme">
         {theme === "dark" ? "Light mode" : theme === "light" ? "Dark mode" : "Theme"}

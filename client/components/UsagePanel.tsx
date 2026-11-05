@@ -1,14 +1,15 @@
 "use client";
 
 /**
- * The "LLM usage & costs" drawer opened from the top bar: totals and the history of model calls
+ * The "LLM usage & costs" drawer opened from the top bar: the user's budget, totals and the history of model calls
  * (GET /usage), plus the token and USD formatters the top bar uses too.
  */
 
+import { useState } from "react";
 import { Cpu } from "lucide-react";
-import { api, type UsageTotals } from "@/lib/api";
+import { api, type UsageBudget, type UsageTotals } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
-import { Badge, Drawer, ErrorNote, Placeholder } from "./ui";
+import { Badge, Button, Drawer, ErrorNote, Placeholder, ProgressBar } from "./ui";
 
 /**
  * Compact token count, e.g. 950 → "950", 12_340 → "12.3k", 2_500_000 → "2.5M".
@@ -32,20 +33,29 @@ export function formatUsd(amount: number) {
 }
 
 /**
- * Side panel with the usage log of all model calls (GET /usage): totals for input ("upload"),
- * output ("download") and all costs, totals per operation, and the latest calls. Loads fresh data
- * each time it is opened.
+ * Side panel with the usage log of the user's model calls (GET /usage): their budget for today and this month,
+ * totals for input ("upload"), output ("download") and all costs, totals per operation, and the latest calls.
+ * The admin can switch to all users' calls. Loads fresh data each time it is opened or switched.
  * @param openCount Increases each time the panel is opened, so the data is reloaded.
  * @param onClose Called to close the panel.
+ * @param admin Show the switch between "Mine" and "Whole app".
  */
-export default function UsageDrawer({ openCount, onClose }: { openCount: number; onClose: () => void }) {
-  const usage = useApi(`usage-panel:${openCount}`, () => api.usage(50));
+export default function UsageDrawer({ openCount, onClose, admin }: { openCount: number; onClose: () => void; admin?: boolean }) {
+  const [scope, setScope] = useState<"me" | "app">("me");
+  const usage = useApi(`usage-panel:${openCount}:${scope}`, () => api.usage(50, scope));
   const report = usage.data;
   return (
     <Drawer icon={Cpu} title="LLM usage & costs" label="LLM usage and costs" onClose={onClose}
       meta={report ? <Badge mono>{report.totals.calls} calls</Badge> : undefined}>
+      {admin && (
+        <div style={{ display: "flex", gap: "var(--space-2)" }}>
+          <Button size="sm" variant={scope === "me" ? "primary" : "secondary"} onClick={() => setScope("me")}>Mine</Button>
+          <Button size="sm" variant={scope === "app" ? "primary" : "secondary"} onClick={() => setScope("app")}>Whole app</Button>
+        </div>
+      )}
+      {report && <Budget budget={report.budget} />}
       <span className="bc-hint">
-        Every model call is logged in server/assets/usage/usage.jsonl. Chat costs are the exact amounts
+        {scope === "app" ? "All users' model calls." : "Your own model calls."} Chat costs are the exact amounts
         reported by OpenRouter; embedding costs are estimated from the price list (input tokens only).
       </span>
       {usage.error ? (
@@ -86,6 +96,29 @@ export default function UsageDrawer({ openCount, onClose }: { openCount: number;
         </>
       )}
     </Drawer>
+  );
+}
+
+/**
+ * The user's cost budget: spent today and this month against the limits (server/limits.toml). When a budget is used
+ * up, the server answers model requests with "budget used up" until it renews.
+ * @param budget Spending and limits in USD.
+ */
+function Budget({ budget }: { budget: UsageBudget }) {
+  const rows: [string, number, number, string][] = [
+    ["Today", budget.spent_today, budget.limit_today, "Renews at midnight UTC"],
+    ["This month", budget.spent_month, budget.limit_month, "Renews on the 1st (UTC)"],
+  ];
+  return (
+    <>
+      <div className="bc-label">Your budget</div>
+      {rows.map(([label, spent, limit, renews]) => (
+        <div key={label} title={renews} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span className="bc-hint">{label}: {formatUsd(spent)} of {formatUsd(limit)}</span>
+          <ProgressBar value={Math.min(100, (spent / limit) * 100)} />
+        </div>
+      ))}
+    </>
   );
 }
 

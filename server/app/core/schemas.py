@@ -383,6 +383,7 @@ class UsageRecord(BaseModel):
     project_id: str | None = None
     source_id: str | None = None
     request_id: str | None = None  # the HTTP request that caused the call (logs.py); None for older records
+    user_id: str | None = None  # the signed-in user who caused it; None for older records and outside sign-in (MCP)
 
 
 class UsageTotals(BaseModel):
@@ -396,12 +397,22 @@ class UsageTotals(BaseModel):
     cost: float = 0.0  # USD, all costs
 
 
+class UsageBudget(BaseModel):
+    """The signed-in user's cost budget (limits.toml) and how much of it is used, in USD (UTC day and month)."""
+
+    spent_today: float
+    limit_today: float
+    spent_month: float
+    limit_month: float
+
+
 class UsageReport(BaseModel):
-    """Response of GET /usage: totals so far, totals per operation, and the latest calls."""
+    """Response of GET /usage: totals so far, totals per operation, the latest calls and the user's budget."""
 
     totals: UsageTotals
     by_operation: dict[str, UsageTotals]  # sorted by cost, highest first
     recent: list[UsageRecord]  # newest first
+    budget: UsageBudget | None = None  # set by GET /usage
 
 
 # ---------- Book summaries ----------

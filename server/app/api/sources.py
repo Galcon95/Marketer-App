@@ -3,9 +3,10 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
-from app.api.deps import owned_project, owned_source
+from app.api.deps import llm_limits, owned_project, owned_source
 from app.core import state as db
 from app.core import storage
+from app.core.limits import LIMITS
 from app.core.schemas import Asset, ChunkPage, Conversation, Source, SourceDeletion
 from app.rag import ingestion
 from app.rag.retrieval import source_name
@@ -15,7 +16,7 @@ router = APIRouter()
 
 # ---------- Sources (content upload & ingestion) ----------
 @router.post("/projects/{project_id}/sources", response_model=Source, status_code=201,
-             dependencies=[Depends(owned_project)])
+             dependencies=[Depends(owned_project), Depends(llm_limits)])
 def upload_source(project_id: str, background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     """Store an uploaded file on disk and start processing it into chunks in the background.
 
@@ -35,9 +36,13 @@ def upload_source(project_id: str, background_tasks: BackgroundTasks, file: Uplo
 
     Raises:
         HTTPException: 404 for an unknown project (or another user's); 400/413/415 when storage rejects the file;
-            409 when the same file is already in the project; 500 when the record cannot be saved (the stored
-            file is removed again).
+            409 when the same file is already in the project or it has max_books books (limits.toml); 429 when a
+            limit of llm_limits is reached (processing embeds the book); 500 when the record cannot be saved (the
+            stored file is removed again).
     """
+    if sum(1 for s in db.sources.values() if s.project_id == project_id) >= LIMITS.per_user.max_books:
+        raise HTTPException(409, f"Your library is full: at most {LIMITS.per_user.max_books} books. "
+                                 "Delete a book to add another one.")
     source_id = db.new_id("src")
     filename = storage.safe_filename(file.filename or "")
     try:
@@ -73,7 +78,8 @@ def upload_source(project_id: str, background_tasks: BackgroundTasks, file: Uplo
     return source
 
 
-@router.post("/sources/{source_id}/ingest", response_model=Source, status_code=202)
+@router.post("/sources/{source_id}/ingest", response_model=Source, status_code=202,
+             dependencies=[Depends(owned_source), Depends(llm_limits)])
 def ingest_source(source_id: str, background_tasks: BackgroundTasks, source: Source = Depends(owned_source)):
     """(Re)build the chunks of an uploaded source in the background: Process / Re-index / Retry.
 

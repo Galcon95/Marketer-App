@@ -6,7 +6,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import (
-    check_sources, checked_text, llm_rate_limit, owned_conversation, owned_project, owned_source, retrieve,
+    check_sources, checked_text, llm_limits, owned_conversation, owned_project, owned_source, retrieve,
 )
 from app.core import storage
 from app.core import state as db
@@ -44,7 +44,7 @@ def get_summary(source_id: str):
 
 
 @router.post("/sources/{source_id}/summary", response_model=BookSummary, status_code=201,
-             dependencies=[Depends(llm_rate_limit)])
+             dependencies=[Depends(owned_source), Depends(llm_limits)])  # ownership first: 404 before 429
 def create_summary(source: Source = Depends(owned_source)):
     """Create (or recreate) the summary of a processed book: chapter summaries + book overview.
 
@@ -73,7 +73,7 @@ def create_summary(source: Source = Depends(owned_source)):
 
 
 @router.post("/projects/{project_id}/ask", response_model=AskResponse,
-             dependencies=[Depends(owned_project), Depends(llm_rate_limit)])
+             dependencies=[Depends(owned_project), Depends(llm_limits)])
 def ask(project_id: str, body: AskRequest):
     """Answer a question from the project's books, NotebookLM-style, as one turn of a conversation.
 
@@ -151,7 +151,8 @@ def delete_conversation(conversation: Conversation = Depends(owned_conversation)
     storage.delete_conversation(conversation)
 
 
-@router.post("/projects/{project_id}/search", response_model=SearchResponse, dependencies=[Depends(owned_project)])
+@router.post("/projects/{project_id}/search", response_model=SearchResponse,
+             dependencies=[Depends(owned_project), Depends(llm_limits)])
 def search(project_id: str, body: SearchRequest):
     """Find the passages of a project's sources that best match a query (semantic vector search).
 
@@ -176,7 +177,8 @@ def search(project_id: str, body: SearchRequest):
 
 
 # ---------- Verification ----------
-@router.post("/projects/{project_id}/verify", response_model=VerifyResponse, dependencies=[Depends(owned_project)])
+@router.post("/projects/{project_id}/verify", response_model=VerifyResponse,
+             dependencies=[Depends(owned_project), Depends(llm_limits)])
 def verify(project_id: str, body: VerifyRequest):
     """Check each claim (sentence) of a text against the project's sources.
 

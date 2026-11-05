@@ -1,17 +1,19 @@
 """Shared helpers of the API routers: the ownership checks (authorization: a user only reaches their own project
 and what belongs to it), vector search with HTTP errors, input checks (guardrails) and the rate limit of the
-endpoints that call the language model."""
+endpoints that call a model, with the cost budgets (limits.toml)."""
 
 import logging
 import threading
 import time
 from collections import defaultdict, deque
+from datetime import datetime, timedelta, timezone
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, HTTPException
 
-from app.core import accounts, guard
+from app.core import accounts, guard, usage
 from app.core import state as db
 from app.core.auth import User, current_user
+from app.core.limits import LIMITS
 from app.core.llm import model_failure
 from app.core.schemas import Asset, Chunk, Conversation, Project, Source
 from app.rag import vectorstore
@@ -19,31 +21,53 @@ from app.rag.retrieval import retrieve_chunks
 
 logger = logging.getLogger(__name__)
 
-# Rate limit of the endpoints that call the language model (per client address, sliding window).
-LLM_RATE_LIMIT = 20  # requests ...
-LLM_RATE_WINDOW = 60  # ... per this many seconds
-_llm_calls: dict[str, deque[float]] = defaultdict(deque)  # client address → times of its recent requests
+# Requests per minute of the endpoints that call a model, per user (sliding window; limits.toml).
+LLM_RATE_WINDOW = 60  # seconds
+_llm_calls: dict[str, deque[float]] = defaultdict(deque)  # user id → times of their recent requests
 _llm_calls_lock = threading.Lock()  # sync endpoints run in a thread pool
 
 
-def llm_rate_limit(request: Request) -> None:
-    """FastAPI dependency for endpoints that call the language model: at most LLM_RATE_LIMIT requests per
-    LLM_RATE_WINDOW seconds per client address; protects against runaway costs (a script or a stuck button).
+def llm_limits(user: User = Depends(current_user)) -> None:
+    """FastAPI dependency for endpoints that call a model (chat or embeddings), protecting against runaway costs (a
+    script, a stuck button, a stolen account), with the limits of limits.toml. In this order:
+      - the user's cost budget for today and this month (UTC) and the app's budget for today;
+      - at most model_requests_per_minute requests per user (blocked requests count too).
+    A call's cost is known only after it, so one request can go a little over a budget; the next one is blocked.
 
     Raises:
-        HTTPException: 429 with a Retry-After header when the limit is reached.
+        HTTPException: 429 with a Retry-After header (seconds) when a limit is reached.
     """
-    client = request.client.host if request.client else "unknown"
-    now = time.monotonic()
+    limits = LIMITS.per_user
+    now = datetime.now(timezone.utc)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    month = today.replace(day=1)
+    tomorrow, next_month = today + timedelta(days=1), (month + timedelta(days=32)).replace(day=1)
+    projects = [p.id for p in db.projects.values() if accounts.owns(user, p)]
+    if usage.cost_since(month, user.id, projects) >= limits.cost_per_month_usd:
+        raise _budget_used(f"Your monthly budget of ${limits.cost_per_month_usd:.2f} is used up. "
+                           "It renews on the 1st of next month (UTC).", next_month - now)
+    if usage.cost_since(today, user.id, projects) >= limits.cost_per_day_usd:
+        raise _budget_used(f"Your daily budget of ${limits.cost_per_day_usd:.2f} is used up. "
+                           "It renews at midnight UTC.", tomorrow - now)
+    if usage.cost_since(today) >= LIMITS.app.cost_per_day_usd:
+        logger.warning("The app's daily budget of $%.2f is used up", LIMITS.app.cost_per_day_usd)
+        raise _budget_used("The app's daily budget is used up. It renews at midnight UTC.", tomorrow - now)
+
+    clock = time.monotonic()
     with _llm_calls_lock:
-        calls = _llm_calls[client]
-        while calls and now - calls[0] > LLM_RATE_WINDOW:
+        calls = _llm_calls[user.id]
+        while calls and clock - calls[0] > LLM_RATE_WINDOW:
             calls.popleft()
-        if len(calls) >= LLM_RATE_LIMIT:
-            wait = int(LLM_RATE_WINDOW - (now - calls[0])) + 1
-            raise HTTPException(429, f"Too many requests: at most {LLM_RATE_LIMIT} model requests per minute. "
-                                     f"Try again in {wait} seconds.", headers={"Retry-After": str(wait)})
-        calls.append(now)
+        if len(calls) >= limits.model_requests_per_minute:
+            wait = int(LLM_RATE_WINDOW - (clock - calls[0])) + 1
+            raise HTTPException(429, f"Too many requests: at most {limits.model_requests_per_minute} model requests "
+                                     f"per minute. Try again in {wait} seconds.", headers={"Retry-After": str(wait)})
+        calls.append(clock)
+
+
+def _budget_used(message: str, until: timedelta) -> HTTPException:
+    """A 429 response for a used-up budget, with Retry-After until it renews."""
+    return HTTPException(429, message, headers={"Retry-After": str(int(until.total_seconds()) + 1)})
 
 
 def checked_text(text: str, kind: guard.InputKind, field: str, *, check_injection: bool = True) -> str:

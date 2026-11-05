@@ -26,6 +26,10 @@ from uuid import uuid4
 from app.core import config
 
 request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
+# The signed-in user of the request: a dict per request, set by the middleware and filled by auth.current_user. A dict
+# (not the id itself) because sync dependencies run in a copy of the context: a new value set there would be lost,
+# while the shared dict is filled for the whole request, including its background tasks and model callbacks.
+_request_user: ContextVar[dict[str, str] | None] = ContextVar("request_user", default=None)
 
 HEADER = "X-Request-ID"
 _SANE_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")  # ids taken from callers; anything else is replaced
@@ -36,6 +40,19 @@ logger = logging.getLogger("app.request")
 def current_request_id() -> str | None:
     """The id of the HTTP request being handled, None outside a request."""
     return request_id.get()
+
+
+def set_request_user(user_id: str) -> None:
+    """Remember the signed-in user of the current HTTP request (no effect outside a request)."""
+    holder = _request_user.get()
+    if holder is not None:
+        holder["id"] = user_id
+
+
+def current_user_id() -> str | None:
+    """The id of the signed-in user of the HTTP request being handled; None outside a request or before sign-in."""
+    holder = _request_user.get()
+    return holder.get("id") if holder else None
 
 
 class RequestIdFilter(logging.Filter):
@@ -100,7 +117,7 @@ class RequestIdMiddleware:
             return
         incoming = dict(scope.get("headers") or []).get(HEADER.lower().encode(), b"").decode("latin-1")
         rid = incoming if _SANE_ID.fullmatch(incoming) else uuid4().hex[:16]
-        token = request_id.set(rid)
+        token, user_token = request_id.set(rid), _request_user.set({})
         started, status = time.perf_counter(), 500
 
         async def send_with_id(message):
@@ -118,3 +135,4 @@ class RequestIdMiddleware:
             logger.log(level, "%s %s -> %d (%d ms)", scope["method"], scope["path"], status,
                        round((time.perf_counter() - started) * 1000))
             request_id.reset(token)
+            _request_user.reset(user_token)

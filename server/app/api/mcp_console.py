@@ -6,7 +6,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.api.deps import admin_only, llm_rate_limit
+from app.api.deps import admin_only, llm_limits
 
 from app.core.schemas import McpCallRequest, McpCallResult, McpServerStatus
 from app.market import client
@@ -21,7 +21,7 @@ async def list_mcp_servers(request: Request):
     return await asyncio.gather(*(client.server_status(base_url, config) for config in client.SERVERS))
 
 
-@router.post("/mcp-servers/{name}/call", response_model=McpCallResult, dependencies=[Depends(llm_rate_limit)])
+@router.post("/mcp-servers/{name}/call", response_model=McpCallResult, dependencies=[Depends(llm_limits)])
 async def call_mcp_tool(name: str, body: McpCallRequest, request: Request):
     """Call a tool of an MCP server over MCP and return its result (also added to the call log).
 

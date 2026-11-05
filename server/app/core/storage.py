@@ -22,6 +22,7 @@ import pymupdf
 from pydantic import ValidationError
 
 from app.core.config import DATA_DIR
+from app.core.limits import LIMITS
 from app.core.schemas import Asset, BookSummary, Chunk, Conversation, Project, Source, SourceKind
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ SUMMARY_FILENAME = ".summary.json"
 COVER_FILENAME = ".cover.png"
 
 ALLOWED_EXTENSIONS = {".pdf"}  # widen when other formats get an ingestion path (EPUB, DOCX, video, ...)
-MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
+MAX_UPLOAD_BYTES = LIMITS.per_user.max_upload_mb * 1024 * 1024  # limits.toml
 CHUNK_BYTES = 1024 * 1024  # write in 1 MB pieces, never the whole file in memory
 
 # File signatures ("magic bytes") the content must start with, per extension.

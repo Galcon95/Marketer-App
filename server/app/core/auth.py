@@ -15,6 +15,7 @@ from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
 from app.core.config import SUPABASE_URL
+from app.core.logs import set_request_user
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,7 @@ def verify_token(token: str) -> User:
 
 
 def current_user(request: Request) -> User:
-    """FastAPI dependency: the signed-in user who sent the request.
+    """FastAPI dependency: the signed-in user who sent the request (also remembered for the request's usage log).
 
     Raises:
         HTTPException: 401 without a Bearer token or with an invalid one (see verify_token).
@@ -82,7 +83,9 @@ def current_user(request: Request) -> User:
     scheme, _, token = request.headers.get("Authorization", "").partition(" ")
     if scheme.lower() != "bearer" or not token:
         raise _unauthorized("Please sign in.")
-    return verify_token(token.strip())
+    user = verify_token(token.strip())
+    set_request_user(user.id)
+    return user
 
 
 def _unauthorized(message: str) -> HTTPException:

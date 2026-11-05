@@ -10,32 +10,17 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import assets, campaigns, deps, health, knowledge, mcp_console, projects, sources
-from app.campaign import kit
-from app.core import accounts, config, llm, storage, usage
+from app.core import accounts, storage
 from app.core import state as db
 from app.core.schemas import Asset, BookSummary, Conversation, Source
-from app.rag import vectorstore
 from tests.conftest import OWNER, STRANGER, sign_in
 
 PROJECT = db.DEFAULT_PROJECT_ID
 NOW = datetime.now(timezone.utc)
 
 
-@pytest.fixture(autouse=True)
-def no_real_data_or_models(tmp_path, monkeypatch):
-    """Files, vectors and the usage log go to tmp_path, and no model can be called: if an ownership check were
-    missing, a test request must not reach the real library or cost money."""
-    for name in ("UPLOAD_DIR", "GENERATED_DIR", "CONVERSATIONS_DIR"):
-        monkeypatch.setattr(storage, name, tmp_path / name.lower())
-    monkeypatch.setattr(vectorstore, "CHROMA_DIR", tmp_path / "chroma")
-    monkeypatch.setattr(usage, "USAGE_FILE", tmp_path / "usage.jsonl")
-    monkeypatch.setattr(config, "API_KEY", None)  # chat model: llm.is_configured() is False → 503
-    monkeypatch.setattr(vectorstore, "API_KEY", None)  # embeddings: vectorstore.is_configured() is False → 503
-
-    def no_model(*args, **kwargs):
-        raise AssertionError("a test request reached the language model")
-    monkeypatch.setattr(llm, "chat_model", no_model)
-    monkeypatch.setattr(kit, "chat_model", no_model)
+# If an ownership check were missing, a test request must not reach the real library or cost money.
+pytestmark = pytest.mark.usefixtures("offline")
 
 
 @pytest.fixture
@@ -180,7 +165,7 @@ def test_the_default_project_does_not_go_to_anyone_else(app, monkeypatch):
 
 # ---------- App-wide endpoints: the admin only ----------
 
-@pytest.mark.parametrize("path", ["/usage", "/mcp-calls"])
+@pytest.mark.parametrize("path", ["/usage?scope=app", "/mcp-calls"])
 def test_app_wide_endpoints_are_for_the_admin_only(app, monkeypatch, path):
     monkeypatch.setattr(accounts, "DEFAULT_CLIENT_OWNER", OWNER.email)
     assert client_for(app, STRANGER).get(path).status_code == 403

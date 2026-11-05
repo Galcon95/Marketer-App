@@ -249,11 +249,15 @@ export interface UsageRecord {
   project_id: string | null;
   source_id: string | null;
   request_id?: string | null; // the HTTP request that caused the call; missing in older records
+  user_id?: string | null; // the signed-in user who caused it; missing in older records
 }
 /** Sums over a set of model calls (costs in USD). */
 export interface UsageTotals { calls: number; input_tokens: number; output_tokens: number; input_cost: number; output_cost: number; cost: number }
-/** Response of GET /usage: totals so far, per operation (highest cost first), and the latest calls (newest first). */
-export interface UsageReport { totals: UsageTotals; by_operation: Record<string, UsageTotals>; recent: UsageRecord[] }
+/** The signed-in user's cost budget (server/limits.toml) and how much of it is used, in USD (UTC day and month). */
+export interface UsageBudget { spent_today: number; limit_today: number; spent_month: number; limit_month: number }
+/** Response of GET /usage: totals so far, per operation (highest cost first), the latest calls (newest first) and the
+ * user's budget. */
+export interface UsageReport { totals: UsageTotals; by_operation: Record<string, UsageTotals>; recent: UsageRecord[]; budget: UsageBudget }
 
 /** Short summary of one chapter of a book. */
 export interface ChapterSummary { chapter: string | null; first_page: number | null; last_page: number | null; summary: string }
@@ -478,10 +482,11 @@ export const api = {
   /** GET /health: status of the API and its services. */
   health: () => request<Health>("/health"),
   /**
-   * GET /usage: tokens and costs of all model calls so far (the admin only; 403 for other users).
+   * GET /usage: tokens and costs of model calls so far, with the user's budget.
    * @param limit Number of latest calls to include (default 50).
+   * @param scope "me" (default): the user's own calls; "app": all users' calls (the admin only; 403 for others).
    */
-  usage: (limit = 50) => request<UsageReport>(`/usage?limit=${limit}`),
+  usage: (limit = 50, scope: "me" | "app" = "me") => request<UsageReport>(`/usage?limit=${limit}&scope=${scope}`),
   /** GET /me: the signed-in user, their project and whether they are the admin (cached for the page load). */
   me: () => loadMe(),
   /** GET /projects/{id}: the current project with its counts. */

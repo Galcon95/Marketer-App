@@ -29,7 +29,7 @@ from langchain_core.outputs import LLMResult
 from pydantic import ValidationError
 
 from app.core.config import DATA_DIR
-from app.core.logs import current_request_id
+from app.core.logs import current_request_id, current_user_id
 from app.core.schemas import UsageRecord, UsageReport, UsageTotals
 
 USAGE_FILE = DATA_DIR / "usage" / "usage.jsonl"
@@ -57,10 +57,12 @@ def record(rec: UsageRecord) -> None:
     Logging must never break the actual request, so file errors are only reported.
 
     Args:
-        rec: The call to log; its request_id is filled in from the current HTTP request if not set.
+        rec: The call to log; its request_id and user_id are filled in from the current HTTP request if not set.
     """
     if rec.request_id is None:
         rec.request_id = current_request_id()
+    if rec.user_id is None:
+        rec.user_id = current_user_id()
     with _lock:
         _records.append(rec)
         _add(_totals, rec)
@@ -183,17 +185,36 @@ def load() -> None:
             _add(_totals, rec)
 
 
-def report(limit: int = 50) -> UsageReport:
-    """Totals so far, totals per operation (highest cost first) and the latest `limit` calls."""
+def report(limit: int = 50, user_id: str | None = None, project_ids: Iterable[str] = ()) -> UsageReport:
+    """Totals so far, totals per operation (highest cost first) and the latest `limit` calls: of all calls, or with
+    `user_id` only of that user's calls (see _belongs)."""
     with _lock:
+        records = _records if user_id is None else [r for r in _records if _belongs(r, user_id, set(project_ids))]
+        totals = _totals.model_copy() if user_id is None else UsageTotals()
         by_operation: dict[str, UsageTotals] = {}
-        for rec in _records:
+        for rec in records:
             _add(by_operation.setdefault(rec.operation, UsageTotals()), rec)
+            if user_id is not None:
+                _add(totals, rec)
         return UsageReport(
-            totals=_totals.model_copy(),
+            totals=totals,
             by_operation=dict(sorted(by_operation.items(), key=lambda item: item[1].cost, reverse=True)),
-            recent=list(reversed(_records[-limit:])),
+            recent=list(reversed(records[-limit:])),
         )
+
+
+def cost_since(since: datetime, user_id: str | None = None, project_ids: Iterable[str] = ()) -> float:
+    """USD of the calls since `since` (UTC): of all calls, or with `user_id` only of that user's (see _belongs)."""
+    project_ids = set(project_ids)
+    with _lock:
+        return sum(r.cost for r in reversed(_records) if r.timestamp >= since
+                   and (user_id is None or _belongs(r, user_id, project_ids)))
+
+
+def _belongs(rec: UsageRecord, user_id: str, project_ids: set[str]) -> bool:
+    """True if the user caused the call: their user id is on it, or it is from before sign-in existed (no user id)
+    and belongs to one of their projects."""
+    return rec.user_id == user_id or (rec.user_id is None and rec.project_id in project_ids)
 
 
 # ---------- Helpers ----------

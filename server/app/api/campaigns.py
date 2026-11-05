@@ -4,7 +4,7 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import check_sources, checked_optional, checked_text, llm_rate_limit, owned_project
+from app.api.deps import check_sources, checked_optional, checked_text, llm_limits, owned_project
 from app.campaign import kit
 from app.core import state as db
 from app.core import storage
@@ -16,7 +16,7 @@ router = APIRouter()
 
 
 @router.post("/projects/{project_id}/campaigns", response_model=CampaignResponse, status_code=201,
-             dependencies=[Depends(owned_project), Depends(llm_rate_limit)])
+             dependencies=[Depends(owned_project), Depends(llm_limits)])
 def create_campaign(project_id: str, body: CampaignRequest):
     """Generate a zero-shot campaign kit from a book brief: 3 personas, 5 social posts, 1 blurb.
 
