@@ -8,13 +8,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.api.deps import (
     check_sources, checked_text, llm_limits, owned_conversation, owned_project, owned_source, retrieve,
 )
-from app.core import storage
 from app.core import state as db
 from app.core.llm import GenerationError
 from app.core.schemas import (
     AskRequest, AskResponse, BookSummary, ChatTurn, Conversation, ConversationInfo, SearchHit, SearchRequest,
     SearchResponse, Source, VerifyItem, VerifyRequest, VerifyResponse,
 )
+from app.db import records
 from app.rag import qa, summary
 
 logger = logging.getLogger(__name__)
@@ -122,8 +122,8 @@ def ask(project_id: str, body: AskRequest):
     conversation.updated_at = now
     db.conversations[conversation.id] = conversation
     try:
-        storage.write_conversation(conversation)
-    except OSError:  # the answer is still returned; the chat just won't survive a restart
+        records.save_conversation(conversation)
+    except OSError:  # DatabaseError; the answer is still returned, the chat just won't survive a restart
         logger.exception("Could not save conversation %s", conversation.id)
     return result
 
@@ -146,9 +146,12 @@ def get_conversation(conversation: Conversation = Depends(owned_conversation)):
 
 @router.delete("/conversations/{conversation_id}", status_code=204)
 def delete_conversation(conversation: Conversation = Depends(owned_conversation)):
-    """Delete a conversation and its saved file. 404 if unknown."""
+    """Delete a conversation. 404 if unknown; 500 if it cannot be deleted (it is then kept)."""
+    try:
+        records.delete_conversations([conversation.id])
+    except OSError as e:  # DatabaseError
+        raise HTTPException(500, "The chat could not be deleted, please try again.") from e
     db.conversations.pop(conversation.id, None)
-    storage.delete_conversation(conversation)
 
 
 @router.post("/projects/{project_id}/search", response_model=SearchResponse,

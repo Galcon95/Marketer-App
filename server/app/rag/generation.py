@@ -33,7 +33,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
-from app.core import prompts, storage, style, tracing
+from app.core import prompts, style, tracing
 from app.core import state as db
 from app.core.config import LLM_MODEL
 from app.core.guard import UNTRUSTED_RULE, quote_untrusted
@@ -44,6 +44,7 @@ from app.core.style import (
     PLATFORM_POST, PLATFORM_REPLY, PLATFORM_VIDEO, REWRITE_FROM, REWRITE_PROMPT, TONES, find_ai_tells,
     style_guidance, temperature_for,
 )
+from app.db import records
 from app.rag import vectorstore
 from app.rag.retrieval import format_background, format_context, keep_cited, retrieve_chunks
 
@@ -203,7 +204,7 @@ def create_asset(project_id: str, req: GenerateRequest) -> Asset:
         model=LLM_MODEL,
         prompt_version=PROMPT_VERSION,
     )
-    storage.write_asset(asset)
+    records.save_assets([asset])  # first in the database: if that fails, the asset is not kept anywhere
     db.assets[asset.id] = asset
     return asset
 

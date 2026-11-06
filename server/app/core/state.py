@@ -52,8 +52,9 @@ chunks: dict[str, Chunk] = {}
 # Book summaries by source id; filled from disk on startup (ingestion.restore_sources) and by summary.py.
 summaries: dict[str, BookSummary] = {}
 
-# Generated assets by id; filled from disk on startup (storage.load_assets) and by generation.
+# Generated assets by id; filled from the database on startup (records.load_assets) and by generation.
 assets: dict[str, Asset] = {}
 
-# "Ask your book" conversations by id; filled from disk on startup (storage.load_conversations) and by /ask.
+# "Ask your book" conversations by id; filled from the database on startup (records.load_conversations) and by
+# /ask.
 conversations: dict[str, Conversation] = {}

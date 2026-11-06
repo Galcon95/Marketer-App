@@ -7,10 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.api.deps import check_sources, checked_optional, checked_text, llm_limits, owned_project
 from app.campaign import kit
 from app.core import state as db
-from app.core import storage
 from app.core.config import LLM_MODEL
 from app.core.llm import GenerationError
 from app.core.schemas import Asset, CampaignRequest, CampaignResponse
+from app.db import records
 
 router = APIRouter()
 
@@ -65,12 +65,12 @@ def create_campaign(project_id: str, body: CampaignRequest):
     piece = result["polished_blurb"]
     blurb = make("blurb", piece["text"], piece["tokens"] + result["blurb_tokens"], ai_tells=piece["ai_tells"])
 
+    kit_assets = [*personas, *posts, blurb]
     try:
-        for asset in [*personas, *posts, blurb]:
-            storage.write_asset(asset)
-            db.assets[asset.id] = asset
-    except OSError as e:
+        records.save_assets(kit_assets)  # one transaction: the whole kit is saved, or none of it
+    except OSError as e:  # DatabaseError
         raise HTTPException(500, "The campaign was generated but could not be saved") from e
+    db.assets.update((asset.id, asset) for asset in kit_assets)
     return CampaignResponse(campaign_id=campaign_id, personas=personas, posts=posts, blurb=blurb,
                             tokens=result.get("tokens", 0))
 

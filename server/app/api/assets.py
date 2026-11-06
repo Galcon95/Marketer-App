@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import check_sources, checked_optional, checked_text, llm_limits, owned_asset, owned_project
 from app.core import state as db
-from app.core import storage
 from app.core.llm import GenerationError
 from app.core.schemas import Asset, AssetUpdate, GenerateRequest
+from app.db import records
 from app.rag import generation
 
 router = APIRouter()
@@ -27,7 +27,7 @@ def generate(project_id: str, body: GenerateRequest):
         body: Asset type, brief, grounded flag and number of context chunks k.
 
     Returns:
-        The newly created Asset, also saved to disk (storage.write_asset).
+        The newly created Asset, also saved in the database.
 
     Raises:
         HTTPException: 400 if the brief or audience is a likely prompt injection; 404 for a book of the filter
@@ -83,8 +83,8 @@ def update_asset(asset_id: str, body: AssetUpdate, asset: Asset = Depends(owned_
     text = checked_text(body.text, "asset_text", "text", check_injection=False)  # the user's own edit, not a prompt
     asset = asset.model_copy(update={"text": text, "edited": True})
     try:
-        storage.write_asset(asset)
-    except OSError as e:
+        records.save_assets([asset])
+    except OSError as e:  # DatabaseError
         raise HTTPException(500, "The edited asset could not be saved") from e
     db.assets[asset_id] = asset
     return asset
@@ -92,13 +92,16 @@ def update_asset(asset_id: str, body: AssetUpdate, asset: Asset = Depends(owned_
 
 @router.delete("/assets/{asset_id}", status_code=204)
 def delete_asset(asset: Asset = Depends(owned_asset)):
-    """Delete a generated asset (from memory and disk).
+    """Delete a generated asset (from the database and memory).
 
     Args:
         asset_id: Id of the asset (path parameter).
 
     Raises:
-        HTTPException: 404 when no asset of the user has this id.
+        HTTPException: 404 when no asset of the user has this id; 500 if it cannot be deleted (it is then kept).
     """
+    try:
+        records.delete_assets([asset.id])
+    except OSError as e:  # DatabaseError
+        raise HTTPException(500, "The asset could not be deleted, please try again.") from e
     db.assets.pop(asset.id, None)
-    storage.delete_asset(asset)

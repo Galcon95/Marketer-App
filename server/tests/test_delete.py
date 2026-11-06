@@ -41,8 +41,7 @@ def _chat(conversation_id: str, passage_sources: list[str]) -> Conversation:
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     """Two books (src_a, src_b) with assets and chats; storage in tmp_path; no vector store."""
-    for name in ("UPLOAD_DIR", "GENERATED_DIR", "CONVERSATIONS_DIR"):
-        monkeypatch.setattr(storage, name, tmp_path / name.lower())
+    monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path / "upload_dir")
     monkeypatch.setattr(vectorstore, "delete_source", lambda project_id, source_id: None)
     monkeypatch.setattr(db, "sources", {s: _source(s) for s in ("src_a", "src_b")})
     monkeypatch.setattr(db, "chunks", {})
@@ -85,3 +84,15 @@ def test_delete_removes_the_book_and_only_what_belongs_to_it_alone(client, tmp_p
 def test_unknown_book_is_404(client):
     assert client.get("/sources/nope/deletion").status_code == 404
     assert client.delete("/sources/nope").status_code == 404
+
+
+def test_nothing_is_deleted_when_the_database_fails(client, monkeypatch, tmp_path):
+    from app.db import records
+    from app.db.database import DatabaseError
+
+    def broken(ids):
+        raise DatabaseError("Database error (OperationalError)")
+    monkeypatch.setattr(records, "delete_assets", broken)
+    assert client.delete("/sources/src_a").status_code == 500
+    assert "src_a" in db.sources and "ast_only_a" in db.assets and "cnv_only_a" in db.conversations
+    assert (tmp_path / "upload_dir" / PROJECT / "src_a").is_dir()

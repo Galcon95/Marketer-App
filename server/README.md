@@ -29,14 +29,14 @@ server/
 │   │   ├── llm.py      chat model (ChatOpenAI via OpenRouter), GenerationError, token counts
 │   │   ├── schemas.py  Pydantic request/response models
 │   │   ├── state.py    in-memory stores (projects, sources, chunks, summaries, assets)
-│   │   ├── storage.py  files on disk: uploads, chunks, summaries, covers, generated assets
+│   │   ├── storage.py  files on disk: uploads, chunks, summaries, covers
 │   │   ├── usage.py    tokens and costs of every model call
 │   │   └── style.py    platform rules, tones, "how human" levels, AI-cliché check and rewrite
 │   ├── db/             the database (PostgreSQL at Supabase; SQLAlchemy)
 │   │   ├── database.py     connection (DATABASE_URL), sessions, DatabaseError
-│   │   ├── tables.py       the tables: public.projects, private.api_keys
-│   │   ├── records.py      read and write projects and API keys
-│   │   └── import_files.py one-time import of projects.json and api_keys.json
+│   │   ├── tables.py       the tables: projects, assets, conversations (public), api_keys (private)
+│   │   ├── records.py      read and write projects, API keys, assets and chats
+│   │   └── import_files.py one-time import of the old JSON files (projects, keys, assets, chats)
 │   ├── rag/            Phase 1 Knowledge Hub
 │   │   ├── ingestion.py    PDF → chapters → chunks → vectors
 │   │   ├── vectorstore.py  embeddings in Chroma
@@ -52,7 +52,7 @@ server/
 │   ├── agents/         Phase 4 Agent Workspace, not built yet
 │   └── api/            FastAPI routers: health, projects, sources, knowledge, assets, campaigns (+ deps.py)
 ├── migrations/         Alembic migrations of the database (alembic.ini next to server.py)
-└── assets/             data (not committed): uploads, chroma, generated, usage
+└── assets/             data (not committed): uploads, chroma, usage
 ```
 
 ## MCP server: mcp-book-knowledge

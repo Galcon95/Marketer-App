@@ -1,7 +1,5 @@
-"""File storage for uploaded sources: server/assets/uploads/{project_id}/{source_id}/{filename},
-for generated assets: server/assets/generated/{project_id}/{asset_id}.json, and for "Ask your book"
-conversations: server/assets/conversations/{project_id}/{conversation_id}.json. The projects (clients, with
-their owners) are in the database (app/db).
+"""File storage for uploaded sources: server/assets/uploads/{project_id}/{source_id}/{filename}. Projects, API
+keys, generated assets and "Ask your book" conversations are in the database (app/db).
 
 Each source directory also holds META_FILENAME, the source's record as JSON, and after ingestion
 CHUNKS_FILENAME with its chunks. The upload directory
@@ -23,15 +21,11 @@ from pydantic import ValidationError
 
 from app.core.config import DATA_DIR
 from app.core.limits import LIMITS
-from app.core.schemas import Asset, BookSummary, Chunk, Conversation, Source, SourceKind
+from app.core.schemas import BookSummary, Chunk, Source, SourceKind
 
 logger = logging.getLogger(__name__)
 
 UPLOAD_DIR = DATA_DIR / "uploads"
-# Generated marketing assets: assets/generated/{project_id}/{asset_id}.json
-GENERATED_DIR = DATA_DIR / "generated"
-# Conversations of "Ask your book": assets/conversations/{project_id}/{conversation_id}.json
-CONVERSATIONS_DIR = DATA_DIR / "conversations"
 
 # Source record stored next to the uploaded file. It starts with "." and safe_filename strips
 # leading dots from uploads, so it can never collide with an uploaded file.
@@ -291,80 +285,6 @@ def load_summary(source: Source) -> BookSummary | None:
         return BookSummary.model_validate_json((UPLOAD_DIR / source.project_id / source.id / SUMMARY_FILENAME).read_text(encoding="utf-8"))
     except (OSError, ValidationError):
         return None
-
-
-def write_asset(asset: Asset) -> None:
-    """Save a generated asset as JSON so it survives server restarts.
-
-    Written to a temporary file first and then renamed, like write_source_meta.
-
-    Args:
-        asset: The asset to save.
-
-    Raises:
-        OSError: If the file cannot be written.
-    """
-    target_dir = GENERATED_DIR / asset.project_id
-    target_dir.mkdir(parents=True, exist_ok=True)
-    tmp = target_dir / f".{asset.id}.json.tmp"
-    tmp.write_text(asset.model_dump_json(indent=2), encoding="utf-8")
-    tmp.replace(target_dir / f"{asset.id}.json")
-
-
-def delete_asset(asset: Asset) -> None:
-    """Delete the saved file of a generated asset, if any."""
-    (GENERATED_DIR / asset.project_id / f"{asset.id}.json").unlink(missing_ok=True)
-
-
-def load_assets() -> dict[str, Asset]:
-    """Read all saved generated assets (called once on server startup); unreadable files are skipped.
-
-    Returns:
-        Assets by id, oldest first.
-    """
-    assets: list[Asset] = []
-    for path in GENERATED_DIR.glob("*/*.json"):
-        try:
-            assets.append(Asset.model_validate_json(path.read_text(encoding="utf-8")))
-        except (OSError, ValidationError):
-            logger.warning("Skipping unreadable asset file %s", path)
-    assets.sort(key=lambda a: a.created_at)
-    return {a.id: a for a in assets}
-
-
-def write_conversation(conversation: Conversation) -> None:
-    """Save a conversation as JSON (replacing the previous version), written to a temporary file first so a
-    crash cannot leave a half-written file.
-
-    Raises:
-        OSError: If the file cannot be written.
-    """
-    target_dir = CONVERSATIONS_DIR / conversation.project_id
-    target_dir.mkdir(parents=True, exist_ok=True)
-    tmp = target_dir / f".{conversation.id}.tmp"
-    tmp.write_text(conversation.model_dump_json(indent=2), encoding="utf-8")
-    tmp.replace(target_dir / f"{conversation.id}.json")
-
-
-def delete_conversation(conversation: Conversation) -> None:
-    """Delete the saved file of a conversation, if any."""
-    (CONVERSATIONS_DIR / conversation.project_id / f"{conversation.id}.json").unlink(missing_ok=True)
-
-
-def load_conversations() -> dict[str, Conversation]:
-    """Read all saved conversations (called once on server startup); unreadable files are skipped.
-
-    Returns:
-        Conversations by id, oldest first.
-    """
-    conversations: list[Conversation] = []
-    for path in CONVERSATIONS_DIR.glob("*/*.json"):
-        try:
-            conversations.append(Conversation.model_validate_json(path.read_text(encoding="utf-8")))
-        except (OSError, ValidationError):
-            logger.warning("Skipping unreadable conversation file %s", path)
-    conversations.sort(key=lambda c: c.created_at)
-    return {c.id: c for c in conversations}
 
 
 def load_sources() -> dict[str, Source]:

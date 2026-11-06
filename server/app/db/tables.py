@@ -11,7 +11,10 @@ the server, which connects as the database owner (DATABASE_URL), reads and write
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, MetaData, Text
+from typing import Any
+
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, MetaData, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
@@ -23,8 +26,18 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention={
         "ix": "ix_%(table_name)s_%(column_0_name)s",
         "uq": "uq_%(table_name)s_%(column_0_name)s",
+        "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
         "pk": "pk_%(table_name)s",
     })
+
+
+# Nested data (citations, chat turns, lists of ids) as JSON: JSONB in PostgreSQL, plain JSON in SQLite (tests).
+Json = JSON().with_variant(JSONB(), "postgresql")
+
+
+def project_fk() -> Any:
+    """The project a record belongs to; deleting the project deletes its records too."""
+    return mapped_column(Text, ForeignKey("projects.id", ondelete="CASCADE"), index=True)
 
 
 class UtcDateTime(TypeDecorator):
@@ -68,3 +81,48 @@ class ApiKeyRow(Base):
     key_hash: Mapped[str] = mapped_column(Text, unique=True)  # SHA-256 of the key (hex)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime)
     last_used_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
+
+
+class AssetRow(Base):
+    """A generated marketing asset; one column per field of schemas.Asset (a test checks they match)."""
+
+    __tablename__ = "assets"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)  # "ast_1a2b3c4d"
+    project_id: Mapped[str] = project_fk()
+    asset_type: Mapped[str] = mapped_column(Text)
+    grounded: Mapped[bool] = mapped_column(Boolean)
+    brief: Mapped[str] = mapped_column(Text)
+    text: Mapped[str] = mapped_column(Text)
+    citations: Mapped[list] = mapped_column(Json)  # list of schemas.Citation
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime)
+    tokens: Mapped[int] = mapped_column(Integer)
+    tone: Mapped[str] = mapped_column(Text)
+    length: Mapped[str] = mapped_column(Text)
+    audience: Mapped[str] = mapped_column(Text)
+    platform: Mapped[str | None] = mapped_column(Text)
+    reply_to: Mapped[str] = mapped_column(Text)
+    search_query: Mapped[str] = mapped_column(Text)
+    humanize: Mapped[int] = mapped_column(Integer)
+    source_ids: Mapped[list] = mapped_column(Json)  # list of source ids; empty = all books
+    ai_tells: Mapped[list] = mapped_column(Json)  # list of phrases
+    edited: Mapped[bool] = mapped_column(Boolean)
+    campaign_id: Mapped[str] = mapped_column(Text)  # "" = not part of a campaign kit
+    model: Mapped[str | None] = mapped_column(Text)
+    prompt_version: Mapped[str | None] = mapped_column(Text)
+    persona: Mapped[str] = mapped_column(Text)
+    angle: Mapped[str] = mapped_column(Text)
+
+
+class ConversationRow(Base):
+    """An "Ask your book" chat; see schemas.Conversation. The turns (question, answer, citations, passages) are one
+    JSON list: they are always read and written together with their chat."""
+
+    __tablename__ = "conversations"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)  # "cnv_1a2b3c4d"
+    project_id: Mapped[str] = project_fk()
+    title: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime)
+    turns: Mapped[list] = mapped_column(Json)  # list of schemas.ChatTurn, oldest first

@@ -1,5 +1,6 @@
-"""Tests of the database layer (app/db) on the in-memory test database of conftest.py: projects saved and loaded,
-one project per owner, the one-time import of the old JSON files, and the connection settings."""
+"""Tests of the database layer (app/db) on the in-memory test database of conftest.py: projects, assets and chats
+saved and loaded, one project per owner, a kit saved in one transaction, the one-time import of the old JSON files,
+and the connection settings."""
 
 import json
 
@@ -7,9 +8,11 @@ import pytest
 
 from app.core import config
 from app.core import state as db
-from app.core.schemas import Project
+from app.core.schemas import (Asset, ChatTurn, Chunk, ChunkLocation, Citation, Conversation, Project,
+                              SearchHit)
 from app.db import database, import_files, records
 from app.db.database import DatabaseError
+from app.db.tables import AssetRow, ConversationRow
 from tests.conftest import OWNER, STRANGER
 
 
@@ -92,3 +95,85 @@ def test_without_database_url_nothing_can_be_read(monkeypatch):
     monkeypatch.setattr(database, "DATABASE_URL", "")
     with pytest.raises(DatabaseError, match="DATABASE_URL"):
         records.load_projects()
+
+
+# ---------- Generated assets and conversations ----------
+
+def _asset(asset_id: str, **changes) -> Asset:
+    citation = Citation(chunk_id="chk_1", source_id="src_a", location=ChunkLocation(chapter="1", page=3),
+                        quote="q", score=0.8)
+    asset = Asset(id=asset_id, project_id=db.DEFAULT_PROJECT_ID, asset_type="social_post", grounded=True, brief="b",
+                  text="t [1]", citations=[citation], created_at=db.now(), platform="linkedin",
+                  source_ids=["src_a"], ai_tells=["delve"], campaign_id="cmp_1", model="m", persona="Anna")
+    return asset.model_copy(update=changes)
+
+
+def _conversation(conversation_id: str) -> Conversation:
+    hit = SearchHit(chunk=Chunk(id="chk_1", source_id="src_a", text="x", location=ChunkLocation(page=2),
+                                token_count=1), score=0.5)
+    turn = ChatTurn(question="q", search_query="q", answer="a", citations=[], passages=[hit], model="m", tokens=1,
+                    created_at=db.now())
+    return Conversation(id=conversation_id, project_id=db.DEFAULT_PROJECT_ID, title="q", created_at=db.now(),
+                        updated_at=db.now(), turns=[turn])
+
+
+def test_every_asset_field_has_a_column():
+    """A new field in schemas.Asset needs a column (and a migration), or it would be lost on save."""
+    assert set(AssetRow.__table__.columns.keys()) == set(Asset.model_fields)
+    assert set(ConversationRow.__table__.columns.keys()) == set(Conversation.model_fields)
+
+
+def test_an_asset_is_saved_and_loaded_unchanged():
+    asset = _asset("ast_1")
+    records.save_assets([asset])
+    assert records.load_assets() == {"ast_1": asset}
+
+
+def test_an_edited_asset_replaces_the_saved_one():
+    records.save_assets([_asset("ast_1")])
+    records.save_assets([_asset("ast_1", text="new", edited=True)])
+    loaded = records.load_assets()["ast_1"]
+    assert (loaded.text, loaded.edited, len(records.load_assets())) == ("new", True, 1)
+
+
+def test_a_kit_is_saved_completely_or_not_at_all():
+    broken = _asset("ast_2").model_copy(update={"brief": None})  # NOT NULL: the database refuses this row
+    with pytest.raises(DatabaseError):
+        records.save_assets([_asset("ast_1"), broken])
+    assert records.load_assets() == {}
+
+
+def test_assets_are_deleted_and_unknown_ids_are_ignored():
+    records.save_assets([_asset("ast_1"), _asset("ast_2")])
+    records.delete_assets(["ast_1", "ast_unknown"])
+    records.delete_assets([])
+    assert list(records.load_assets()) == ["ast_2"]
+
+
+def test_a_conversation_is_saved_with_its_turns_and_loaded_unchanged():
+    conversation = _conversation("cnv_1")
+    records.save_conversation(conversation)
+    conversation.turns.append(conversation.turns[0].model_copy(update={"question": "second"}))
+    records.save_conversation(conversation)  # a new turn: the saved chat is replaced
+    assert records.load_conversations() == {"cnv_1": conversation}
+    records.delete_conversations(["cnv_1"])
+    assert records.load_conversations() == {}
+
+
+def test_the_import_of_assets_and_chats_skips_known_ids_and_unknown_projects(tmp_path):
+    generated, chats = tmp_path / "generated", tmp_path / "conversations"
+    for folder, record in [(generated, _asset("ast_1")), (generated, _asset("ast_2", project_id="prj_gone")),
+                           (chats, _conversation("cnv_1"))]:
+        (folder / record.project_id).mkdir(parents=True, exist_ok=True)
+        (folder / record.project_id / f"{record.id}.json").write_text(record.model_dump_json(), encoding="utf-8")
+
+    assert (import_files.import_assets(generated), import_files.import_conversations(chats)) == (1, 1)
+    assert (import_files.import_assets(generated), import_files.import_conversations(chats)) == (0, 0)
+    assert list(records.load_assets()) == ["ast_1"] and list(records.load_conversations()) == ["cnv_1"]
+    assert records.load_assets()["ast_1"] == _asset("ast_1").model_copy(
+        update={"created_at": records.load_assets()["ast_1"].created_at})
+
+
+def test_an_asset_needs_an_existing_project():
+    with pytest.raises(DatabaseError):
+        records.save_assets([_asset("ast_1", project_id="prj_unknown")])

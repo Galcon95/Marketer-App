@@ -1,9 +1,11 @@
-"""One-time import of the old JSON files into the database: projects.json and api_keys.json in server/assets/.
+"""One-time import of the old JSON files in server/assets/ into the database: projects.json, api_keys.json,
+generated/{project_id}/*.json (assets) and conversations/{project_id}/*.json (chats).
 
     uv run python -m app.db.import_files        (from server/, after `uv run alembic upgrade head`)
 
-Records already in the database (same id) are left as they are, so running it twice changes nothing. The files are
-not changed; once the app works with the database, delete them (or keep a copy outside the project).
+Records already in the database (same id) are left as they are, so running it twice changes nothing. Assets and
+chats of a project that is not in the database are skipped (they would belong to nobody). The files are not changed;
+once the app works with the database, delete them (or keep a copy outside the project).
 """
 
 import json
@@ -13,12 +15,15 @@ from pathlib import Path
 from sqlalchemy import select
 
 from app.core.config import DATA_DIR
-from app.core.schemas import ApiKey, Project
+from app.core.schemas import ApiKey, Asset, Conversation, Project
+from app.db import records
 from app.db.database import session
-from app.db.tables import ApiKeyRow, ProjectRow
+from app.db.tables import ApiKeyRow, AssetRow, ConversationRow, ProjectRow
 
 PROJECTS_FILE = DATA_DIR / "projects.json"
 KEYS_FILE = DATA_DIR / "api_keys.json"
+GENERATED_DIR = DATA_DIR / "generated"
+CONVERSATIONS_DIR = DATA_DIR / "conversations"
 
 
 def _read(path: Path) -> list[dict]:
@@ -49,10 +54,42 @@ def import_api_keys(path: Path = KEYS_FILE) -> int:
     return len(new)
 
 
+def _read_dir(folder: Path, model) -> list:
+    if not folder.is_dir():
+        print(f"{folder.name}/: not found, nothing to import")
+        return []
+    return [model.model_validate_json(path.read_text(encoding="utf-8")) for path in sorted(folder.glob("*/*.json"))]
+
+
+def _import_dir(folder: Path, model, row_class, json_fields: set[str]) -> int:
+    """Insert the records of folder/{project_id}/*.json that are not in the database yet; returns how many."""
+    items = _read_dir(folder, model)
+    with session() as s:
+        known = set(s.scalars(select(row_class.id)))
+        projects = set(s.scalars(select(ProjectRow.id)))
+        new = [i for i in items if i.id not in known and i.project_id in projects]
+        for skipped in {i.project_id for i in items if i.project_id not in projects}:
+            print(f"{folder.name}/{skipped}: no such project in the database, skipped")
+        s.add_all(records.to_row(row_class, i, json_fields) for i in new)
+    return len(new)
+
+
+def import_assets(folder: Path = GENERATED_DIR) -> int:
+    """Insert the generated assets that are not in the database yet; returns how many."""
+    return _import_dir(folder, Asset, AssetRow, records.ASSET_JSON_FIELDS)
+
+
+def import_conversations(folder: Path = CONVERSATIONS_DIR) -> int:
+    """Insert the "Ask your book" chats that are not in the database yet; returns how many."""
+    return _import_dir(folder, Conversation, ConversationRow, records.CONVERSATION_JSON_FIELDS)
+
+
 def main() -> None:
     try:
         print(f"projects: {import_projects()} imported")
         print(f"API keys: {import_api_keys()} imported")
+        print(f"assets: {import_assets()} imported")
+        print(f"conversations: {import_conversations()} imported")
     except OSError as e:  # DatabaseError
         sys.exit(f"Import failed: {e} ({e.__cause__})")
 

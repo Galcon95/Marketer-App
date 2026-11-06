@@ -32,16 +32,16 @@ from app.rag import ingestion, retrieval, summary  # noqa: E402
 
 
 def restore_data() -> None:
-    """Restore the saved data, so it survives server restarts: from the database the projects and their owners and
-    the API keys; from disk the uploaded sources (with their chunks), generated assets, chats and the usage log.
+    """Restore the saved data, so it survives server restarts: from the database the projects and their owners, the
+    API keys, generated assets and chats; from disk the uploaded sources (with their chunks) and the usage log.
     Runs on startup (lifespan), not on import, so tests can import this module to check its routes without reading
     the real data. Without the database (DATABASE_URL not set or not reachable) the server does not start: it would
     create a second library for every returning user and accept no API key."""
     state.projects.update(records.load_projects())  # the clients and their owners
     api_keys.load()  # personal API keys for the MCP servers
     ingestion.restore_sources()
-    state.assets.update(storage.load_assets())
-    state.conversations.update(storage.load_conversations())
+    state.assets.update(records.load_assets())
+    state.conversations.update(records.load_conversations())
     usage.load()  # totals of all model calls so far (usage.jsonl)
     if old := summary.outdated_summaries():
         logging.getLogger("app.startup").warning(

@@ -30,9 +30,12 @@ def sign_in(app: FastAPI, user: User = OWNER) -> None:
 @pytest.fixture(autouse=True)
 def test_database(monkeypatch):
     """An empty in-memory SQLite database with all tables, used instead of DATABASE_URL. SQLite has no "private"
-    schema: its tables go to SQLite's only one. StaticPool: one connection, so every session sees the same data."""
+    schema: its tables go to SQLite's only one. StaticPool: one connection, so every session sees the same data
+    (and the foreign key setting)."""
     engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
     engine = engine.execution_options(schema_translate_map={PRIVATE: None})
+    with engine.connect() as connection:  # SQLite checks foreign keys (e.g. an asset's project) only when asked
+        connection.exec_driver_sql("PRAGMA foreign_keys = ON")
     Base.metadata.create_all(engine)
     monkeypatch.setattr(database, "_engine", None)
     monkeypatch.setattr(database, "_sessions", None)
@@ -63,8 +66,7 @@ def offline(tmp_path, monkeypatch):
     """For tests that send requests to API routes: files, vectors and an empty usage log in tmp_path, and no model
     can be called (no API key: model routes answer 503; a chat model call fails the test). So a request that gets
     past a check it should not pass can neither touch the real library nor cost money."""
-    for name in ("UPLOAD_DIR", "GENERATED_DIR", "CONVERSATIONS_DIR"):
-        monkeypatch.setattr(storage, name, tmp_path / name.lower())
+    monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path / "upload_dir")
     monkeypatch.setattr(vectorstore, "CHROMA_DIR", tmp_path / "chroma")
     monkeypatch.setattr(usage, "USAGE_FILE", tmp_path / "usage.jsonl")
     monkeypatch.setattr(usage, "_records", [])

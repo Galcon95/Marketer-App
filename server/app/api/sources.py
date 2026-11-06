@@ -8,6 +8,7 @@ from app.core import state as db
 from app.core import storage
 from app.core.limits import LIMITS
 from app.core.schemas import Asset, ChunkPage, Conversation, Source, SourceDeletion
+from app.db import records
 from app.rag import ingestion
 from app.rag.retrieval import source_name
 
@@ -146,19 +147,26 @@ def delete_source(source_id: str, source: Source = Depends(owned_source)):
 
     Returns:
         What was removed besides the book itself.
+
+    Raises:
+        HTTPException: 500 if its assets and chats cannot be deleted from the database (then nothing is deleted).
     """
     name = source_name(source.id) or source.filename
     assets, conversations = _dependents(source)
-    # Remove the record first, so a running ingestion sees the deletion and stops writing.
+    # The database first: if that fails, the book and everything else is still there.
+    try:
+        records.delete_assets(a.id for a in assets)
+        records.delete_conversations(c.id for c in conversations)
+    except OSError as e:  # DatabaseError
+        raise HTTPException(500, "The book could not be deleted, please try again.") from e
+    # Then the source record, so a running ingestion sees the deletion and stops writing.
     db.sources.pop(source_id, None)
     ingestion.delete_source_data(source)
     storage.delete_source_files(source.project_id, source_id)
     for asset in assets:
         db.assets.pop(asset.id, None)
-        storage.delete_asset(asset)
     for conversation in conversations:
         db.conversations.pop(conversation.id, None)
-        storage.delete_conversation(conversation)
     return SourceDeletion(source_id=source_id, name=name, assets=len(assets), conversations=len(conversations))
 
 
