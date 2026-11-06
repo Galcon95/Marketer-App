@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 
 from app.api import sources
 from app.core import state as db
-from app.core import storage
 from app.rag import ingestion
 from tests.conftest import sign_in
 
@@ -19,7 +18,6 @@ PDF = b"%PDF-1.4\n% a tiny test file, not a real book\n"
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     """A test client of the sources router with a temporary upload folder, an empty library and no processing."""
-    monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
     monkeypatch.setattr(db, "sources", {})
     monkeypatch.setattr(ingestion, "ingest_source", lambda source_id: None)
     app = FastAPI()

@@ -5,7 +5,6 @@ No PDF is processed and no model is called."""
 import pytest
 
 from app.core import state as db
-from app.core import storage
 from app.core.schemas import Source
 from app.db import records
 from app.rag import ingestion
@@ -14,7 +13,6 @@ from app.rag import ingestion
 @pytest.fixture
 def book(tmp_path, monkeypatch) -> Source:
     """A book being chunked, in memory and in the test database; no chunks, summaries or folders yet."""
-    monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
     monkeypatch.setattr(db, "sources", {})
     monkeypatch.setattr(db, "chunks", {})
     monkeypatch.setattr(db, "summaries", {})

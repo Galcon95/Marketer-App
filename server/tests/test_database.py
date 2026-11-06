@@ -1,17 +1,16 @@
 """Tests of the database layer (app/db) on the in-memory test database of conftest.py: projects, assets and chats
-saved and loaded, one project per owner, a kit saved in one transaction, the one-time import of the old JSON files,
-and the connection settings."""
+saved and loaded, one project per owner, a kit saved in one transaction, books and their chunks, the usage log and the
+connection settings."""
 
-import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.core import config, storage, usage
+from app.core import config, usage
 from app.core import state as db
 from app.core.schemas import (Asset, BookSummary, ChapterSummary, ChatTurn, Chunk, ChunkLocation, Citation,
                               Conversation, Project, SearchHit, Source, UsageRecord, UsageTotals)
-from app.db import database, import_files, records
+from app.db import database, records
 from app.db.database import DatabaseError
 from app.db.tables import AssetRow, ConversationRow, SourceRow, SummaryRow
 from tests.conftest import OWNER, STRANGER
@@ -49,34 +48,6 @@ def test_projects_without_owner_can_be_many():
     records.save_project(_project("prj_1"))
     records.save_project(_project("prj_2"))
     assert {"prj_1", "prj_2"} <= set(records.load_projects())
-
-
-# ---------- One-time import of the JSON files ----------
-
-def test_the_import_adds_new_records_once_and_keeps_existing_ones(tmp_path):
-    projects_file, keys_file = tmp_path / "projects.json", tmp_path / "api_keys.json"
-    projects_file.write_text(json.dumps([
-        {"id": db.DEFAULT_PROJECT_ID, "name": "From the file", "description": "", "created_at": "2026-11-05T08:35:01Z",
-         "owner_id": "someone-else"},  # already in the database: not overwritten
-        {"id": "prj_4b1c3ebd", "name": "a@example.com", "description": "", "created_at": "2026-11-05T09:39:52Z",
-         "owner_id": STRANGER.id},
-    ]), encoding="utf-8")
-    keys_file.write_text(json.dumps([
-        {"id": "key_1", "user_id": OWNER.id, "email": OWNER.email, "name": "Claude Desktop", "shown": "mk_abcdefgh",
-         "key_hash": "0" * 64, "created_at": "2026-11-05T12:36:13Z", "last_used_at": None},
-    ]), encoding="utf-8")
-
-    assert (import_files.import_projects(projects_file), import_files.import_api_keys(keys_file)) == (1, 1)
-    assert (import_files.import_projects(projects_file), import_files.import_api_keys(keys_file)) == (0, 0)
-    loaded = records.load_projects()
-    assert loaded[db.DEFAULT_PROJECT_ID].owner_id == OWNER.id
-    assert loaded["prj_4b1c3ebd"].owner_id == STRANGER.id
-    assert [k.id for k in records.load_api_keys()] == ["key_1"]
-
-
-def test_the_import_without_files_imports_nothing(tmp_path):
-    assert import_files.import_projects(tmp_path / "missing.json") == 0
-    assert import_files.import_api_keys(tmp_path / "missing.json") == 0
 
 
 # ---------- Connection settings ----------
@@ -161,20 +132,6 @@ def test_a_conversation_is_saved_with_its_turns_and_loaded_unchanged():
     assert records.load_conversations() == {}
 
 
-def test_the_import_of_assets_and_chats_skips_known_ids_and_unknown_projects(tmp_path):
-    generated, chats = tmp_path / "generated", tmp_path / "conversations"
-    for folder, record in [(generated, _asset("ast_1")), (generated, _asset("ast_2", project_id="prj_gone")),
-                           (chats, _conversation("cnv_1"))]:
-        (folder / record.project_id).mkdir(parents=True, exist_ok=True)
-        (folder / record.project_id / f"{record.id}.json").write_text(record.model_dump_json(), encoding="utf-8")
-
-    assert (import_files.import_assets(generated), import_files.import_conversations(chats)) == (1, 1)
-    assert (import_files.import_assets(generated), import_files.import_conversations(chats)) == (0, 0)
-    assert list(records.load_assets()) == ["ast_1"] and list(records.load_conversations()) == ["cnv_1"]
-    assert records.load_assets()["ast_1"] == _asset("ast_1").model_copy(
-        update={"created_at": records.load_assets()["ast_1"].created_at})
-
-
 def test_an_asset_needs_an_existing_project():
     with pytest.raises(DatabaseError):
         records.save_assets([_asset("ast_1", project_id="prj_unknown")])
@@ -229,15 +186,6 @@ def test_a_call_is_logged_even_if_saving_it_fails(monkeypatch):
     monkeypatch.setattr(usage, "_totals", UsageTotals())
     usage.record(_call(1.0, NOON))  # no exception: the model call's request goes on
     assert usage._totals.calls == 1
-
-
-def test_the_import_of_the_usage_log_skips_known_calls_and_bad_lines(tmp_path):
-    path = tmp_path / "usage.jsonl"
-    path.write_text("\n".join([_call(1.0, NOON).model_dump_json(), "not json",
-                               _call(2.0, NOON.replace(hour=13)).model_dump_json()]), encoding="utf-8")
-    assert import_files.import_usage(path) == 2
-    assert import_files.import_usage(path) == 0
-    assert records.usage_totals().cost == 3.0
 
 
 # ---------- Sources (books) and summaries ----------
@@ -300,22 +248,6 @@ def test_a_summary_needs_its_book():
         records.save_summary(_summary("src_unknown"))
 
 
-def test_the_import_of_books_reads_records_and_summaries_and_skips_duplicates(tmp_path, monkeypatch):
-    monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
-    for source in [_source("src_a", "abc"), _source("src_b", "abc"),  # the same file twice: the second is skipped
-                   _source("src_c", "def", project_id="prj_gone")]:  # unknown project: skipped
-        folder = tmp_path / source.project_id / source.id
-        folder.mkdir(parents=True)
-        (folder / source.filename).write_bytes(b"%PDF-1.4")
-        storage.write_source_meta(source)
-    (tmp_path / db.DEFAULT_PROJECT_ID / "src_a" / storage.SUMMARY_FILENAME).write_text(
-        _summary("src_a").model_dump_json(), encoding="utf-8")
-
-    assert import_files.import_sources() == (1, 1)
-    assert import_files.import_sources() == (0, 0)
-    assert list(records.load_sources()) == ["src_a"] and list(records.load_summaries()) == ["src_a"]
-
-
 # ---------- Chunks and their vectors ----------
 
 def _chunks(source_id: str, n: int) -> list[Chunk]:
@@ -343,43 +275,3 @@ def test_a_deleted_book_gets_no_chunks_and_loses_its_own():
     records.replace_chunks(db.DEFAULT_PROJECT_ID, "src_a", _chunks("src_a", 2), ["x", "y"], [[1.0], [0.5]], "k")
     records.delete_source("src_a")
     assert records.load_chunks() == {}
-
-
-def test_the_import_copies_chunks_and_vectors_from_chroma(tmp_path, monkeypatch):
-    import chromadb
-
-    from app.rag import vectorstore
-    monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path / "uploads")
-    for source_id in ("src_a", "src_b"):
-        records.add_source(_source(source_id))
-        folder = tmp_path / "uploads" / db.DEFAULT_PROJECT_ID / source_id
-        folder.mkdir(parents=True)
-        (folder / storage.CHUNKS_FILENAME).write_text(
-            "\n".join(c.model_dump_json() for c in _chunks(source_id, 2)), encoding="utf-8")
-    client = chromadb.PersistentClient(path=str(tmp_path / "chroma"), settings=chromadb.Settings(anonymized_telemetry=False))
-    collection = client.create_collection(f"{db.DEFAULT_PROJECT_ID}--{vectorstore.EMBEDDING_KEY}")
-    collection.add(ids=["chk_src_a_1", "chk_src_a_2", "chk_src_b_1"], embeddings=[[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
-                   documents=["Book · I\n\nText 1.", "Book · I\n\nText 2.", "Book · I\n\nText 1."])
-
-    assert import_files.import_chunks(tmp_path / "chroma") == (1, 2)  # src_b: a vector is missing, skipped
-    assert import_files.import_chunks(tmp_path / "chroma") == (0, 0)
-    assert list(records.load_chunks()) == ["src_a"]
-    assert records.chunk_embeddings(["chk_src_a_2"]) == {"chk_src_a_2": [0.0, 1.0]}
-    assert records.chunk_counts(vectorstore.EMBEDDING_KEY) == {"src_a": 2}
-
-
-def test_the_import_uploads_books_and_covers_once(tmp_path, monkeypatch, stored_files):
-    monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
-    for source in (_source("src_a", "abc"), _source("src_b", "def")):
-        records.add_source(source)
-        folder = tmp_path / source.project_id / source.id
-        folder.mkdir(parents=True)
-        (folder / source.filename).write_bytes(b"%PDF-" + source.id.encode())
-    (tmp_path / db.DEFAULT_PROJECT_ID / "src_a" / storage.COVER_FILENAME).write_bytes(b"png")
-    records.add_source(_source("src_gone", "ghi"))  # no local file: skipped
-
-    assert import_files.import_files_to_storage() == (2, 1)
-    assert import_files.import_files_to_storage() == (0, 0)
-    assert stored_files.objects == {f"{db.DEFAULT_PROJECT_ID}/src_a/book.pdf": b"%PDF-src_a",
-                                    f"{db.DEFAULT_PROJECT_ID}/src_a/cover.png": b"png",
-                                    f"{db.DEFAULT_PROJECT_ID}/src_b/book.pdf": b"%PDF-src_b"}

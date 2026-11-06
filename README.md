@@ -7,11 +7,18 @@ hosts two MCP servers. What is built so far: [FEATURES.md](FEATURES.md).
 
 You need **3 terminals**: server, client, and (optionally) the MCP Inspector.
 
-### 0. Once: prerequisites and API key
+### 0. Once: prerequisites and keys
 
 - [uv](https://docs.astral.sh/uv/) (installs Python 3.11 and the server packages by itself) and [Node.js](https://nodejs.org) (with npm/npx).
-- An OpenRouter API key: copy `server/.env.example` to `server/.env` and set `OPENROUTER_API_KEY=...`
-  (or set it as a Windows user variable). Without a key the app starts, but nothing can be generated.
+- A [Supabase](https://supabase.com) project: it holds the sign-in, the database (PostgreSQL with pgvector) and
+  the uploaded books (Storage). Copy `server/.env.example` to `server/.env` and set `SUPABASE_URL`,
+  `DATABASE_URL` (Connect → Direct → Session pooler), `SUPABASE_SECRET_KEY` (API Keys → Secret keys) and
+  `DEFAULT_CLIENT_OWNER` (your sign-in email); copy `client/.env.example` to `client/.env.local` with the
+  project's URL and publishable key. The comments in both files say where to find each value.
+- An OpenRouter API key: `OPENROUTER_API_KEY=...` in `server/.env` (or a Windows user variable). Without a key
+  the app starts, but nothing can be generated.
+- Create the tables and the Storage bucket: `cd server`, then `uv run alembic upgrade head` (again after every
+  update that brings a new migration).
 - Optional: LangSmith tracing, see the comments in `server/.env.example`.
 
 ### 1. Start the server (terminal 1)
@@ -57,7 +64,7 @@ You can also call both MCP servers inside the app, in the **Market Intelligence*
 ### 4. See it in action
 
 1. **Knowledge Hub**: upload a PDF book (e.g. `Garden-Cities-of-To-Morrow_Ebenezer-Howard.pdf` in the repo root)
-   and press **Process**. Wait until it shows `ready`. Uploaded books stay in `server/assets/` and survive restarts.
+   and press **Process**. Wait until it shows `ready`. Uploaded books are stored in Supabase and survive restarts.
 2. Make the **book summary** and try **Ask your book** (the chat).
 3. **Content Studio**: in **Single asset**, write a blurb, post, newsletter, ... from the book with citations; in
    **Campaign kit**, check the brief and press **Generate campaign (zero-shot)** for personas, posts and a blurb.
@@ -78,7 +85,7 @@ More details: [server/README.md](server/README.md) (layout, MCP tools) and [eval
 
 ## Quick start (summary)
 
-0. **Once:** `OPENROUTER_API_KEY=...` in `server/.env`.
+0. **Once:** Supabase values and `OPENROUTER_API_KEY` in `server/.env` and `client/.env.local`, then `uv run alembic upgrade head` in `server/`.
 1. **Server (terminal 1):** `cd server`, then `uv run fastapi dev server.py`. Check http://127.0.0.1:8000/health and http://127.0.0.1:8000/docs in the browser.
 2. **Client (terminal 2):** `cd client`, then `npm install` (first time only) and `npm run dev`. Open **http://localhost:3000**.
 3. **MCP Inspector (terminal 3):** `npx @modelcontextprotocol/inspector`. Connect with Streamable HTTP to

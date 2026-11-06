@@ -10,8 +10,8 @@ uv run alembic upgrade head        # once, and after every update with a new mig
 uv run fastapi dev server.py
 ```
 
-The server needs the database (`DATABASE_URL` in `.env`, see `.env.example`): projects and API keys live there.
-Moving from the old JSON files once: `uv run python -m app.db.import_files` (after `alembic upgrade head`).
+The server needs Supabase: the database (`DATABASE_URL`) and Storage (`SUPABASE_SECRET_KEY`) in `.env`, see
+`.env.example`. Without the database it does not start.
 
 - API: http://127.0.0.1:8000
 - Interactive docs: http://127.0.0.1:8000/docs
@@ -37,7 +37,6 @@ server/
 │   │   ├── database.py     connection (DATABASE_URL), sessions, DatabaseError
 │   │   ├── tables.py       tables: projects, sources, summaries, chunks, assets, conversations, usage_log; api_keys
 │   │   ├── records.py      read and write all records; usage sums and budgets
-│   │   └── import_files.py one-time import of the old files (JSON, chunks, Chroma vectors)
 │   ├── rag/            Phase 1 Knowledge Hub
 │   │   ├── ingestion.py    PDF → chapters → chunks → vectors
 │   │   ├── vectorstore.py  embeddings in PostgreSQL (pgvector, LangChain PGVectorStore)
@@ -53,8 +52,38 @@ server/
 │   ├── agents/         Phase 4 Agent Workspace, not built yet
 │   └── api/            FastAPI routers: health, projects, sources, knowledge, assets, campaigns (+ deps.py)
 ├── migrations/         Alembic migrations of the database (alembic.ini next to server.py)
-└── assets/             old local data, only read by app.db.import_files (not committed)
+└── assets/books/       sample books for trying the app (not committed)
 ```
+
+## Data storage
+
+All data lives in one Supabase project; the server keeps only configuration (`.env`, `limits.toml`).
+
+| What | Where | Notes |
+|---|---|---|
+| Projects (clients) and owners | `public.projects` | one project per user (unique `owner_id`) |
+| Personal MCP API keys | `private.api_keys` | SHA-256 hashes only; schema not served by the REST API |
+| Books (sources) | `public.sources` | status saved, progress in memory; same file once per project |
+| Book summaries | `public.summaries` | deleted with the book |
+| Chunks and their vectors | `public.chunks` | pgvector, exact cosine search via LangChain `PGVectorStore` |
+| Generated assets, chats | `public.assets`, `public.conversations` | nested parts (citations, turns) as JSONB |
+| Model calls and costs | `public.usage_log` | the budgets of `limits.toml` are sums over it |
+| Uploaded PDFs and covers | Storage bucket `books` (private) | `{project}/{source}/book.pdf`, `cover.png`; max 50 MB |
+| Schema version | `private.alembic_version` | `uv run alembic current` |
+
+**Security.** Only the server reaches the data: it connects as the database owner and uses the secret key for
+Storage. Every table has row-level security without a policy, and the browser's roles (`anon`, `authenticated`)
+have no privileges on them (migration 0007); the `private` schema and the bucket are not reachable with the
+public key at all. A new table's migration must do the same (`ENABLE ROW LEVEL SECURITY`, `REVOKE ALL ... FROM
+anon, authenticated`).
+
+**Schema changes** go through Alembic: change `app/db/tables.py`, then
+`uv run alembic revision --autogenerate -m "..."`, check the file, `uv run alembic upgrade head`;
+`uv run alembic check` confirms the database matches the code.
+
+**Working copies in memory.** On startup the server loads the records into memory (`core/state.py`) and writes
+every change to the database first. That is fine for one server process; several processes would need to read
+from the database directly.
 
 ## MCP server: mcp-book-knowledge
 

@@ -1,46 +1,18 @@
 """Checks of uploaded files (type, size, checksum) and what can be read from them (kind, PDF author). The files
 themselves are stored in Supabase Storage (files.py), everything else in the database (app/db).
-
-The old upload folders (server/assets/uploads/{project_id}/{source_id}/: the file, .source.json, .summary.json,
-.chunks.jsonl, .cover.png) are only read by the one-time import (app/db/import_files.py: load_sources,
-load_summary, load_chunks, source_file_path, cover_file_path).
-
-Each source directory also holds META_FILENAME, the source's record as JSON, and after ingestion
-CHUNKS_FILENAME with its chunks. The upload directory
-is the single source of truth: load_sources() rebuilds all source records from it on startup, and
-deleting a source deletes its directory, so the GUI and the files on disk always match.
 """
 
 import hashlib
-import json
-import logging
 import os
 import re
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO
 
 import pymupdf
-from pydantic import ValidationError
 
-from app.core.config import DATA_DIR
 from app.core.limits import LIMITS
-from app.core.schemas import BookSummary, Chunk, Source, SourceKind
-
-logger = logging.getLogger(__name__)
-
-UPLOAD_DIR = DATA_DIR / "uploads"
-
-# Source record stored next to the uploaded file. It starts with "." and safe_filename strips
-# leading dots from uploads, so it can never collide with an uploaded file.
-META_FILENAME = ".source.json"
-# Chunks produced by ingestion, one JSON object per line (same dot-prefix reasoning as above).
-CHUNKS_FILENAME = ".chunks.jsonl"
-# Book summary (summary.py), created on demand.
-SUMMARY_FILENAME = ".summary.json"
-# Cover image of the book (ingestion.make_cover), shown in the GUI.
-COVER_FILENAME = ".cover.png"
+from app.core.schemas import SourceKind
 
 ALLOWED_EXTENSIONS = {".pdf"}  # widen when other formats get an ingestion path (EPUB, DOCX, video, ...)
 MAX_UPLOAD_BYTES = LIMITS.per_user.max_upload_mb * 1024 * 1024  # limits.toml
@@ -153,30 +125,6 @@ def detect_kind(filename: str) -> SourceKind:
     return "document"
 
 
-def write_source_meta(source: Source) -> None:
-    """Save a source record as JSON in its upload directory, replacing any previous version.
-
-    Call it whenever a source changes (after upload, and later on every ingestion status change).
-    Writes to a temporary file first and then renames it, so a crash mid-write never leaves a
-    half-written record behind.
-
-    Args:
-        source: The source to save; its directory must already exist.
-
-    Raises:
-        OSError: If the file cannot be written.
-    """
-    source_dir = UPLOAD_DIR / source.project_id / source.id
-    tmp = source_dir / f"{META_FILENAME}.tmp"
-    tmp.write_text(source.model_dump_json(indent=2), encoding="utf-8")
-    tmp.replace(source_dir / META_FILENAME)
-
-
-def cover_file_path(source: Source) -> Path:
-    """Path of a book's cover image in its old upload folder (only read by the one-time import)."""
-    return UPLOAD_DIR / source.project_id / source.id / COVER_FILENAME
-
-
 def read_pdf_author(path: Path) -> str:
     """The author from a PDF's metadata: its author field, or else "..., by Name" at the end of its title
     (as in Project Gutenberg files, e.g. "The Project Gutenberg eBook of Successful Stock Speculation, by J. J. Butler").
@@ -194,118 +142,3 @@ def read_pdf_author(path: Path) -> str:
         match = re.search(r",? by ([^,;]+?)(?:--.*)?$", meta.get("title") or "", re.IGNORECASE)
         author = match.group(1).strip() if match else ""
     return author[:120]
-
-
-def source_file_path(source: Source) -> Path:
-    """Path of the uploaded file of a source in its old upload folder (only read by the one-time import).
-
-    Args:
-        source: The source whose file path to build.
-    """
-    return UPLOAD_DIR / source.project_id / source.id / source.filename
-
-
-def load_chunks(source: Source) -> list[Chunk] | None:
-    """Read the saved chunks of a source.
-
-    Args:
-        source: The source whose chunks to read.
-
-    Returns:
-        The chunks in reading order, or None if the file is missing or cannot be parsed.
-    """
-    path = UPLOAD_DIR / source.project_id / source.id / CHUNKS_FILENAME
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-        return [Chunk.model_validate_json(line) for line in lines if line.strip()]
-    except (OSError, ValidationError):
-        return None
-
-
-def load_summary(source: Source) -> BookSummary | None:
-    """Read the saved summary of a book, or None if there is none (or it cannot be parsed)."""
-    try:
-        return BookSummary.model_validate_json((UPLOAD_DIR / source.project_id / source.id / SUMMARY_FILENAME).read_text(encoding="utf-8"))
-    except (OSError, ValidationError):
-        return None
-
-
-def load_sources() -> dict[str, Source]:
-    """Rebuild all source records from the upload directory (called once on server startup).
-
-    Looks at every {project_id}/{source_id} directory. Uses its META_FILENAME when it is valid;
-    otherwise (missing, corrupt, or uploaded before records were saved) recovers the record from
-    the uploaded file itself. Directories without exactly one uploaded file are skipped with a
-    warning and left untouched on disk.
-
-    Returns:
-        Source records by id, oldest first.
-    """
-    sources: list[Source] = []
-    for source_dir in sorted(p for p in UPLOAD_DIR.glob("*/*") if p.is_dir()):
-        project_id, source_id = source_dir.parent.name, source_dir.name
-        source = _read_source_meta(source_dir, project_id, source_id) or _recover_source_meta(source_dir, project_id, source_id)
-        if source is None:
-            logger.warning("Skipping %s: no uploaded file found", source_dir)
-        else:
-            sources.append(source)
-    sources.sort(key=lambda s: s.created_at)
-    return {s.id: s for s in sources}
-
-
-def _read_source_meta(source_dir: Path, project_id: str, source_id: str) -> Source | None:
-    """Read and check the saved record of one source directory.
-
-    Args:
-        source_dir: The directory {project_id}/{source_id}.
-        project_id: Project id taken from the directory path.
-        source_id: Source id taken from the directory path.
-
-    Returns:
-        The record, or None if it is missing, unreadable, invalid, does not match the directory
-        path, or its file no longer exists.
-    """
-    try:
-        source = Source.model_validate_json((source_dir / META_FILENAME).read_text(encoding="utf-8"))
-    except (OSError, ValidationError):
-        return None
-    if (source.project_id, source.id) != (project_id, source_id) or not (source_dir / source.filename).is_file():
-        return None
-    return source
-
-
-def _recover_source_meta(source_dir: Path, project_id: str, source_id: str) -> Source | None:
-    """Recreate the record of a source directory from its uploaded file and save it.
-
-    Uses the file's name, size and modification time; the status is "uploaded" because no
-    ingestion results exist for it.
-
-    Args:
-        source_dir: The directory {project_id}/{source_id}.
-        project_id: Project id taken from the directory path.
-        source_id: Source id taken from the directory path.
-
-    Returns:
-        The recovered record, or None if the directory does not hold exactly one uploaded file.
-    """
-    files = [p for p in source_dir.iterdir() if p.is_file() and not p.name.startswith(".")]
-    if len(files) != 1:
-        return None
-    stat = files[0].stat()
-    source = Source(
-        id=source_id,
-        project_id=project_id,
-        filename=files[0].name,
-        kind=detect_kind(files[0].name),
-        size_bytes=stat.st_size,
-        status="uploaded",
-        progress=100,
-        chunk_count=0,
-        created_at=datetime.fromtimestamp(stat.st_mtime, timezone.utc),
-    )
-    try:
-        write_source_meta(source)
-    except OSError:
-        logger.warning("Could not save recovered record for %s", source_dir)
-    logger.info("Recovered source record for %s", source_dir)
-    return source

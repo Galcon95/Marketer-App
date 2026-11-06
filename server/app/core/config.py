@@ -1,4 +1,4 @@
-"""Configuration of the server: paths, model provider, API key and model names, LangSmith tracing.
+"""Configuration of the server: model provider, API key and model names, LangSmith tracing.
 
 Read once on import from environment variables (and server/.env, if present), first match wins:
     OPENROUTER_API_KEY  → models via OpenRouter (default chat "openai/gpt-4o-mini",
@@ -37,7 +37,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 SERVER_DIR = Path(__file__).resolve().parents[2]  # server/
-DATA_DIR = SERVER_DIR / "assets"  # uploads, chunks, vectors, generated assets, usage log
 
 load_dotenv(SERVER_DIR / ".env")
 

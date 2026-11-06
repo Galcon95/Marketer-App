@@ -3,24 +3,6 @@ __pycache__/
 *.pyc
 .env
 
-# User uploads and sample books (never committed: user content, can be large or copyrighted)
-assets/uploads/
-assets/books/
-
-# Vector database (rebuilt by re-indexing sources)
-assets/chroma/
-
-# Generated marketing assets (user data)
-assets/generated/
-
-# Ask your book conversations (user data)
-assets/conversations/
-
-# Usage and cost log of model calls
-assets/usage/
-
-# Projects (clients) and their owners: user ids (user data)
-assets/projects.json
-
-# Personal API keys for the MCP servers (only hashes, but user data)
-assets/api_keys.json
+# Sample books for trying the app (never committed: can be large or copyrighted). All user data is in Supabase
+# (database and Storage), nothing is stored here any more.
+assets/

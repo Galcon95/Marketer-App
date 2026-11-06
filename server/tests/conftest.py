@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
 from app.campaign import kit
-from app.core import api_keys, auth, config, files, llm, storage, usage
+from app.core import api_keys, auth, config, files, llm, usage
 from app.core import state as db
 from app.core.auth import User
 from app.core.schemas import Project, UsageTotals
@@ -99,7 +99,6 @@ def offline(tmp_path, monkeypatch):
     database), and no model
     can be called (no API key: model routes answer 503; a chat model call fails the test). So a request that gets
     past a check it should not pass can neither touch the real library nor cost money."""
-    monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path / "upload_dir")
     monkeypatch.setattr(usage, "_totals", UsageTotals())
     monkeypatch.setattr(config, "API_KEY", None)  # chat model: llm.is_configured() is False → 503
     monkeypatch.setattr(vectorstore, "API_KEY", None)  # embeddings: vectorstore.is_configured() is False → 503
