@@ -1,9 +1,9 @@
-"""File storage for uploaded sources: server/assets/uploads/{project_id}/{source_id}/{filename}, with the book's
-cover. Everything else is in the database (app/db): projects, API keys, the source records, book summaries, chunks
-with their vectors, generated assets, chats and the usage log.
+"""Checks of uploaded files (type, size, checksum) and what can be read from them (kind, PDF author). The files
+themselves are stored in Supabase Storage (files.py), everything else in the database (app/db).
 
-The old record files (.source.json, .summary.json, .chunks.jsonl) are only read by the one-time import
-(app/db/import_files.py: load_sources, load_summary, load_chunks).
+The old upload folders (server/assets/uploads/{project_id}/{source_id}/: the file, .source.json, .summary.json,
+.chunks.jsonl, .cover.png) are only read by the one-time import (app/db/import_files.py: load_sources,
+load_summary, load_chunks, source_file_path, cover_file_path).
 
 Each source directory also holds META_FILENAME, the source's record as JSON, and after ingestion
 CHUNKS_FILENAME with its chunks. The upload directory
@@ -14,8 +14,9 @@ deleting a source deletes its directory, so the GUI and the files on disk always
 import hashlib
 import json
 import logging
+import os
 import re
-import shutil
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO
@@ -85,41 +86,38 @@ def safe_filename(name: str) -> str:
     return name[:150] or "upload"
 
 
-def save_upload(stream: BinaryIO, filename: str, project_id: str, source_id: str) -> tuple[Path, int, str]:
-    """Validate and stream an upload to disk. Returns (path, size, SHA-256). Leaves nothing behind on failure.
+def save_upload(stream: BinaryIO, filename: str) -> tuple[Path, int, str]:
+    """Validate an upload and stream it into a temporary file. Returns (path, size, SHA-256); the caller deletes the
+    file (it goes on to Storage). Leaves nothing behind on failure.
 
-    Checks the extension first, then creates a fresh directory for the source and copies the stream
-    in CHUNK_BYTES pieces so large files never sit in memory as a whole. While copying it checks that
-    the first bytes match the expected file signature and that the total size stays under
-    MAX_UPLOAD_BYTES, and computes the content's SHA-256 checksum in the same pass (for the duplicate check).
-    On any error (including client disconnects) the source directory is removed before the exception is re-raised.
+    Checks the extension first, then copies the stream in CHUNK_BYTES pieces so large files never sit in memory as
+    a whole. While copying it checks that the first bytes match the expected file signature and that the total size
+    stays under MAX_UPLOAD_BYTES, and computes the content's SHA-256 checksum in the same pass (for the duplicate
+    check). On any error (including client disconnects) the temporary file is removed before the exception is
+    re-raised.
 
     Args:
         stream: Readable binary file object with the upload content (e.g. UploadFile.file).
         filename: Already sanitized file name (see safe_filename); its extension decides the type.
-        project_id: Project the source belongs to; first directory level.
-        source_id: New, unique source id; second directory level. Must not exist yet.
 
     Returns:
-        Tuple of the path of the stored file, its size in bytes and its SHA-256 checksum (hex).
+        Tuple of the temporary file's path, its size in bytes and its SHA-256 checksum (hex).
 
     Raises:
         UploadError: 415 for an unsupported extension or wrong content signature,
             413 when the file exceeds MAX_UPLOAD_BYTES, 400 when the file is empty.
-        FileExistsError: If the directory for source_id already exists.
     """
     ext = Path(filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
         raise UploadError(415, f"Unsupported file type '{ext or 'none'}'. Allowed: {allowed}")
 
-    target_dir = UPLOAD_DIR / project_id / source_id
-    target_dir.mkdir(parents=True, exist_ok=False)
-    target = target_dir / filename
+    handle, name = tempfile.mkstemp(prefix="upload-", suffix=ext)
+    target = Path(name)
     size = 0
     digest = hashlib.sha256()
     try:
-        with target.open("wb") as out:
+        with os.fdopen(handle, "wb") as out:
             while chunk := stream.read(CHUNK_BYTES):
                 if size == 0 and ext in SIGNATURES and not chunk.startswith(SIGNATURES[ext]):
                     raise UploadError(415, f"The file content is not a valid {ext[1:].upper()}")
@@ -131,34 +129,9 @@ def save_upload(stream: BinaryIO, filename: str, project_id: str, source_id: str
         if size == 0:
             raise UploadError(400, "File is empty")
     except BaseException:
-        shutil.rmtree(target_dir, ignore_errors=True)
+        target.unlink(missing_ok=True)
         raise
     return target, size, digest.hexdigest()
-
-
-def file_sha256(path: Path) -> str:
-    """SHA-256 checksum (hex) of a stored file, read in CHUNK_BYTES pieces; "" if it cannot be read."""
-    digest = hashlib.sha256()
-    try:
-        with path.open("rb") as f:
-            while chunk := f.read(CHUNK_BYTES):
-                digest.update(chunk)
-    except OSError:
-        return ""
-    return digest.hexdigest()
-
-
-def delete_source_files(project_id: str, source_id: str) -> None:
-    """Delete the stored file(s) of a source by removing its whole upload directory.
-
-    Missing directories are ignored, so it is safe to call for sources that have no files
-    (e.g. after an interrupted upload).
-
-    Args:
-        project_id: Project the source belongs to.
-        source_id: Source whose directory should be removed.
-    """
-    shutil.rmtree(UPLOAD_DIR / project_id / source_id, ignore_errors=True)
 
 
 def detect_kind(filename: str) -> SourceKind:
@@ -199,8 +172,8 @@ def write_source_meta(source: Source) -> None:
     tmp.replace(source_dir / META_FILENAME)
 
 
-def cover_path(source: Source) -> Path:
-    """Path of a book's cover image (it may not exist yet, see ingestion.make_cover)."""
+def cover_file_path(source: Source) -> Path:
+    """Path of a book's cover image in its old upload folder (only read by the one-time import)."""
     return UPLOAD_DIR / source.project_id / source.id / COVER_FILENAME
 
 
@@ -224,7 +197,7 @@ def read_pdf_author(path: Path) -> str:
 
 
 def source_file_path(source: Source) -> Path:
-    """Path of the uploaded file of a source (the file may be missing, e.g. if deleted by hand).
+    """Path of the uploaded file of a source in its old upload folder (only read by the one-time import).
 
     Args:
         source: The source whose file path to build.

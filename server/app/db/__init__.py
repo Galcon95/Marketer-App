@@ -6,7 +6,7 @@
     import_files.py  one-time import of the old JSON files: uv run python -m app.db.import_files
 
 In the database: projects, books (sources) with their summaries and chunks (with pgvector embeddings), generated
-assets, "Ask your book" chats and the usage log (schema public), and personal API keys (private.api_keys). Still on
-disk: the uploaded files and their covers (server/assets/uploads/).
+assets, "Ask your book" chats and the usage log (schema public), and personal API keys (private.api_keys). The
+uploaded files and their covers are in Supabase Storage (core/files.py).
 Migrations live in server/migrations/ (Alembic): uv run alembic upgrade head
 """

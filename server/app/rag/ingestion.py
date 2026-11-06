@@ -15,6 +15,7 @@ the progress (0-100) within a status is kept in memory only, where the GUI polls
 import bisect
 import logging
 import re
+import tempfile
 import threading
 from collections import Counter
 from collections.abc import Callable, Iterator
@@ -29,7 +30,7 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.core import state as db
-from app.core import storage
+from app.core import files
 from app.core.schemas import Chunk, ChunkLocation, Source
 from app.db import records
 from app.rag import vectorstore
@@ -54,6 +55,8 @@ COVER_SEARCH_PAGES = 5  # pages searched for an embedded cover picture
 COVER_MAX_HEIGHT = 900  # px; larger cover images are scaled down
 # Guards replacing db.chunks, which background tasks and requests may do at the same time.
 _chunks_lock = threading.Lock()
+# Cover images (PNG) by source id, so the GUI's book list does not fetch them from Storage on every page load.
+_covers: dict[str, bytes] = {}
 
 
 class IngestionError(Exception):
@@ -81,15 +84,14 @@ def ingest_source(source_id: str) -> None:
             source = _update(source_id, status="chunking", progress=0, error=None)
             if not vectorstore.is_configured():
                 raise IngestionError("No API key for embeddings. Add OPENROUTER_API_KEY (or OPENAI_API_KEY) to server/.env, restart the server and press Retry.")
-            loader = BookLoader(
-                storage.source_file_path(source),
-                on_progress=lambda done: _update_progress(source_id, round(done * 90)),
-            )
-            sections = loader.load()
-            try:
-                _make_cover(source)
-            except Exception:  # a missing cover must never fail the processing
-                logger.warning("Could not create a cover for %s", source_id, exc_info=True)
+            with tempfile.TemporaryDirectory(prefix="ingest-") as folder:  # PyMuPDF needs the book on disk
+                book = _download_book(source, Path(folder))
+                loader = BookLoader(book, on_progress=lambda done: _update_progress(source_id, round(done * 90)))
+                sections = loader.load()
+                try:
+                    _make_cover(source, book)
+                except Exception:  # a missing cover must never fail the processing
+                    logger.warning("Could not create a cover for %s", source_id, exc_info=True)
             pieces = _merge_small_pieces(_splitter().split_documents(sections))
             chunks = [_to_chunk(doc, source_id, n) for n, doc in enumerate(pieces, start=1)]
             if not chunks:
@@ -130,9 +132,7 @@ def restore_sources() -> None:
     summaries = records.load_summaries()
     saved_chunks = records.load_chunks()
     searchable = records.chunk_counts(vectorstore.EMBEDDING_KEY)
-    _warn_about_unknown_folders(sources)
     for source in sources.values():
-        source = _with_missing_metadata(source)  # sources uploaded before authors and checksums were recorded
         chunks: list[Chunk] = []
         if source.status in PROCESSING_STATUSES:
             source = _mark_failed(source, "Processing was interrupted by a server restart. Press Retry.")
@@ -152,34 +152,6 @@ def restore_sources() -> None:
             db.summaries[source.id] = summary
 
 
-def _warn_about_unknown_folders(sources: dict[str, Source]) -> None:
-    """Log upload folders that belong to no source in the database (e.g. not imported yet). They are left as they
-    are: deleting files is the user's decision."""
-    for folder in sorted(p for p in storage.UPLOAD_DIR.glob("*/*") if p.is_dir()):
-        source = sources.get(folder.name)
-        if source is None or source.project_id != folder.parent.name:
-            logger.warning("Upload folder %s belongs to no source in the database; run app.db.import_files?", folder)
-
-
-def _with_missing_metadata(source: Source) -> Source:
-    """The source with what older records lack, saved to its record: the author from the PDF's metadata and the
-    file's content checksum (for the duplicate check on upload). Unchanged if nothing is missing or found."""
-    update = {}
-    path = storage.source_file_path(source)
-    if not source.author and source.kind == "document" and (author := storage.read_pdf_author(path)):
-        update["author"] = author
-    if not source.sha256 and path.is_file() and (sha256 := storage.file_sha256(path)):
-        update["sha256"] = sha256
-    if not update:
-        return source
-    source = source.model_copy(update=update)
-    try:
-        records.update_source(source)
-    except OSError:  # DatabaseError
-        logger.warning("Could not save the author/checksum of %s", source.id)
-    return source
-
-
 def replace_source_chunks(source_id: str, chunks: list[Chunk]) -> None:
     """Replace all in-memory chunks of a source (pass [] to remove them).
 
@@ -197,40 +169,65 @@ def replace_source_chunks(source_id: str, chunks: list[Chunk]) -> None:
         db.chunks = kept
 
 
-def make_cover(source: Source, timeout: float = 10) -> bool:
-    """Create the cover image of a book if it does not exist yet (for books processed before covers existed).
+def cover(source: Source, timeout: float = 10) -> bytes | None:
+    """The cover image (PNG) of a book: from memory, else from Storage, else made from the PDF now (for books
+    processed before covers existed) and stored.
 
-    Waits for the PDF lock, because PyMuPDF must not run in two threads at once.
+    Making one waits for the PDF lock, because PyMuPDF must not run in two threads at once.
 
     Args:
         source: The book.
         timeout: Seconds to wait if a book is being processed right now.
 
     Returns:
-        True if a cover image exists afterwards.
+        The PNG, or None if there is none and none can be made (no stored PDF, or the lock was busy).
+
+    Raises:
+        FileStoreError: If Storage cannot be reached.
     """
-    if storage.cover_path(source).is_file():
-        return True
+    if source.id in _covers:
+        return _covers[source.id]
+    if image := files.get(files.cover_path(source.project_id, source.id)):
+        _covers[source.id] = image
+        return image
     if not _ingest_lock.acquire(timeout=timeout):
-        return False
+        return None
     try:
-        _make_cover(source)
+        with tempfile.TemporaryDirectory(prefix="cover-") as folder:
+            _make_cover(source, _download_book(source, Path(folder)))
+    except IngestionError:
+        return None
+    except files.FileStoreError:
+        raise
     except Exception:
         logger.warning("Could not create a cover for %s", source.id, exc_info=True)
     finally:
         _ingest_lock.release()
-    return storage.cover_path(source).is_file()
+    return _covers.get(source.id)
 
 
-def _make_cover(source: Source) -> None:
-    """Save the book's cover as storage.cover_path (caller holds _ingest_lock).
+def _download_book(source: Source, folder: Path) -> Path:
+    """Download a source's stored file into a folder and return its path.
+
+    Raises:
+        IngestionError: If there is no stored file.
+        FileStoreError: If Storage cannot be reached.
+    """
+    target = folder / files.book_path(source.project_id, source.id, source.filename).rsplit("/", 1)[-1]
+    if not files.download(files.book_path(source.project_id, source.id, source.filename), target):
+        raise IngestionError("The stored file of this book is missing. Delete the book and upload it again.")
+    return target
+
+
+def _make_cover(source: Source, book: Path) -> None:
+    """Make the book's cover from its PDF and store it (Storage and memory; caller holds _ingest_lock).
 
     Uses the first large portrait-format picture in the first COVER_SEARCH_PAGES pages (a typical
     scanned or designed cover; the clearly-taller-than-wide rule skips author portraits and
     illustrations), scaled down to at most COVER_MAX_HEIGHT px. Without one, the first page that
     has any content is rendered as the cover.
     """
-    with pymupdf.open(storage.source_file_path(source)) as doc:
+    with pymupdf.open(book) as doc:
         pixmap = None
         for page in list(doc)[:COVER_SEARCH_PAGES]:
             for image in page.get_images(full=True):
@@ -249,7 +246,9 @@ def _make_cover(source: Source) -> None:
             pixmap = pymupdf.Pixmap(pixmap, 0)  # drop transparency
         while pixmap.height > COVER_MAX_HEIGHT:
             pixmap.shrink(1)  # halves width and height
-        pixmap.save(storage.cover_path(source))
+        image = pixmap.tobytes("png")
+    files.put(files.cover_path(source.project_id, source.id), image, "image/png")
+    _covers[source.id] = image
 
 
 def delete_source_data(source: Source) -> None:
@@ -260,6 +259,7 @@ def delete_source_data(source: Source) -> None:
     """
     replace_source_chunks(source.id, [])
     db.summaries.pop(source.id, None)
+    _covers.pop(source.id, None)
 
 
 def count_tokens(text: str) -> int:

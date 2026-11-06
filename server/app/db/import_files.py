@@ -2,7 +2,8 @@
 generated/{project_id}/*.json (assets), conversations/{project_id}/*.json (chats), usage/usage.jsonl (the
 model calls and their costs) and from uploads/{project_id}/{source_id}/ the book records (.source.json; recovered
 from the PDF if missing), summaries (.summary.json) and chunks (.chunks.jsonl) with their vectors, copied from
-Chroma (server/assets/chroma/) without new embedding calls. The PDFs and covers stay where they are.
+Chroma (server/assets/chroma/) without new embedding calls; and the uploaded files and their covers go to
+Supabase Storage (the bucket "books", core/files.py).
 
     uv run python -m app.db.import_files        (from server/, after `uv run alembic upgrade head`)
 
@@ -19,7 +20,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from app.core import storage
+from app.core import files, storage
 from app.core.config import DATA_DIR
 from app.core.schemas import ApiKey, Asset, Conversation, Project, UsageRecord
 from app.db import records
@@ -182,6 +183,30 @@ def import_chunks(chroma_dir: Path = CHROMA_DIR) -> tuple[int, int]:
     return books, copied
 
 
+def import_files_to_storage() -> tuple[int, int]:
+    """Upload the books' files and covers from their old upload folders to Supabase Storage, for the books in the
+    database whose file is not there yet (a missing cover is made again on first view).
+
+    Returns:
+        (files, covers) uploaded.
+    """
+    books = covers = 0
+    for source in records.load_sources().values():
+        local = storage.source_file_path(source)
+        stored = files.book_path(source.project_id, source.id, source.filename)
+        if not local.is_file():
+            print(f"{source.id}: no local file {local.name}, skipped")
+            continue
+        if files.exists(stored):
+            continue
+        files.put(stored, local, "application/pdf" if local.suffix.lower() == ".pdf" else "application/octet-stream")
+        books += 1
+        if (cover := storage.cover_file_path(source)).is_file():
+            files.put(files.cover_path(source.project_id, source.id), cover, "image/png")
+            covers += 1
+    return books, covers
+
+
 def main() -> None:
     try:
         print(f"projects: {import_projects()} imported")
@@ -193,6 +218,8 @@ def main() -> None:
         print(f"books: {books} imported, summaries: {summaries} imported")
         books, chunks = import_chunks()
         print(f"chunks: {chunks} of {books} books copied with their vectors")
+        uploaded, covers = import_files_to_storage()
+        print(f"files: {uploaded} books and {covers} covers uploaded to Storage")
     except OSError as e:  # DatabaseError
         sys.exit(f"Import failed: {e} ({e.__cause__})")
 

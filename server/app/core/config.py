@@ -23,6 +23,9 @@ Read once on import from environment variables (and server/.env, if present), fi
                           with its public signing keys); without it every API request except /health gets 503
     DEFAULT_CLIENT_OWNER → email of the user who owns the default client ("demo-campaign", the data from before
                           sign-in existed) and is the app's admin (app-wide usage, MCP console); see accounts.py
+    SUPABASE_SECRET_KEY → the Supabase project's secret key ("sb_secret_..."): the server stores the uploaded books
+                          and their covers with it in the private Storage bucket "books" (files.py); never sent to
+                          the browser
     DATABASE_URL        → connection string of the PostgreSQL database (Supabase), e.g.
                           "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres";
                           required: the server does not start without it (see app/db/database.py)
@@ -63,6 +66,7 @@ DEBUG_MODE = os.getenv("DEBUG_MODE", "false").strip().lower() in ("true", "1", "
 LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT") or os.getenv("LANGCHAIN_PROJECT") or "marketer-app"
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "").strip()
 DEFAULT_CLIENT_OWNER = os.getenv("DEFAULT_CLIENT_OWNER", "").strip().lower()
 
 

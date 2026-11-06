@@ -366,3 +366,20 @@ def test_the_import_copies_chunks_and_vectors_from_chroma(tmp_path, monkeypatch)
     assert list(records.load_chunks()) == ["src_a"]
     assert records.chunk_embeddings(["chk_src_a_2"]) == {"chk_src_a_2": [0.0, 1.0]}
     assert records.chunk_counts(vectorstore.EMBEDDING_KEY) == {"src_a": 2}
+
+
+def test_the_import_uploads_books_and_covers_once(tmp_path, monkeypatch, stored_files):
+    monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
+    for source in (_source("src_a", "abc"), _source("src_b", "def")):
+        records.add_source(source)
+        folder = tmp_path / source.project_id / source.id
+        folder.mkdir(parents=True)
+        (folder / source.filename).write_bytes(b"%PDF-" + source.id.encode())
+    (tmp_path / db.DEFAULT_PROJECT_ID / "src_a" / storage.COVER_FILENAME).write_bytes(b"png")
+    records.add_source(_source("src_gone", "ghi"))  # no local file: skipped
+
+    assert import_files.import_files_to_storage() == (2, 1)
+    assert import_files.import_files_to_storage() == (0, 0)
+    assert stored_files.objects == {f"{db.DEFAULT_PROJECT_ID}/src_a/book.pdf": b"%PDF-src_a",
+                                    f"{db.DEFAULT_PROJECT_ID}/src_a/cover.png": b"png",
+                                    f"{db.DEFAULT_PROJECT_ID}/src_b/book.pdf": b"%PDF-src_b"}

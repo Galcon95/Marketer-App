@@ -62,3 +62,37 @@ def test_on_startup_a_ready_book_needs_chunks_of_the_current_model(book, key, st
     ingestion.restore_sources()
     assert db.sources[book.id].status == status
     assert ("chk_a_1" in db.chunks) == (status == "ready")
+
+
+# ---------- Files in Storage (the in-memory store of conftest.py) ----------
+
+def _pdf() -> bytes:
+    import pymupdf
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 72), "A tiny test book")
+    return doc.tobytes()
+
+
+def test_a_stored_cover_is_used_and_kept_in_memory(book, stored_files, monkeypatch):
+    stored_files.objects[f"{book.project_id}/{book.id}/cover.png"] = b"png"
+    monkeypatch.setattr(ingestion, "_covers", {})
+    assert ingestion.cover(book) == b"png"
+    stored_files.objects.clear()
+    assert ingestion.cover(book) == b"png"  # from memory now
+
+
+def test_a_missing_cover_is_made_from_the_pdf_once(book, stored_files, monkeypatch):
+    monkeypatch.setattr(ingestion, "_covers", {})
+    stored_files.objects[f"{book.project_id}/{book.id}/book.pdf"] = _pdf()
+    image = ingestion.cover(book)
+    assert image.startswith(b"\x89PNG")
+    assert stored_files.objects[f"{book.project_id}/{book.id}/cover.png"] == image
+
+
+def test_a_book_without_a_stored_file_gets_no_cover_and_fails_processing(book, monkeypatch):
+    monkeypatch.setattr(ingestion, "_covers", {})
+    assert ingestion.cover(book) is None
+    monkeypatch.setattr(ingestion.vectorstore, "is_configured", lambda: True)
+    ingestion.ingest_source(book.id)
+    assert db.sources[book.id].status == "failed"
+    assert "stored file of this book is missing" in records.load_sources()[book.id].error

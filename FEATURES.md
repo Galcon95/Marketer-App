@@ -16,16 +16,16 @@ Status as of commit `e114f04` (2026-10-22).
 ## Phase 1 – Knowledge Hub (RAG over your books)
 
 ### Upload & ingestion
-- Upload PDF books with a progress bar (`POST /projects/{id}/sources`).
-- **No duplicates:** each upload's SHA-256 checksum is computed while it is saved; a file whose content is already in the library (under any name) is rejected with 409 ("This file is already in your library as '…'") and the copy is deleted. Books uploaded earlier get their checksum at the next server start.
+- Upload PDF books (up to 50 MB, `limits.toml`) with a progress bar (`POST /projects/{id}/sources`). The file is checked in a temporary file (type, size, checksum), then stored in a **private Supabase Storage bucket** (`books`, reached only by the server with its secret key; the browser's public key gets nothing), then its record is saved in the database; if a step fails, the earlier ones are undone.
+- **No duplicates:** each upload's SHA-256 checksum is computed while it is saved; a file whose content is already in the library (under any name) is rejected with 409 ("This file is already in your library as '…'") and nothing is stored. The database also refuses the same file twice in a project (a partial unique index).
 - Ingestion runs in the background: PDF → chapters → token-based chunks (500 tokens with 80 overlap, so tiny pieces get merged) → embeddings → PostgreSQL with pgvector (Supabase), searched through LangChain's `PGVectorStore`.
 - Chapters come from the PDF's table of contents. PDFs without one (e.g. many Project Gutenberg files) get them from heading lines in the text (`CHAPTER IV.` plus its title line, or `PART TWO` / `BOOK I` when there are no chapters); the printed contents page is ignored.
 - The Project Gutenberg license after the e-book's end marker becomes its own section instead of being glued to the last chapter.
-- Live progress through the statuses `queued → chunking → embedding → ready` (or `failed`), saved so it survives restarts.
+- Live progress through the statuses `queued → chunking → embedding → ready` (or `failed`); the status is saved in the database, the percentage stays in memory where the GUI polls it. Processing downloads the book from Storage into a temporary folder (PyMuPDF needs a file).
 - Sources are processed one at a time, because PyMuPDF is not thread-safe.
 - **Process / Re-index / Retry** actions.
 - **Deleting a book** (from its card or the sources table) asks first and says what else goes: the book's file, chunks, vectors and summary, the generated texts made only from it (incl. its campaign kits) and the chats that only used its passages. Texts and chats that also draw on other books are kept (`GET /sources/{id}/deletion` previews, `DELETE /sources/{id}` deletes).
-- Book covers are extracted from the PDF and shown in the library.
+- Book covers are extracted from the PDF once, stored in Storage next to the book and kept in memory, and shown in the library.
 - The author is read from the PDF's metadata when the file name has none; it is used in prompts, citations, the MCP tools and the campaign kits.
 - Chunk browser: page through a book's chunks with chapter and page info.
 - Open the original PDF at the cited page (PDF page links).

@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
 from app.campaign import kit
-from app.core import api_keys, auth, config, llm, storage, usage
+from app.core import api_keys, auth, config, files, llm, storage, usage
 from app.core import state as db
 from app.core.auth import User
 from app.core.schemas import Project, UsageTotals
@@ -42,6 +42,38 @@ def test_database(monkeypatch):
     database.use_engine(engine)
     yield engine
     engine.dispose()
+
+
+class MemoryFiles:
+    """An in-memory stand-in for Supabase Storage (files.Backend): {object name: bytes}."""
+
+    def __init__(self):
+        self.objects: dict[str, bytes] = {}
+
+    def put(self, path, data, content_type):
+        self.objects[path] = data.read_bytes() if hasattr(data, "read_bytes") else bytes(data)
+
+    def get(self, path):
+        return self.objects.get(path)
+
+    def stream(self, path):
+        return None if path not in self.objects else iter([self.objects[path]])
+
+    def names(self, folder):
+        prefix = folder.rstrip("/") + "/"
+        return [p[len(prefix):] for p in self.objects if p.startswith(prefix) and "/" not in p[len(prefix):]]
+
+    def delete(self, paths):
+        for p in paths:
+            self.objects.pop(p, None)
+
+
+@pytest.fixture(autouse=True)
+def stored_files(monkeypatch) -> MemoryFiles:
+    """An empty in-memory file store instead of Supabase Storage, so no test ever reads or writes real files."""
+    memory = MemoryFiles()
+    monkeypatch.setattr(files, "_backend", memory)
+    return memory
 
 
 @pytest.fixture(autouse=True)

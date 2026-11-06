@@ -29,7 +29,8 @@ server/
 │   │   ├── llm.py      chat model (ChatOpenAI via OpenRouter), GenerationError, token counts
 │   │   ├── schemas.py  Pydantic request/response models
 │   │   ├── state.py    in-memory stores (projects, sources, chunks, summaries, assets)
-│   │   ├── storage.py  files on disk: uploaded books and covers
+│   │   ├── storage.py  upload checks (type, size, checksum), PDF author
+│   │   ├── files.py    the books and covers in Supabase Storage (private bucket "books")
 │   │   ├── usage.py    tokens and costs of every model call
 │   │   └── style.py    platform rules, tones, "how human" levels, AI-cliché check and rewrite
 │   ├── db/             the database (PostgreSQL at Supabase; SQLAlchemy)
@@ -52,7 +53,7 @@ server/
 │   ├── agents/         Phase 4 Agent Workspace, not built yet
 │   └── api/            FastAPI routers: health, projects, sources, knowledge, assets, campaigns (+ deps.py)
 ├── migrations/         Alembic migrations of the database (alembic.ini next to server.py)
-└── assets/             data (not committed): uploaded books and covers
+└── assets/             old local data, only read by app.db.import_files (not committed)
 ```
 
 ## MCP server: mcp-book-knowledge

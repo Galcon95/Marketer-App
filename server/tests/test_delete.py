@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 
 from app.api import sources
 from app.core import state as db
-from app.core import storage
 from app.core.schemas import Asset, ChatTurn, Chunk, ChunkLocation, Conversation, SearchHit, Source
 from app.rag import vectorstore
 from tests.conftest import sign_in
@@ -39,9 +38,8 @@ def _chat(conversation_id: str, passage_sources: list[str]) -> Conversation:
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
-    """Two books (src_a, src_b) with assets and chats; storage in tmp_path; no vector store."""
-    monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path / "upload_dir")
+def client(monkeypatch, stored_files):
+    """Two books (src_a with a cover, src_b) with assets and chats; files in the in-memory store; no vector store."""
     monkeypatch.setattr(vectorstore, "delete_source", lambda project_id, source_id: None)
     monkeypatch.setattr(db, "sources", {s: _source(s) for s in ("src_a", "src_b")})
     monkeypatch.setattr(db, "chunks", {})
@@ -56,7 +54,8 @@ def client(tmp_path, monkeypatch):
         _chat("cnv_only_a", ["src_a", "src_a"]),  # only A's passages → deleted
         _chat("cnv_mixed", ["src_a", "src_b"]),  # also B's passages → kept
     ]})
-    (tmp_path / "upload_dir" / PROJECT / "src_a").mkdir(parents=True)
+    stored_files.objects.update({f"{PROJECT}/src_a/book.pdf": b"%PDF-a", f"{PROJECT}/src_a/cover.png": b"png",
+                                 f"{PROJECT}/src_b/book.pdf": b"%PDF-b"})
     app = FastAPI()
     app.include_router(sources.router)
     sign_in(app)
@@ -71,14 +70,14 @@ def test_preview_counts_what_would_go_without_deleting(client):
     assert "src_a" in db.sources and "ast_only_a" in db.assets
 
 
-def test_delete_removes_the_book_and_only_what_belongs_to_it_alone(client, tmp_path):
+def test_delete_removes_the_book_and_only_what_belongs_to_it_alone(client, stored_files):
     response = client.delete("/sources/src_a")
     assert response.status_code == 200
     assert (response.json()["assets"], response.json()["conversations"]) == (1, 1)
     assert set(db.sources) == {"src_b"}
     assert set(db.assets) == {"ast_a_and_b", "ast_all_books", "ast_only_b"}
     assert set(db.conversations) == {"cnv_mixed"}
-    assert not (tmp_path / "upload_dir" / PROJECT / "src_a").exists()
+    assert set(stored_files.objects) == {f"{PROJECT}/src_b/book.pdf"}  # A's book and cover are gone
 
 
 def test_unknown_book_is_404(client):
@@ -86,7 +85,7 @@ def test_unknown_book_is_404(client):
     assert client.delete("/sources/nope").status_code == 404
 
 
-def test_nothing_is_deleted_when_the_database_fails(client, monkeypatch, tmp_path):
+def test_nothing_is_deleted_when_the_database_fails(client, monkeypatch, stored_files):
     from app.db import records
     from app.db.database import DatabaseError
 
@@ -95,4 +94,4 @@ def test_nothing_is_deleted_when_the_database_fails(client, monkeypatch, tmp_pat
     monkeypatch.setattr(records, "delete_source", broken)
     assert client.delete("/sources/src_a").status_code == 500
     assert "src_a" in db.sources and "ast_only_a" in db.assets and "cnv_only_a" in db.conversations
-    assert (tmp_path / "upload_dir" / PROJECT / "src_a").is_dir()
+    assert f"{PROJECT}/src_a/book.pdf" in stored_files.objects
