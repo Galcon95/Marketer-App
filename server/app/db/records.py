@@ -12,13 +12,15 @@ from pydantic import BaseModel
 from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy import inspect as sa_inspect
 
-from app.core.schemas import ApiKey, Asset, Conversation, Project, UsageRecord, UsageTotals
+from app.core.schemas import ApiKey, Asset, BookSummary, Conversation, Project, Source, UsageRecord, UsageTotals
 from app.db.database import session
-from app.db.tables import ApiKeyRow, AssetRow, Base, ConversationRow, ProjectRow, UsageRow
+from app.db.tables import (ApiKeyRow, AssetRow, Base, ConversationRow, ProjectRow, SourceRow, SummaryRow,
+                           UsageRow)
 
 # Fields saved in a JSON column (nested models, lists): written in JSON mode, so datetimes inside become strings.
 ASSET_JSON_FIELDS = {"citations", "source_ids", "ai_tells"}
 CONVERSATION_JSON_FIELDS = {"turns"}
+SUMMARY_JSON_FIELDS = {"themes", "chapters"}
 
 
 def to_row(row_class: type[Base], record: BaseModel, json_fields: set[str]) -> Base:
@@ -197,3 +199,52 @@ def spending(user_id: str, project_ids: Iterable[str], today: datetime, month: d
     with session() as s:
         user_today, user_month, app_today = s.execute(query).one()
     return float(user_today), float(user_month), float(app_today)
+
+
+# ---------- Sources (books) and their summaries ----------
+def load_sources() -> dict[str, Source]:
+    """All sources by id, oldest first (called once on server startup)."""
+    with session() as s:
+        return {row.id: _record(Source, row) for row in s.scalars(select(SourceRow).order_by(SourceRow.created_at))}
+
+
+def add_source(source: Source) -> None:
+    """Save a new source (after its upload). Fails for the same file twice in a project (the unique checksum)."""
+    with session() as s:
+        s.add(to_row(SourceRow, source, set()))
+
+
+def update_source(source: Source) -> bool:
+    """Save the changed fields of an existing source.
+
+    Returns:
+        False if there is no such source (deleted meanwhile): nothing is written, a deleted book never comes back.
+    """
+    data = source.model_dump(exclude={"id"})
+    with session() as s:
+        return s.execute(update(SourceRow).where(SourceRow.id == source.id).values(**data)).rowcount > 0
+
+
+def delete_source(source_id: str, asset_ids: Iterable[str] = (), conversation_ids: Iterable[str] = ()) -> None:
+    """Delete a source with its summary (foreign key) and the given assets and chats, in one transaction: all of it
+    is deleted, or nothing."""
+    asset_ids, conversation_ids = list(asset_ids), list(conversation_ids)
+    with session() as s:
+        if asset_ids:
+            s.execute(delete(AssetRow).where(AssetRow.id.in_(asset_ids)))
+        if conversation_ids:
+            s.execute(delete(ConversationRow).where(ConversationRow.id.in_(conversation_ids)))
+        s.execute(delete(SummaryRow).where(SummaryRow.source_id == source_id))  # also without foreign keys (SQLite)
+        s.execute(delete(SourceRow).where(SourceRow.id == source_id))
+
+
+def load_summaries() -> dict[str, BookSummary]:
+    """All book summaries by source id (called once on server startup)."""
+    with session() as s:
+        return {row.source_id: _record(BookSummary, row) for row in s.scalars(select(SummaryRow))}
+
+
+def save_summary(summary: BookSummary) -> None:
+    """Insert or replace the summary of a book ("Regenerate" replaces it)."""
+    with session() as s:
+        s.merge(to_row(SummaryRow, summary, SUMMARY_JSON_FIELDS))

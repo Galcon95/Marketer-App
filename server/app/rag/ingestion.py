@@ -9,8 +9,8 @@
     storage.write_chunks                                    →  chunks saved next to the PDF
 
 Runs as a FastAPI background task after an upload, or when the user presses Process / Re-index /
-Retry in the GUI. Progress is written to the source record (status "chunking", then "embedding",
-each with progress 0-100) so the GUI can poll it and it survives restarts.
+Retry in the GUI. The status ("chunking", then "embedding", then "ready" or "failed") is saved in the database;
+the progress (0-100) within a status is kept in memory only, where the GUI polls it.
 """
 
 import bisect
@@ -32,6 +32,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.core import state as db
 from app.core import storage
 from app.core.schemas import Chunk, ChunkLocation, Source
+from app.db import records
 from app.rag import vectorstore
 from app.rag.retrieval import source_name
 
@@ -121,13 +122,17 @@ def ingest_source(source_id: str) -> None:
 
 
 def restore_sources() -> None:
-    """Load uploaded sources, their chunks and book summaries from disk into memory (called once on server startup).
+    """Load the sources and book summaries from the database and the chunks from disk into memory (called once on
+    server startup).
 
     Sources that were being processed when the server stopped, ready sources whose chunk file is
     missing, and ready sources whose vectors are missing from the vector store (processed before
     embeddings existed, or the embedding model changed) are marked "failed" so the user can press Retry.
     """
-    for source in storage.load_sources().values():
+    sources = records.load_sources()
+    summaries = records.load_summaries()
+    _warn_about_unknown_folders(sources)
+    for source in sources.values():
         source = _with_missing_metadata(source)  # sources uploaded before authors and checksums were recorded
         chunks: list[Chunk] = []
         if source.status in PROCESSING_STATUSES:
@@ -144,8 +149,17 @@ def restore_sources() -> None:
         if chunks:
             replace_source_chunks(source.id, chunks)
         # Saved summaries are loaded for every book (also one that needs a Retry), so they are never paid twice.
-        if summary := storage.load_summary(source):
+        if summary := summaries.get(source.id):
             db.summaries[source.id] = summary
+
+
+def _warn_about_unknown_folders(sources: dict[str, Source]) -> None:
+    """Log upload folders that belong to no source in the database (e.g. not imported yet). They are left as they
+    are: deleting files is the user's decision."""
+    for folder in sorted(p for p in storage.UPLOAD_DIR.glob("*/*") if p.is_dir()):
+        source = sources.get(folder.name)
+        if source is None or source.project_id != folder.parent.name:
+            logger.warning("Upload folder %s belongs to no source in the database; run app.db.import_files?", folder)
 
 
 def _with_missing_metadata(source: Source) -> Source:
@@ -161,8 +175,8 @@ def _with_missing_metadata(source: Source) -> Source:
         return source
     source = source.model_copy(update=update)
     try:
-        storage.write_source_meta(source)
-    except OSError:
+        records.update_source(source)
+    except OSError:  # DatabaseError
         logger.warning("Could not save the author/checksum of %s", source.id)
     return source
 
@@ -580,11 +594,12 @@ def _to_chunk(doc: Document, source_id: str, number: int) -> Chunk:
 
 
 # ---------- Source record updates ----------
-def _update(source_id: str, **fields) -> Source:
-    """Change fields of a source, save the record to disk, then publish it in memory.
+def _update(source_id: str, *, persist: bool = True, **fields) -> Source:
+    """Change fields of a source, save the record in the database, then publish it in memory.
 
     Args:
         source_id: Source to update.
+        persist: False for progress only: kept in memory, not saved (a restart marks processing books failed anyway).
         **fields: Source fields to change, e.g. status="ready".
 
     Returns:
@@ -592,15 +607,16 @@ def _update(source_id: str, **fields) -> Source:
 
     Raises:
         _Cancelled: If the source was deleted (before or during the update).
-        OSError: If the record cannot be written for another reason.
+        DatabaseError: If the record cannot be saved for another reason.
     """
     current = db.sources.get(source_id)
     if current is None:
         raise _Cancelled
     updated = current.model_copy(update=fields)
     try:
-        storage.write_source_meta(updated)
-    except OSError:
+        if persist and not records.update_source(updated):  # no row: the book was deleted
+            raise _Cancelled
+    except OSError:  # DatabaseError
         if source_id not in db.sources:
             raise _Cancelled from None
         raise
@@ -611,10 +627,10 @@ def _update(source_id: str, **fields) -> Source:
 
 
 def _update_progress(source_id: str, percent: int) -> None:
-    """Report progress, but only in steps of 5 % or more so the record is not rewritten for every page."""
+    """Report progress (in memory, for the GUI's polling), in steps of 5 % or more."""
     current = db.sources.get(source_id)
     if current is not None and percent - current.progress >= 5:
-        _update(source_id, progress=percent)
+        _update(source_id, persist=False, progress=percent)
 
 
 def _vector_count(source: Source) -> int | None:
@@ -636,10 +652,10 @@ def _delete_vectors(source_id: str) -> None:
 
 
 def _mark_failed(source: Source, message: str) -> Source:
-    """Return a copy of a source set to "failed" with an error message, saved to disk if possible."""
+    """Return a copy of a source set to "failed" with an error message, saved in the database if possible."""
     failed = source.model_copy(update={"status": "failed", "error": message})
     try:
-        storage.write_source_meta(failed)
-    except OSError:
+        records.update_source(failed)
+    except OSError:  # DatabaseError
         logger.warning("Could not save the failed status of %s", source.id)
     return failed

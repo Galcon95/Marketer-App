@@ -7,13 +7,13 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.core import config, usage
+from app.core import config, storage, usage
 from app.core import state as db
-from app.core.schemas import (Asset, ChatTurn, Chunk, ChunkLocation, Citation, Conversation, Project,
-                              SearchHit, UsageRecord, UsageTotals)
+from app.core.schemas import (Asset, BookSummary, ChapterSummary, ChatTurn, Chunk, ChunkLocation, Citation,
+                              Conversation, Project, SearchHit, Source, UsageRecord, UsageTotals)
 from app.db import database, import_files, records
 from app.db.database import DatabaseError
-from app.db.tables import AssetRow, ConversationRow
+from app.db.tables import AssetRow, ConversationRow, SourceRow, SummaryRow
 from tests.conftest import OWNER, STRANGER
 
 
@@ -238,3 +238,79 @@ def test_the_import_of_the_usage_log_skips_known_calls_and_bad_lines(tmp_path):
     assert import_files.import_usage(path) == 2
     assert import_files.import_usage(path) == 0
     assert records.usage_totals().cost == 3.0
+
+
+# ---------- Sources (books) and summaries ----------
+
+def _source(source_id: str, sha256: str = "", **changes) -> Source:
+    source = Source(id=source_id, project_id=db.DEFAULT_PROJECT_ID, filename=f"{source_id}.pdf", kind="document",
+                    size_bytes=1234, status="ready", progress=100, chunk_count=7, created_at=db.now(),
+                    author="J. J. Butler", sha256=sha256)
+    return source.model_copy(update=changes)
+
+
+def _summary(source_id: str, text: str = "About money.") -> BookSummary:
+    return BookSummary(source_id=source_id, summary=text, themes=["speculation", "risk"],
+                       chapters=[ChapterSummary(chapter="I", first_page=1, last_page=9, summary="Starts.")],
+                       model="m", prompt_version="summary@1", tokens=99, created_at=db.now())
+
+
+def test_every_source_and_summary_field_has_a_column():
+    assert set(SourceRow.__table__.columns.keys()) == set(Source.model_fields)
+    assert set(SummaryRow.__table__.columns.keys()) == set(BookSummary.model_fields)
+
+
+def test_a_source_is_saved_updated_and_loaded():
+    records.add_source(_source("src_a", "abc"))
+    assert records.update_source(_source("src_a", "abc", status="failed", error="Retry")) is True
+    loaded = records.load_sources()["src_a"]
+    assert (loaded.status, loaded.error, loaded.author) == ("failed", "Retry", "J. J. Butler")
+
+
+def test_an_update_of_a_deleted_source_writes_nothing():
+    """A running ingestion must not bring a deleted book back."""
+    assert records.update_source(_source("src_gone")) is False
+    assert records.load_sources() == {}
+
+
+def test_the_same_file_only_once_per_project():
+    records.add_source(_source("src_a", "abc"))
+    with pytest.raises(DatabaseError):
+        records.add_source(_source("src_b", "abc"))
+    records.add_source(_source("src_c", ""))  # older books without a checksum are not compared
+    records.add_source(_source("src_d", ""))
+    assert set(records.load_sources()) == {"src_a", "src_c", "src_d"}
+
+
+def test_a_summary_is_saved_replaced_and_deleted_with_its_book():
+    records.add_source(_source("src_a"))
+    records.save_summary(_summary("src_a"))
+    records.save_summary(_summary("src_a", "Regenerated."))
+    assert records.load_summaries() == {"src_a": _summary("src_a", "Regenerated.").model_copy(
+        update={"created_at": records.load_summaries()["src_a"].created_at})}
+    records.save_assets([_asset("ast_1")])
+    records.save_conversation(_conversation("cnv_1"))
+    records.delete_source("src_a", ["ast_1"], ["cnv_1"])
+    assert (records.load_sources(), records.load_summaries(), records.load_assets(),
+            records.load_conversations()) == ({}, {}, {}, {})
+
+
+def test_a_summary_needs_its_book():
+    with pytest.raises(DatabaseError):
+        records.save_summary(_summary("src_unknown"))
+
+
+def test_the_import_of_books_reads_records_and_summaries_and_skips_duplicates(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
+    for source in [_source("src_a", "abc"), _source("src_b", "abc"),  # the same file twice: the second is skipped
+                   _source("src_c", "def", project_id="prj_gone")]:  # unknown project: skipped
+        folder = tmp_path / source.project_id / source.id
+        folder.mkdir(parents=True)
+        (folder / source.filename).write_bytes(b"%PDF-1.4")
+        storage.write_source_meta(source)
+    (tmp_path / db.DEFAULT_PROJECT_ID / "src_a" / storage.SUMMARY_FILENAME).write_text(
+        _summary("src_a").model_dump_json(), encoding="utf-8")
+
+    assert import_files.import_sources() == (1, 1)
+    assert import_files.import_sources() == (0, 0)
+    assert list(records.load_sources()) == ["src_a"] and list(records.load_summaries()) == ["src_a"]

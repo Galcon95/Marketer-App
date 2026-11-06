@@ -29,14 +29,14 @@ server/
 │   │   ├── llm.py      chat model (ChatOpenAI via OpenRouter), GenerationError, token counts
 │   │   ├── schemas.py  Pydantic request/response models
 │   │   ├── state.py    in-memory stores (projects, sources, chunks, summaries, assets)
-│   │   ├── storage.py  files on disk: uploads, chunks, summaries, covers
+│   │   ├── storage.py  files on disk: uploads, chunks, covers
 │   │   ├── usage.py    tokens and costs of every model call
 │   │   └── style.py    platform rules, tones, "how human" levels, AI-cliché check and rewrite
 │   ├── db/             the database (PostgreSQL at Supabase; SQLAlchemy)
 │   │   ├── database.py     connection (DATABASE_URL), sessions, DatabaseError
-│   │   ├── tables.py       the tables: projects, assets, conversations, usage_log (public), api_keys (private)
-│   │   ├── records.py      read and write projects, API keys, assets, chats; usage sums and budgets
-│   │   └── import_files.py one-time import of the old JSON files (projects, keys, assets, chats, usage)
+│   │   ├── tables.py       tables: projects, sources, summaries, assets, conversations, usage_log; api_keys (private)
+│   │   ├── records.py      read and write all records; usage sums and budgets
+│   │   └── import_files.py one-time import of the old JSON files (projects, keys, books, summaries, assets, chats, usage)
 │   ├── rag/            Phase 1 Knowledge Hub
 │   │   ├── ingestion.py    PDF → chapters → chunks → vectors
 │   │   ├── vectorstore.py  embeddings in Chroma

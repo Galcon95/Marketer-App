@@ -1,5 +1,9 @@
-"""File storage for uploaded sources: server/assets/uploads/{project_id}/{source_id}/{filename}. Projects, API
-keys, generated assets and "Ask your book" conversations are in the database (app/db).
+"""File storage for uploaded sources: server/assets/uploads/{project_id}/{source_id}/{filename}, with the book's
+chunks and cover. Projects, API keys, the source records, book summaries, generated assets, chats and the usage log
+are in the database (app/db).
+
+The old record files (.source.json, .summary.json) are only read by the one-time import (app/db/import_files.py:
+load_sources, load_summary).
 
 Each source directory also holds META_FILENAME, the source's record as JSON, and after ingestion
 CHUNKS_FILENAME with its chunks. The upload directory
@@ -261,22 +265,6 @@ def load_chunks(source: Source) -> list[Chunk] | None:
         return [Chunk.model_validate_json(line) for line in lines if line.strip()]
     except (OSError, ValidationError):
         return None
-
-
-def write_summary(source: Source, summary: BookSummary) -> None:
-    """Save the summary of a book in its upload directory, replacing any previous one.
-
-    Args:
-        source: The book the summary belongs to; its directory must already exist.
-        summary: The summary to save.
-
-    Raises:
-        OSError: If the file cannot be written.
-    """
-    source_dir = UPLOAD_DIR / source.project_id / source.id
-    tmp = source_dir / f"{SUMMARY_FILENAME}.tmp"
-    tmp.write_text(summary.model_dump_json(indent=2), encoding="utf-8")
-    tmp.replace(source_dir / SUMMARY_FILENAME)
 
 
 def load_summary(source: Source) -> BookSummary | None:

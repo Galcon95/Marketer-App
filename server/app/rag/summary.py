@@ -23,12 +23,13 @@ from langgraph.types import Send
 from pydantic import BaseModel, Field, model_validator
 
 from app.core import state as db
-from app.core import prompts, storage, tracing
+from app.core import prompts, tracing
 from app.core.config import LLM_MODEL
 from app.core.guard import UNTRUSTED_RULE, quote_untrusted
 from app.core.logs import current_request_id
 from app.core.llm import TEMPERATURES, GenerationError, is_configured, model_failure, structured
 from app.core.schemas import BookSummary, ChapterSummary, Chunk, Source
+from app.db import records
 from app.rag.retrieval import source_name
 
 logger = logging.getLogger(__name__)
@@ -148,7 +149,7 @@ def summarize_source(source: Source) -> BookSummary:
         tokens=state["tokens"],
         created_at=datetime.now(timezone.utc),
     )
-    storage.write_summary(source, summary)
+    records.save_summary(summary)  # first in the database: if that fails, it is not kept anywhere
     db.summaries[source.id] = summary
     logger.info("Summarized %s: %d chapters, %d tokens", source.id, len(summary.chapters), summary.tokens)
     return summary

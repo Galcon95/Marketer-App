@@ -90,9 +90,9 @@ def test_nothing_is_deleted_when_the_database_fails(client, monkeypatch, tmp_pat
     from app.db import records
     from app.db.database import DatabaseError
 
-    def broken(ids):
+    def broken(*args):
         raise DatabaseError("Database error (OperationalError)")
-    monkeypatch.setattr(records, "delete_assets", broken)
+    monkeypatch.setattr(records, "delete_source", broken)
     assert client.delete("/sources/src_a").status_code == 500
     assert "src_a" in db.sources and "ast_only_a" in db.assets and "cnv_only_a" in db.conversations
     assert (tmp_path / "upload_dir" / PROJECT / "src_a").is_dir()

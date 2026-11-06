@@ -13,7 +13,8 @@ from datetime import datetime, timezone
 
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Double, ForeignKey, Identity, Integer, MetaData, Text
+from sqlalchemy import (JSON, BigInteger, Boolean, DateTime, Double, ForeignKey, Identity, Index, Integer,
+                        MetaData, Text, text)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
@@ -157,3 +158,46 @@ class UsageRow(Base):
     source_id: Mapped[str | None] = mapped_column(Text)
     request_id: Mapped[str | None] = mapped_column(Text)  # the HTTP request that caused it
     user_id: Mapped[str | None] = mapped_column(Text, index=True)  # who caused it; None for calls before sign-in
+
+
+class SourceRow(Base):
+    """An uploaded book (or other file) and its processing state; see schemas.Source. The file itself, its chunks and
+    its cover are still on disk (server/assets/uploads/{project_id}/{id}/)."""
+
+    __tablename__ = "sources"
+    __table_args__ = (
+        # The same file only once per project (the upload checks it first; this also holds for two uploads at once).
+        # Books uploaded before checksums were recorded have sha256 "" and are not compared.
+        Index("uq_sources_project_id_sha256", "project_id", "sha256", unique=True,
+              postgresql_where=text("sha256 <> ''"), sqlite_where=text("sha256 <> ''")),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)  # "src_1a2b3c4d"
+    project_id: Mapped[str] = project_fk()
+    filename: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(Text)  # "document", "video", "audio", "text"
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    # "uploaded", "queued", ..., "ready", "failed". Saved on every change of status; the progress percentage only
+    # with it (during processing it lives in memory: polled by the GUI, lost on a restart anyway).
+    status: Mapped[str] = mapped_column(Text)
+    progress: Mapped[int] = mapped_column(Integer)
+    chunk_count: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime)
+    error: Mapped[str | None] = mapped_column(Text)
+    author: Mapped[str] = mapped_column(Text)
+    sha256: Mapped[str] = mapped_column(Text)  # checksum of the file; "" = not recorded (older uploads)
+
+
+class SummaryRow(Base):
+    """The summary of one book (map-reduce over its chapters); see schemas.BookSummary. Deleted with its book."""
+
+    __tablename__ = "summaries"
+
+    source_id: Mapped[str] = mapped_column(Text, ForeignKey("sources.id", ondelete="CASCADE"), primary_key=True)
+    summary: Mapped[str] = mapped_column(Text)
+    themes: Mapped[list] = mapped_column(Json)  # list of short phrases
+    chapters: Mapped[list] = mapped_column(Json)  # list of schemas.ChapterSummary, in reading order
+    model: Mapped[str] = mapped_column(Text)
+    prompt_version: Mapped[str | None] = mapped_column(Text)
+    tokens: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime)

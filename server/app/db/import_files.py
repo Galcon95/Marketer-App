@@ -1,12 +1,14 @@
 """One-time import of the old JSON files in server/assets/ into the database: projects.json, api_keys.json,
-generated/{project_id}/*.json (assets), conversations/{project_id}/*.json (chats) and usage/usage.jsonl (the
-model calls and their costs).
+generated/{project_id}/*.json (assets), conversations/{project_id}/*.json (chats), usage/usage.jsonl (the
+model calls and their costs) and from uploads/{project_id}/{source_id}/ the book records (.source.json; recovered
+from the PDF if missing) and summaries (.summary.json). The PDFs, chunks and covers stay where they are.
 
     uv run python -m app.db.import_files        (from server/, after `uv run alembic upgrade head`)
 
 Records already in the database (same id; for model calls, which have no id: the same time, operation and model)
 are left as they are, so running it twice changes nothing. Assets and
-chats of a project that is not in the database are skipped (they would belong to nobody). The files are not changed;
+chats of a project that is not in the database are skipped (they would belong to nobody); so are books whose
+file is already in the project under another id (the database allows the same file only once per project). The files are not changed;
 once the app works with the database, delete them (or keep a copy outside the project).
 """
 
@@ -16,11 +18,12 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from app.core import storage
 from app.core.config import DATA_DIR
 from app.core.schemas import ApiKey, Asset, Conversation, Project, UsageRecord
 from app.db import records
 from app.db.database import session
-from app.db.tables import ApiKeyRow, AssetRow, ConversationRow, ProjectRow, UsageRow
+from app.db.tables import ApiKeyRow, AssetRow, ConversationRow, ProjectRow, SourceRow, SummaryRow, UsageRow
 
 PROJECTS_FILE = DATA_DIR / "projects.json"
 KEYS_FILE = DATA_DIR / "api_keys.json"
@@ -106,6 +109,36 @@ def import_usage(path: Path = USAGE_FILE) -> int:
     return len(new)
 
 
+def import_sources() -> tuple[int, int]:
+    """Insert the book records of the upload folders (storage.UPLOAD_DIR) and their summaries that are not in the
+    database yet; returns (books, summaries)."""
+    sources = storage.load_sources()  # reads .source.json, or recovers the record from the PDF
+    with session() as s:
+        known = set(s.scalars(select(SourceRow.id)))
+        projects = set(s.scalars(select(ProjectRow.id)))
+        files = {(r.project_id, r.sha256) for r in s.scalars(select(SourceRow)) if r.sha256}
+        summarized = set(s.scalars(select(SummaryRow.source_id)))
+        new_sources, new_summaries = [], []
+        for source in sources.values():
+            if source.id in known:
+                pass
+            elif source.project_id not in projects:
+                print(f"uploads/{source.project_id}/{source.id}: no such project in the database, skipped")
+                continue
+            elif source.sha256 and (source.project_id, source.sha256) in files:
+                print(f"uploads/{source.project_id}/{source.id}: the same file is already in the project, skipped")
+                continue
+            else:
+                new_sources.append(source)
+                files.add((source.project_id, source.sha256))
+            if source.id not in summarized and (summary := storage.load_summary(source)):
+                new_summaries.append(summary)
+        s.add_all(records.to_row(SourceRow, x, set()) for x in new_sources)
+        s.flush()  # the books first: their summaries refer to them
+        s.add_all(records.to_row(SummaryRow, x, records.SUMMARY_JSON_FIELDS) for x in new_summaries)
+    return len(new_sources), len(new_summaries)
+
+
 def main() -> None:
     try:
         print(f"projects: {import_projects()} imported")
@@ -113,6 +146,8 @@ def main() -> None:
         print(f"assets: {import_assets()} imported")
         print(f"conversations: {import_conversations()} imported")
         print(f"model calls: {import_usage()} imported")
+        books, summaries = import_sources()
+        print(f"books: {books} imported, summaries: {summaries} imported")
     except OSError as e:  # DatabaseError
         sys.exit(f"Import failed: {e} ({e.__cause__})")
 

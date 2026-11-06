@@ -45,11 +45,12 @@ projects: dict[str, Project] = {
     )
 }
 
-# Sources and their chunks by id; filled from disk on startup (ingestion.restore_sources) and by uploads.
+# Sources and their chunks by id; filled on startup (ingestion.restore_sources: sources from the database, chunks
+# from disk) and by uploads.
 sources: dict[str, Source] = {}
 chunks: dict[str, Chunk] = {}
 
-# Book summaries by source id; filled from disk on startup (ingestion.restore_sources) and by summary.py.
+# Book summaries by source id; filled from the database on startup (ingestion.restore_sources) and by summary.py.
 summaries: dict[str, BookSummary] = {}
 
 # Generated assets by id; filled from the database on startup (records.load_assets) and by generation.

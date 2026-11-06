@@ -57,3 +57,20 @@ def test_different_content_is_accepted(client):
 def test_a_file_that_is_not_a_pdf_is_rejected(client):
     assert _upload(client, "fake.pdf", b"just text").status_code == 415
     assert _upload(client, "notes.txt", b"just text").status_code == 415
+
+
+def test_an_uploaded_book_is_saved_in_the_database(client):
+    from app.db import records
+    source_id = _upload(client, "first.pdf", PDF).json()["id"]
+    assert records.load_sources()[source_id].status == "queued"
+
+
+def test_a_book_whose_record_cannot_be_saved_leaves_no_file(client, tmp_path, monkeypatch):
+    from app.db import records
+    from app.db.database import DatabaseError
+
+    def broken(source):
+        raise DatabaseError("Database error (OperationalError)")
+    monkeypatch.setattr(records, "add_source", broken)
+    assert _upload(client, "first.pdf", PDF).status_code == 500
+    assert db.sources == {} and not any(tmp_path.glob("*/*/*.pdf"))

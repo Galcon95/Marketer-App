@@ -70,8 +70,8 @@ def upload_source(project_id: str, background_tasks: BackgroundTasks, file: Uplo
     if source.kind == "document":
         source.author = storage.read_pdf_author(storage.source_file_path(source))
     try:
-        storage.write_source_meta(source)
-    except OSError as e:
+        records.add_source(source)
+    except OSError as e:  # DatabaseError
         storage.delete_source_files(project_id, source_id)
         raise HTTPException(500, "Could not save the uploaded file's record") from e
     db.sources[source.id] = source
@@ -103,9 +103,11 @@ def ingest_source(source_id: str, background_tasks: BackgroundTasks, source: Sou
         raise HTTPException(409, f"'{source.filename}' has no stored file to process. Delete it and upload it again.")
     source = source.model_copy(update={"status": "queued", "progress": 0, "error": None})
     try:
-        storage.write_source_meta(source)
-    except OSError as e:
+        saved = records.update_source(source)
+    except OSError as e:  # DatabaseError
         raise HTTPException(500, "Could not save the source's record") from e
+    if not saved:  # deleted meanwhile
+        raise HTTPException(404, "Source not found.")
     db.sources[source_id] = source
     background_tasks.add_task(ingestion.ingest_source, source_id)
     return source
@@ -149,17 +151,16 @@ def delete_source(source_id: str, source: Source = Depends(owned_source)):
         What was removed besides the book itself.
 
     Raises:
-        HTTPException: 500 if its assets and chats cannot be deleted from the database (then nothing is deleted).
+        HTTPException: 500 if it cannot be deleted from the database (then nothing is deleted).
     """
     name = source_name(source.id) or source.filename
     assets, conversations = _dependents(source)
-    # The database first: if that fails, the book and everything else is still there.
+    # The database first, in one transaction (book, summary, assets, chats): if that fails, everything is still there.
     try:
-        records.delete_assets(a.id for a in assets)
-        records.delete_conversations(c.id for c in conversations)
+        records.delete_source(source_id, (a.id for a in assets), (c.id for c in conversations))
     except OSError as e:  # DatabaseError
         raise HTTPException(500, "The book could not be deleted, please try again.") from e
-    # Then the source record, so a running ingestion sees the deletion and stops writing.
+    # Then the record in memory, so a running ingestion sees the deletion and stops.
     db.sources.pop(source_id, None)
     ingestion.delete_source_data(source)
     storage.delete_source_files(source.project_id, source_id)
