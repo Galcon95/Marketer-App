@@ -5,8 +5,7 @@
     RecursiveCharacterTextSplitter (token-based)            →  overlapping chunk Documents
     _merge_small_pieces                                     →  no tiny chunks (lone headings)
     _to_chunk                                               →  Chunk records (schemas.py)
-    vectorstore.add_chunks (OpenAIEmbeddings → Chroma)      →  vectors for similarity search
-    storage.write_chunks                                    →  chunks saved next to the PDF
+    vectorstore.add_chunks (OpenAIEmbeddings)               →  chunks with their vectors in the database (pgvector)
 
 Runs as a FastAPI background task after an upload, or when the user presses Process / Re-index /
 Retry in the GUI. The status ("chunking", then "embedding", then "ready" or "failed") is saved in the database;
@@ -99,7 +98,6 @@ def ingest_source(source_id: str) -> None:
             _update(source_id, status="embedding", progress=0, chunk_count=len(chunks))
             vectorstore.add_chunks(source.project_id, source_id, chunks, title=source_name(source_id),
                                    on_progress=lambda done: _update_progress(source_id, round(done * 100)))
-            storage.write_chunks(source, chunks)
             replace_source_chunks(source_id, chunks)
             # An existing book summary is kept: re-indexing re-cuts the same book, so its content and
             # summary stay valid (no tokens are spent again). "Regenerate" in the GUI rebuilds it on purpose.
@@ -107,7 +105,6 @@ def ingest_source(source_id: str) -> None:
             logger.info("Ingested %s: %d chapters → %d chunks embedded", source_id, len(sections), len(chunks))
         except _Cancelled:
             logger.info("Ingestion of %s stopped: source was deleted", source_id)
-            _delete_vectors(source_id)
         except Exception as e:
             expected = isinstance(e, (IngestionError, vectorstore.VectorStoreError))
             if expected:
@@ -122,15 +119,17 @@ def ingest_source(source_id: str) -> None:
 
 
 def restore_sources() -> None:
-    """Load the sources and book summaries from the database and the chunks from disk into memory (called once on
-    server startup).
+    """Load the sources, book summaries and chunks (without their vectors) from the database into memory (called once
+    on server startup).
 
-    Sources that were being processed when the server stopped, ready sources whose chunk file is
-    missing, and ready sources whose vectors are missing from the vector store (processed before
-    embeddings existed, or the embedding model changed) are marked "failed" so the user can press Retry.
+    Sources that were being processed when the server stopped, ready sources without chunks, and ready sources
+    whose chunks were embedded with another model or index format (vectorstore.EMBEDDING_KEY) are marked "failed"
+    so the user can press Retry.
     """
     sources = records.load_sources()
     summaries = records.load_summaries()
+    saved_chunks = records.load_chunks()
+    searchable = records.chunk_counts(vectorstore.EMBEDDING_KEY)
     _warn_about_unknown_folders(sources)
     for source in sources.values():
         source = _with_missing_metadata(source)  # sources uploaded before authors and checksums were recorded
@@ -138,10 +137,10 @@ def restore_sources() -> None:
         if source.status in PROCESSING_STATUSES:
             source = _mark_failed(source, "Processing was interrupted by a server restart. Press Retry.")
         elif source.status == "ready":
-            loaded = storage.load_chunks(source)
-            if loaded is None:
+            loaded = saved_chunks.get(source.id)
+            if not loaded:
                 source = _mark_failed(source, "The saved chunks are missing. Press Retry.")
-            elif _vector_count(source) not in (None, len(loaded)):
+            elif searchable.get(source.id, 0) != len(loaded):
                 source = _mark_failed(source, "Not in the vector database yet (or the embedding model or the way chunks are embedded changed). Press Retry.")
             else:
                 chunks = loaded
@@ -254,17 +253,13 @@ def _make_cover(source: Source) -> None:
 
 
 def delete_source_data(source: Source) -> None:
-    """Remove a source's chunks and summary from memory and its vectors from the vector store (used on delete).
+    """Remove a source's chunks and summary from memory (used on delete; in the database they go with the source).
 
     Args:
         source: The source being deleted (already removed from db.sources).
     """
     replace_source_chunks(source.id, [])
     db.summaries.pop(source.id, None)
-    try:
-        vectorstore.delete_source(source.project_id, source.id)
-    except Exception:
-        logger.exception("Could not delete the vectors of %s", source.id)
 
 
 def count_tokens(text: str) -> int:
@@ -631,24 +626,6 @@ def _update_progress(source_id: str, percent: int) -> None:
     current = db.sources.get(source_id)
     if current is not None and percent - current.progress >= 5:
         _update(source_id, persist=False, progress=percent)
-
-
-def _vector_count(source: Source) -> int | None:
-    """Number of stored vectors of a source, or None if the vector store cannot be read (check skipped)."""
-    try:
-        return vectorstore.count_source(source.project_id, source.id)
-    except Exception:
-        logger.exception("Could not check the vectors of %s", source.id)
-        return None
-
-
-def _delete_vectors(source_id: str) -> None:
-    """Remove vectors of a source that was deleted while being embedded (its project is looked up on disk)."""
-    for project_dir in storage.UPLOAD_DIR.glob("*"):
-        try:
-            vectorstore.delete_source(project_dir.name, source_id)
-        except Exception:
-            logger.exception("Could not delete the vectors of %s", source_id)
 
 
 def _mark_failed(source: Source, message: str) -> Source:

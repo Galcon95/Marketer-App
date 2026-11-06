@@ -14,7 +14,9 @@ with a judge model through OpenRouter.
 ## Run it
 
 The API must be running (`cd server`, `uv run fastapi dev server.py`). `OPENROUTER_API_KEY` comes from the
-environment or `server/.env`.
+environment or `server/.env`. Every API endpoint needs a sign-in: the script asks for the password of
+`DEFAULT_CLIENT_OWNER` (from `server/.env`; another account with `EVAL_EMAIL`) and signs in with Supabase, using
+the public key in `client/.env.local`. The password is not stored. Without a prompt: set `EVAL_ACCESS_TOKEN`.
 
 ```sh
 cd eval
@@ -57,6 +59,7 @@ environment here keeps the app's dependencies unchanged; the evaluation talks to
 | Baseline: dense, no floor, no chunk headers | 0.99 | 0.84 | 0.93 | 1.00 |
 | Dense + chunk headers + HNSW fix + floor 0.3 (now the default) | 0.99 | 0.90 | 0.88 | 0.97 |
 | Hybrid BM25 + dense (RRF), otherwise the same | 0.98 | 0.83 | 0.94 | 0.95 |
+| Dense default, vectors moved from Chroma to pgvector (2026-11-06) | 0.99 | 0.83 | 0.91 | 0.97 |
 
 With 13 questions one changed passage moves an average by several points, so these differences are small. The
 headers changed which passages rank in the top 6 for three questions; chapter titles ("WHAT IS SPECULATION?") now
@@ -65,6 +68,11 @@ floor was set from the similarities of the eval questions against 12 off-topic q
 extra passages here (e.g. "puts and calls" kept 3 of 6). The same session found and fixed an HNSW recall problem
 (see `server/app/rag/vectorstore.py`). Off-topic questions are not part of the RAGAs set, because RAGAs needs
 passages to score.
+
+The pgvector run retrieved exactly the same passages for every question as the Chroma run above it (the vectors
+were copied, not re-embedded, and the search is now exact). Its lower answer relevancy comes from one question:
+the judge scored the stock-margin answer 0.00 instead of 0.82, although the answer is practically the same; the
+judge's known false negative on hedged answers (see below). Without it the average is about 0.90 as before.
 
 ## Known limits
 

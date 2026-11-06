@@ -1,7 +1,8 @@
 """One-time import of the old JSON files in server/assets/ into the database: projects.json, api_keys.json,
 generated/{project_id}/*.json (assets), conversations/{project_id}/*.json (chats), usage/usage.jsonl (the
 model calls and their costs) and from uploads/{project_id}/{source_id}/ the book records (.source.json; recovered
-from the PDF if missing) and summaries (.summary.json). The PDFs, chunks and covers stay where they are.
+from the PDF if missing), summaries (.summary.json) and chunks (.chunks.jsonl) with their vectors, copied from
+Chroma (server/assets/chroma/) without new embedding calls. The PDFs and covers stay where they are.
 
     uv run python -m app.db.import_files        (from server/, after `uv run alembic upgrade head`)
 
@@ -23,13 +24,15 @@ from app.core.config import DATA_DIR
 from app.core.schemas import ApiKey, Asset, Conversation, Project, UsageRecord
 from app.db import records
 from app.db.database import session
-from app.db.tables import ApiKeyRow, AssetRow, ConversationRow, ProjectRow, SourceRow, SummaryRow, UsageRow
+from app.db.tables import (ApiKeyRow, AssetRow, ChunkRow, ConversationRow, ProjectRow, SourceRow, SummaryRow,
+                           UsageRow)
 
 PROJECTS_FILE = DATA_DIR / "projects.json"
 KEYS_FILE = DATA_DIR / "api_keys.json"
 GENERATED_DIR = DATA_DIR / "generated"
 CONVERSATIONS_DIR = DATA_DIR / "conversations"
 USAGE_FILE = DATA_DIR / "usage" / "usage.jsonl"
+CHROMA_DIR = DATA_DIR / "chroma"
 
 
 def _read(path: Path) -> list[dict]:
@@ -139,6 +142,46 @@ def import_sources() -> tuple[int, int]:
     return len(new_sources), len(new_summaries)
 
 
+def import_chunks(chroma_dir: Path = CHROMA_DIR) -> tuple[int, int]:
+    """Copy the chunks of the books in the database that have none there yet: their text from .chunks.jsonl, their
+    vectors and embedded texts from Chroma (the collection of the current model and index format). A book whose
+    chunks or vectors are incomplete is skipped (press Retry in the app to embed it again).
+
+    Returns:
+        (books, chunks) copied.
+    """
+    import chromadb  # only needed for this import
+
+    from app.rag import vectorstore
+
+    if not chroma_dir.is_dir():
+        print(f"{chroma_dir.name}/: not found, no vectors to copy")
+        return 0, 0
+    client = chromadb.PersistentClient(path=str(chroma_dir), settings=chromadb.Settings(anonymized_telemetry=False))
+    with session() as s:
+        have_chunks = set(s.scalars(select(ChunkRow.source_id).distinct()))
+    books = copied = 0
+    for source in records.load_sources().values():
+        if source.id in have_chunks or source.status != "ready":
+            continue
+        chunks = storage.load_chunks(source)
+        name = f"{source.project_id}--{vectorstore.EMBEDDING_KEY}"
+        try:
+            stored = client.get_collection(name).get(ids=[c.id for c in chunks or []],
+                                                     include=["embeddings", "documents"])
+        except Exception as e:  # no such collection
+            print(f"{source.id}: no vectors in Chroma ({e}), skipped; press Retry in the app")
+            continue
+        by_id = {i: (doc, emb) for i, doc, emb in zip(stored["ids"], stored["documents"], stored["embeddings"])}
+        if not chunks or any(c.id not in by_id for c in chunks):
+            print(f"{source.id}: chunks or vectors incomplete, skipped; press Retry in the app")
+            continue
+        records.replace_chunks(source.project_id, source.id, chunks, [by_id[c.id][0] for c in chunks],
+                               [list(by_id[c.id][1]) for c in chunks], vectorstore.EMBEDDING_KEY)
+        books, copied = books + 1, copied + len(chunks)
+    return books, copied
+
+
 def main() -> None:
     try:
         print(f"projects: {import_projects()} imported")
@@ -148,6 +191,8 @@ def main() -> None:
         print(f"model calls: {import_usage()} imported")
         books, summaries = import_sources()
         print(f"books: {books} imported, summaries: {summaries} imported")
+        books, chunks = import_chunks()
+        print(f"chunks: {chunks} of {books} books copied with their vectors")
     except OSError as e:  # DatabaseError
         sys.exit(f"Import failed: {e} ({e.__cause__})")
 

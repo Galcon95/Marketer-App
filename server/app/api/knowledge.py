@@ -159,7 +159,7 @@ def delete_conversation(conversation: Conversation = Depends(owned_conversation)
 def search(project_id: str, body: SearchRequest):
     """Find the passages of a project's sources that best match a query (semantic vector search).
 
-    The query is embedded and compared with the chunk vectors in Chroma; scores are cosine
+    The query is embedded and compared with the chunk vectors (pgvector); scores are cosine
     similarities (about 0-1, higher is better).
 
     Args:

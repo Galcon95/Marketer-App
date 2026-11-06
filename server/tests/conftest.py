@@ -68,7 +68,6 @@ def offline(tmp_path, monkeypatch):
     can be called (no API key: model routes answer 503; a chat model call fails the test). So a request that gets
     past a check it should not pass can neither touch the real library nor cost money."""
     monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path / "upload_dir")
-    monkeypatch.setattr(vectorstore, "CHROMA_DIR", tmp_path / "chroma")
     monkeypatch.setattr(usage, "_totals", UsageTotals())
     monkeypatch.setattr(config, "API_KEY", None)  # chat model: llm.is_configured() is False → 503
     monkeypatch.setattr(vectorstore, "API_KEY", None)  # embeddings: vectorstore.is_configured() is False → 503

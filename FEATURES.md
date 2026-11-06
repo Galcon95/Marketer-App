@@ -18,7 +18,7 @@ Status as of commit `e114f04` (2026-10-22).
 ### Upload & ingestion
 - Upload PDF books with a progress bar (`POST /projects/{id}/sources`).
 - **No duplicates:** each upload's SHA-256 checksum is computed while it is saved; a file whose content is already in the library (under any name) is rejected with 409 ("This file is already in your library as '…'") and the copy is deleted. Books uploaded earlier get their checksum at the next server start.
-- Ingestion runs in the background: PDF → chapters → token-based chunks (500 tokens with 80 overlap, so tiny pieces get merged) → embeddings → Chroma.
+- Ingestion runs in the background: PDF → chapters → token-based chunks (500 tokens with 80 overlap, so tiny pieces get merged) → embeddings → PostgreSQL with pgvector (Supabase), searched through LangChain's `PGVectorStore`.
 - Chapters come from the PDF's table of contents. PDFs without one (e.g. many Project Gutenberg files) get them from heading lines in the text (`CHAPTER IV.` plus its title line, or `PART TWO` / `BOOK I` when there are no chapters); the printed contents page is ignored.
 - The Project Gutenberg license after the e-book's end marker becomes its own section instead of being glued to the last chapter.
 - Live progress through the statuses `queued → chunking → embedding → ready` (or `failed`), saved so it survives restarts.
@@ -43,7 +43,7 @@ Status as of commit `e114f04` (2026-10-22).
 - **Retrieval quality controls** (measured 2026-10-29, details in `eval/README.md`):
   - **Relevance floor** `MIN_RELEVANCE` (default 0.3): passages below it never reach the model. If none is left, a `not_covered` node answers "The books don't cover this" and names the library's books, without a model call. In the chat, the model still answers with no passages, because library questions and "write a post" requests need its tools. The value sits in a clear gap: off-topic questions scored at most 0.26, while every eval question's best passage scored at least 0.54.
   - **Contextual chunk headers:** each chunk is embedded as "book · chapter" plus its text, so a passage like "He then sold the remainder at a loss" carries its context in the vector. The prompt still shows the plain text.
-  - **HNSW recall fix:** Chroma's default nearest-neighbour index missed 6 of 96 true top-6 passages (for one eval question all six, so it looked off-topic). Built with `ef_construction` 200 and `max_neighbors` 32, it misses none.
+  - **Exact vector search:** Chroma's approximate HNSW index missed 6 of 96 true top-6 passages with its defaults (for one eval question all six, so it looked off-topic); tuned (`ef_construction` 200, `max_neighbors` 32) it missed none. Since the move to pgvector (2026-11-06) the search is exact (no index: a few thousand chunks take milliseconds; pgvector's indexes stop at 2,000 dimensions, text-embedding-3-large has 3,072), so it cannot miss a nearest chunk. Checked: for all 13 eval questions pgvector returns the same top 6 in the same order as tuned Chroma.
   - **Index format in the collection name** (`…--v2`): after a change, the server marks the books for Retry on startup instead of mixing old and new vectors.
   - **Hybrid search, evaluated:** `RETRIEVAL_MODE=hybrid` adds BM25 keyword search (`keyword.py`) fused by reciprocal rank. It ranked better (context precision 0.94 vs 0.88) but its answers were less relevant (0.83 vs 0.90), so dense stays the default. A cross-encoder re-ranker was not tried, because it needs a local model (torch) or a separate re-rank API.
   - The retriever settings (mode, index format, floor) are part of the QA version, so eval runs show when retrieval changed.
@@ -52,7 +52,7 @@ Status as of commit `e114f04` (2026-10-22).
   - The answer prompt gets the last 4 turns as chat messages (earlier answers shortened, citation markers removed); only the current passages may be cited.
 - Chats are saved in `server/assets/conversations/` and survive restarts: **New chat**, **Past chats** (reopen or delete), at most 50 questions per chat.
 - Questions are checked with the guardrails functions in code, on every question: cleaned, at most 4000 characters (422, room for a pasted post), likely prompt injections blocked (400).
-- **Structured retrieval** (self-querying, `server/app/rag/filters.py`): if a question names a book, chapter or pages ("What does chapter 17 of Butler say about short selling?"), a model call with structured output extracts them, and code resolves them to real metadata values (book id, the exact chapter heading, page range) for a Chroma metadata filter. Numbers match Roman numerals ("17" → "CHAPTER XVII. SHORT SELLING"), and titles match by words. Unknown references are dropped with a note; if the filter finds nothing, the search runs again without it. Questions without such hints skip the model call. A book named in the question overrides the "Working on" choice. The chat shows the filter as "Filtered to: …".
+- **Structured retrieval** (self-querying, `server/app/rag/filters.py`): if a question names a book, chapter or pages ("What does chapter 17 of Butler say about short selling?"), a model call with structured output extracts them, and code resolves them to real metadata values (book id, the exact chapter heading, page range) for a metadata filter of the vector search. Numbers match Roman numerals ("17" → "CHAPTER XVII. SHORT SELLING"), and titles match by words. Unknown references are dropped with a note; if the filter finds nothing, the search runs again without it. Questions without such hints skip the model call. A book named in the question overrides the "Working on" choice. The chat shows the filter as "Filtered to: …".
   - Measured with RAGAs (k=6): faithfulness 0.95 → 0.97, context precision 0.93 → 0.94; the Garden City estate question (names its book) went from 0.56 to 1.00 faithfulness and 0.75 to 1.00 context precision.
 - **Tool calling** (LangChain `bind_tools`, one round, no loop): besides the passages, the model may call
   - `list_books`: the library (titles, authors, themes), for questions about the library itself
@@ -241,6 +241,6 @@ Three layers, all in code and on every request (never left to the model):
 ---
 
 ## Tech stack
-- **Backend:** Python, FastAPI, uv, LangChain, LangGraph, LangSmith, Chroma, PyMuPDF, tiktoken, `mcp` SDK
+- **Backend:** Python, FastAPI, uv, LangChain, LangGraph, LangSmith, PostgreSQL (Supabase) with pgvector, SQLAlchemy + Alembic, PyMuPDF, tiktoken, `mcp` SDK
 - **Models:** chat and embedding models through OpenRouter (OpenAI-compatible)
 - **Frontend:** Next.js, React, TypeScript, lucide-react, BookCraft design system

@@ -10,7 +10,7 @@ conversation history and tool calling.
     filter    structured retrieval (filters.py): if the question names a book, chapter or pages, a model call with
               structured output extracts them and code resolves them to real metadata values ("chapter 17 of
               Butler" → that book, "CHAPTER XVII. SHORT SELLING"); questions without such hints skip the model call
-    retrieve  the (standalone) question is embedded; the k most similar passages come from Chroma (vectorstore.py),
+    retrieve  the (standalone) question is embedded; the k most similar passages come from pgvector (vectorstore.py),
               restricted by the filters; if the filters find nothing, it searches again without them. Passages below
               MIN_RELEVANCE (config.py) are dropped, so the model never gets weakly related text as "sources"
     not_covered  no passage is relevant enough (an off-topic or out-of-library question): a fixed answer that names
@@ -148,7 +148,7 @@ PROMPT_VERSION = prompts.register("qa", QA_PROMPT, TOOLS_NOTE, CONDENSE_PROMPT, 
                                   StandaloneQuestion, QAAnswer,
                                   {k: TEMPERATURES[k] for k in ("condense", "filters", "answer")},
                                   # the retriever too, so an eval run shows when retrieval changed
-                                  {"retrieval": RETRIEVAL_MODE, "index": vectorstore.INDEX_FORMAT,
+                                  {"retrieval": RETRIEVAL_MODE, "index": vectorstore.INDEX_FORMAT, "store": "pgvector",
                                    "min_relevance": MIN_RELEVANCE})
 
 

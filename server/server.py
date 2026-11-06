@@ -33,7 +33,7 @@ from app.rag import ingestion, retrieval, summary  # noqa: E402
 
 def restore_data() -> None:
     """Restore the saved data, so it survives server restarts: from the database the projects and their owners, the
-    API keys, the sources and their summaries, generated assets, chats and the usage log; from disk the chunks.
+    API keys, the sources with their summaries and chunks, generated assets, chats and the usage log.
     Runs on startup (lifespan), not on import, so tests can import this module to check its routes without reading
     the real data. Without the database (DATABASE_URL not set or not reachable) the server does not start: it would
     create a second library for every returning user and accept no API key."""

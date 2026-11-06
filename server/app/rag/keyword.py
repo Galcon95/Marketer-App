@@ -54,7 +54,7 @@ _index: _Index | None = None
 def search(project_id: str, query: str, n: int, source_ids: list[str] | None = None,
            where: dict | None = None) -> list[str]:
     """Ids of the n chunks with the highest BM25 score for the query, best first, within the project and filters
-    (the same source_ids and Chroma-style where conditions as vectorstore.search)."""
+    (the same source_ids and where conditions as vectorstore.search)."""
     global _index
     if _index is None or _index.chunks is not db.chunks:
         _index = _Index(db.chunks)
@@ -66,7 +66,7 @@ def search(project_id: str, query: str, n: int, source_ids: list[str] | None = N
 
 
 def matches(chunk: Chunk, where: dict | None) -> bool:
-    """True if the chunk meets Chroma-style metadata conditions on chapter and page ($in, $gte, $lte, $and)."""
+    """True if the chunk meets the vector search's metadata conditions on chapter and page ($in, $gte, $lte, $and)."""
     if not where:
         return True
     if "$and" in where:

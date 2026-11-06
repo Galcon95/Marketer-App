@@ -15,6 +15,7 @@ from typing import Any
 
 from sqlalchemy import (JSON, BigInteger, Boolean, DateTime, Double, ForeignKey, Identity, Index, Integer,
                         MetaData, Text, text)
+from pgvector.sqlalchemy import VECTOR
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
@@ -34,6 +35,11 @@ class Base(DeclarativeBase):
 
 # Nested data (citations, chat turns, lists of ids) as JSON: JSONB in PostgreSQL, plain JSON in SQLite (tests).
 Json = JSON().with_variant(JSONB(), "postgresql")
+
+
+# An embedding: pgvector's vector type in PostgreSQL (without a fixed length, so another embedding model needs no
+# migration; the price is no approximate index, which this size does not need), a JSON list in SQLite (tests).
+Vector = VECTOR().with_variant(JSON(), "sqlite")
 
 
 def project_fk() -> Any:
@@ -201,3 +207,27 @@ class SummaryRow(Base):
     prompt_version: Mapped[str | None] = mapped_column(Text)
     tokens: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime)
+
+
+class ChunkRow(Base):
+    """A chunk of a book with its embedding; see schemas.Chunk and rag/vectorstore.py. Searched by LangChain's
+    PGVectorStore (content, embedding, metadata columns source_id, project_id, chapter, page, embedding_key).
+    Deleted with its book."""
+
+    __tablename__ = "chunks"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)  # "chk_<source>_<n>"
+    source_id: Mapped[str] = mapped_column(Text, ForeignKey("sources.id", ondelete="CASCADE"), index=True)
+    project_id: Mapped[str] = mapped_column(Text, index=True)  # the book's project, for the search filter
+    position: Mapped[int] = mapped_column(Integer)  # order within the book (1, 2, ...)
+    text: Mapped[str] = mapped_column(Text)  # the chunk as the prompt shows it
+    chapter: Mapped[str | None] = mapped_column(Text)
+    page: Mapped[int | None] = mapped_column(Integer)
+    start_time: Mapped[str | None] = mapped_column(Text)  # media only
+    end_time: Mapped[str | None] = mapped_column(Text)
+    token_count: Mapped[int] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text)  # what was embedded: "book · chapter" header + text
+    embedding: Mapped[list] = mapped_column(Vector)
+    # Embedding model and INDEX_FORMAT ("text-embedding-3-large--v2"): only vectors with the current key are searched,
+    # because vectors of different models or differently built texts cannot be compared.
+    embedding_key: Mapped[str] = mapped_column(Text)

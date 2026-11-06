@@ -1,7 +1,7 @@
 """Structured retrieval ("self-querying"): metadata filters taken from the question itself.
 
     question ──(mentions a book, chapter or page?)──► extract_filters ──► resolve_filters ──► metadata filter
-                 might_filter (code, no model call)      model, structured     code: references →     for Chroma
+                 might_filter (code, no model call)      model, structured     code: references →     for pgvector
                                                          output (QueryFilters)  real metadata values  (vectorstore)
 
 "What does chapter 17 of Butler say about short selling?" → book "Butler", chapter "17" → source src_908396aa,
@@ -61,7 +61,7 @@ class ResolvedFilters(BaseModel):
     notes: list[str] = []  # references that matched nothing, e.g. "no chapter 40 in the book"
 
     def where(self) -> dict | None:
-        """The extra Chroma metadata conditions (chapter, pages); the book goes through source_ids."""
+        """The extra metadata conditions (chapter, pages) of the vector search; the book goes through source_ids."""
         conditions = []
         if self.chapters:
             conditions.append({"chapter": {"$in": self.chapters}})

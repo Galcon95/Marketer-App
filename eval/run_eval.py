@@ -14,6 +14,10 @@ A separate project (own environment) because RAGAs needs older library versions 
 question becomes a chat on the server; the script deletes it again right after reading the answer. It
 waits when the app's rate limit answers 429. Needs OPENROUTER_API_KEY (environment variable or server/.env).
 
+Every API endpoint needs a sign-in: the script signs in as DEFAULT_CLIENT_OWNER (server/.env; or EVAL_EMAIL) with
+the password typed in at the start (never stored), using the Supabase project's public key from client/.env.local.
+For runs without a prompt, set EVAL_ACCESS_TOKEN to a valid access token instead.
+
 Each run records the app's prompt version (from the answers, e.g. "qa@5c14fd46", see server/app/core/prompts.py)
 and the git commit (with "-dirty" if tracked files were changed), so the report can tie score changes to
 prompt or code changes instead of relying on --label alone.
@@ -21,6 +25,7 @@ prompt or code changes instead of relying on --label alone.
 
 import argparse
 import csv
+import getpass
 import json
 import math
 import os
@@ -44,14 +49,15 @@ def main() -> None:
     """One evaluation run: ask the app every test question, score the answers with RAGAs, then write
     results.json, results.csv and report.html to reports/<run id>/ and print a summary."""
     args = _parse_args()
-    _load_server_env()
+    _load_env(EVAL_DIR.parent / "server" / ".env")
     if not os.getenv("OPENROUTER_API_KEY"):
         sys.exit("OPENROUTER_API_KEY is not set (environment variable or server/.env).")
+    token = _access_token()
     items = json.loads((EVAL_DIR / "testset.json").read_text(encoding="utf-8"))[: args.limit or None]
 
     print(f"Asking the app {len(items)} questions (k={args.k}) ...")
     rows, app_model, prompt_versions = [], "", set()
-    with httpx.Client(base_url=args.api, timeout=300) as api:
+    with httpx.Client(base_url=args.api, timeout=300, headers={"Authorization": f"Bearer {token}"}) as api:
         for i, item in enumerate(items, start=1):
             result = _ask(api, args.project, item["question"], args.k)
             app_model = result["model"]
@@ -104,9 +110,28 @@ def _parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def _load_server_env() -> None:
-    """Read server/.env (KEY=VALUE lines) for variables not already set, like the app does."""
-    env = EVAL_DIR.parent / "server" / ".env"
+def _access_token() -> str:
+    """An access token for the app's API: EVAL_ACCESS_TOKEN if set, else a Supabase sign-in with email and password
+    (the password is typed in, never stored)."""
+    if token := os.getenv("EVAL_ACCESS_TOKEN"):
+        return token
+    _load_env(EVAL_DIR.parent / "client" / ".env.local")
+    url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    public_key = os.getenv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY")
+    email = os.getenv("EVAL_EMAIL") or os.getenv("DEFAULT_CLIENT_OWNER")
+    if not (url and public_key and email):
+        sys.exit("Cannot sign in: SUPABASE_URL and DEFAULT_CLIENT_OWNER (server/.env) and "
+                 "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (client/.env.local) are needed, or set EVAL_ACCESS_TOKEN.")
+    password = getpass.getpass(f"Password of {email} (the app's sign-in; not stored): ")
+    response = httpx.post(f"{url.rstrip('/')}/auth/v1/token", params={"grant_type": "password"},
+                          headers={"apikey": public_key}, json={"email": email, "password": password}, timeout=30)
+    if response.status_code != 200:
+        sys.exit(f"Sign-in failed: {response.json().get('error_description') or response.text}")
+    return response.json()["access_token"]
+
+
+def _load_env(env: Path) -> None:
+    """Read a .env file (KEY=VALUE lines) for variables not already set, like the app does."""
     if not env.is_file():
         return
     for line in env.read_text(encoding="utf-8").splitlines():

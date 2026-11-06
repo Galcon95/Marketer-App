@@ -35,24 +35,28 @@ def library(monkeypatch):
 
 # ---------- contextual chunk header ----------
 def test_chunks_are_embedded_with_book_and_chapter():
-    doc = vectorstore._to_document(db.chunks["chk_1"], "Successful Stock Speculation")
-    assert doc.page_content == ("Successful Stock Speculation · CHAPTER V. BUCKET SHOPS\n\n"
-                                "A bucket shop takes orders but never buys the stock.")
-    assert doc.metadata["chapter"] == "CHAPTER V. BUCKET SHOPS"  # the filters still work on metadata
+    content = vectorstore._content(db.chunks["chk_1"], "Successful Stock Speculation")
+    assert content == ("Successful Stock Speculation · CHAPTER V. BUCKET SHOPS\n\n"
+                       "A bucket shop takes orders but never buys the stock.")
 
 
 def test_a_chunk_without_book_or_chapter_is_embedded_as_it_is():
     chunk = Chunk(id="c", source_id="s", text="Plain.", token_count=1, location=ChunkLocation())
-    assert vectorstore._to_document(chunk).page_content == "Plain."
+    assert vectorstore._content(chunk) == "Plain."
 
 
-def test_the_collection_name_contains_the_index_format(monkeypatch):
-    """A new INDEX_FORMAT means a new collection, so old vectors are never mixed with new ones."""
-    monkeypatch.setattr(vectorstore, "Chroma", lambda **options: options)
-    monkeypatch.setattr(vectorstore, "_client", lambda: None)
-    options = vectorstore._store.__wrapped__(PROJECT)
-    assert options["collection_name"] == f"{PROJECT}--text-embedding-3-large--{vectorstore.INDEX_FORMAT}"
-    assert options["collection_configuration"]["hnsw"]["max_neighbors"] > 16  # better recall than Chroma's default
+def test_the_embedding_key_contains_model_and_index_format():
+    """A new model or INDEX_FORMAT means a new key, so old vectors are never compared with new ones."""
+    assert vectorstore.EMBEDDING_KEY == f"text-embedding-3-large--{vectorstore.INDEX_FORMAT}"
+
+
+def test_a_search_only_sees_the_projects_chunks_with_the_current_key():
+    where = {"chapter": {"$in": ["CHAPTER V. BUCKET SHOPS"]}}
+    assert vectorstore.search_filter(PROJECT, ["src_a"], where) == {"$and": [
+        {"project_id": {"$eq": PROJECT}}, {"embedding_key": {"$eq": vectorstore.EMBEDDING_KEY}},
+        {"source_id": {"$in": ["src_a"]}}, where]}
+    assert vectorstore.search_filter(PROJECT) == {"$and": [
+        {"project_id": {"$eq": PROJECT}}, {"embedding_key": {"$eq": vectorstore.EMBEDDING_KEY}}]}
 
 
 # ---------- relevance floor ----------

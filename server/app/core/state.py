@@ -34,7 +34,7 @@ def new_id(prefix: str) -> str:
 
 # Projects by id. A project is a client (shown as "Current client" in the GUI): its books, chats, campaigns and
 # assets. Each signed-in user owns one (accounts.py). The default project holds the data from before sign-in
-# existed (the id "demo-campaign" stays because data on disk and in Chroma is stored under it); it has no owner
+# existed (the id "demo-campaign" stays because data in the database and on disk is stored under it); it has no owner
 # until DEFAULT_CLIENT_OWNER signs in. The saved projects (records.load_projects) replace these on startup.
 projects: dict[str, Project] = {
     DEFAULT_PROJECT_ID: Project(
@@ -45,8 +45,7 @@ projects: dict[str, Project] = {
     )
 }
 
-# Sources and their chunks by id; filled on startup (ingestion.restore_sources: sources from the database, chunks
-# from disk) and by uploads.
+# Sources and their chunks by id; filled from the database on startup (ingestion.restore_sources) and by uploads.
 sources: dict[str, Source] = {}
 chunks: dict[str, Chunk] = {}
 

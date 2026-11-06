@@ -192,7 +192,7 @@ def _owns_project(user: User, project_id: str) -> bool:
 
 def retrieve(project_id: str, query: str, k: int, source_ids: list[str] | None = None,
              operation: str = "search") -> list[tuple[Chunk, float]]:
-    """Find the project's chunks most similar to a query (vector search in Chroma).
+    """Find the project's chunks most similar to a query (vector search with pgvector).
 
     Wraps retrieval.retrieve_chunks and turns vector store errors into HTTP errors.
 

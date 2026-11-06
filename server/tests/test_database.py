@@ -314,3 +314,55 @@ def test_the_import_of_books_reads_records_and_summaries_and_skips_duplicates(tm
     assert import_files.import_sources() == (1, 1)
     assert import_files.import_sources() == (0, 0)
     assert list(records.load_sources()) == ["src_a"] and list(records.load_summaries()) == ["src_a"]
+
+
+# ---------- Chunks and their vectors ----------
+
+def _chunks(source_id: str, n: int) -> list[Chunk]:
+    return [Chunk(id=f"chk_{source_id}_{i}", source_id=source_id, text=f"Text {i}.", token_count=3,
+                  location=ChunkLocation(chapter="I", page=i)) for i in range(1, n + 1)]
+
+
+def test_chunks_are_replaced_in_reading_order_with_their_vectors():
+    records.add_source(_source("src_a"))
+    records.replace_chunks(db.DEFAULT_PROJECT_ID, "src_a", _chunks("src_a", 3), ["h\n\nText"] * 3,
+                           [[1.0, 0.0], [0.0, 1.0], [0.6, 0.8]], "model--v2")
+    records.replace_chunks(db.DEFAULT_PROJECT_ID, "src_a", _chunks("src_a", 2), ["h\n\nText"] * 2,
+                           [[1.0, 0.0], [0.0, 1.0]], "model--v2")  # re-indexed: fewer chunks
+    loaded = records.load_chunks()["src_a"]
+    assert [c.id for c in loaded] == ["chk_src_a_1", "chk_src_a_2"] and loaded[1].location.page == 2
+    assert records.chunk_counts("model--v2") == {"src_a": 2} and records.chunk_counts("other--v2") == {}
+    assert records.chunk_embeddings(["chk_src_a_2", "chk_unknown"]) == {"chk_src_a_2": [0.0, 1.0]}
+    assert records.count_all_chunks() == 2
+
+
+def test_a_deleted_book_gets_no_chunks_and_loses_its_own():
+    with pytest.raises(DatabaseError):  # the book is gone (e.g. deleted while it was being embedded)
+        records.replace_chunks(db.DEFAULT_PROJECT_ID, "src_gone", _chunks("src_gone", 1), ["x"], [[1.0]], "k")
+    records.add_source(_source("src_a"))
+    records.replace_chunks(db.DEFAULT_PROJECT_ID, "src_a", _chunks("src_a", 2), ["x", "y"], [[1.0], [0.5]], "k")
+    records.delete_source("src_a")
+    assert records.load_chunks() == {}
+
+
+def test_the_import_copies_chunks_and_vectors_from_chroma(tmp_path, monkeypatch):
+    import chromadb
+
+    from app.rag import vectorstore
+    monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path / "uploads")
+    for source_id in ("src_a", "src_b"):
+        records.add_source(_source(source_id))
+        folder = tmp_path / "uploads" / db.DEFAULT_PROJECT_ID / source_id
+        folder.mkdir(parents=True)
+        (folder / storage.CHUNKS_FILENAME).write_text(
+            "\n".join(c.model_dump_json() for c in _chunks(source_id, 2)), encoding="utf-8")
+    client = chromadb.PersistentClient(path=str(tmp_path / "chroma"), settings=chromadb.Settings(anonymized_telemetry=False))
+    collection = client.create_collection(f"{db.DEFAULT_PROJECT_ID}--{vectorstore.EMBEDDING_KEY}")
+    collection.add(ids=["chk_src_a_1", "chk_src_a_2", "chk_src_b_1"], embeddings=[[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
+                   documents=["Book · I\n\nText 1.", "Book · I\n\nText 2.", "Book · I\n\nText 1."])
+
+    assert import_files.import_chunks(tmp_path / "chroma") == (1, 2)  # src_b: a vector is missing, skipped
+    assert import_files.import_chunks(tmp_path / "chroma") == (0, 0)
+    assert list(records.load_chunks()) == ["src_a"]
+    assert records.chunk_embeddings(["chk_src_a_2"]) == {"chk_src_a_2": [0.0, 1.0]}
+    assert records.chunk_counts(vectorstore.EMBEDDING_KEY) == {"src_a": 2}

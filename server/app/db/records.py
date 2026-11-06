@@ -12,9 +12,10 @@ from pydantic import BaseModel
 from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy import inspect as sa_inspect
 
-from app.core.schemas import ApiKey, Asset, BookSummary, Conversation, Project, Source, UsageRecord, UsageTotals
+from app.core.schemas import (ApiKey, Asset, BookSummary, Chunk, ChunkLocation, Conversation, Project, Source,
+                              UsageRecord, UsageTotals)
 from app.db.database import session
-from app.db.tables import (ApiKeyRow, AssetRow, Base, ConversationRow, ProjectRow, SourceRow, SummaryRow,
+from app.db.tables import (ApiKeyRow, AssetRow, Base, ChunkRow, ConversationRow, ProjectRow, SourceRow, SummaryRow,
                            UsageRow)
 
 # Fields saved in a JSON column (nested models, lists): written in JSON mode, so datetimes inside become strings.
@@ -248,3 +249,71 @@ def save_summary(summary: BookSummary) -> None:
     """Insert or replace the summary of a book ("Regenerate" replaces it)."""
     with session() as s:
         s.merge(to_row(SummaryRow, summary, SUMMARY_JSON_FIELDS))
+
+
+# ---------- Chunks and their embeddings ----------
+_CHUNK_FIELDS = (ChunkRow.id, ChunkRow.source_id, ChunkRow.text, ChunkRow.chapter, ChunkRow.page, ChunkRow.start_time,
+                 ChunkRow.end_time, ChunkRow.token_count)  # everything but the (large) embedding
+
+
+def replace_chunks(project_id: str, source_id: str, chunks: list[Chunk], contents: list[str],
+                   embeddings: list[list[float]], embedding_key: str) -> None:
+    """Replace all chunks of a source with these, in one transaction: searches see the old chunks until the new
+    ones are complete. Fails if the source no longer exists (foreign key): a deleted book gets no chunks back.
+
+    Args:
+        project_id: The source's project (for the search filter).
+        source_id: The source.
+        chunks: Its chunks, in reading order.
+        contents: Per chunk, the text that was embedded ("book · chapter" header + text).
+        embeddings: Per chunk, its embedding.
+        embedding_key: Embedding model and index format of these embeddings (vectorstore.EMBEDDING_KEY).
+    """
+    with session() as s:
+        s.execute(delete(ChunkRow).where(ChunkRow.source_id == source_id))
+        s.add_all(ChunkRow(id=c.id, source_id=source_id, project_id=project_id, position=n, text=c.text,
+                           chapter=c.location.chapter, page=c.location.page, start_time=c.location.start_time,
+                           end_time=c.location.end_time, token_count=c.token_count, content=content,
+                           embedding=list(map(float, embedding)), embedding_key=embedding_key)
+                  for n, (c, content, embedding) in enumerate(zip(chunks, contents, embeddings, strict=True), 1))
+
+
+def delete_chunks(source_id: str) -> None:
+    """Delete all chunks of a source."""
+    with session() as s:
+        s.execute(delete(ChunkRow).where(ChunkRow.source_id == source_id))
+
+
+def load_chunks() -> dict[str, list[Chunk]]:
+    """All chunks without their embeddings, by source id, in reading order (called once on server startup)."""
+    query = select(*_CHUNK_FIELDS).order_by(ChunkRow.source_id, ChunkRow.position)
+    chunks: dict[str, list[Chunk]] = {}
+    with session() as s:
+        for id_, source_id, text, chapter, page, start_time, end_time, token_count in s.execute(query):
+            location = ChunkLocation(chapter=chapter, page=page, start_time=start_time, end_time=end_time)
+            chunks.setdefault(source_id, []).append(
+                Chunk(id=id_, source_id=source_id, text=text, location=location, token_count=token_count))
+    return chunks
+
+
+def chunk_counts(embedding_key: str) -> dict[str, int]:
+    """Per source, how many of its chunks have embeddings with this key (searchable with the current model)."""
+    query = (select(ChunkRow.source_id, func.count()).where(ChunkRow.embedding_key == embedding_key)
+             .group_by(ChunkRow.source_id))
+    with session() as s:
+        return {source_id: count for source_id, count in s.execute(query)}
+
+
+def chunk_embeddings(chunk_ids: Iterable[str]) -> dict[str, list[float]]:
+    """The embeddings of these chunks by id (unknown ids are left out)."""
+    ids = list(chunk_ids)
+    if not ids:
+        return {}
+    with session() as s:
+        return {r[0]: list(r[1]) for r in s.execute(select(ChunkRow.id, ChunkRow.embedding).where(ChunkRow.id.in_(ids)))}
+
+
+def count_all_chunks() -> int:
+    """Number of stored chunks (for GET /health)."""
+    with session() as s:
+        return s.execute(select(func.count()).select_from(ChunkRow)).scalar_one()

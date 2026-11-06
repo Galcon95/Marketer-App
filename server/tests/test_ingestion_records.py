@@ -49,3 +49,16 @@ def test_on_startup_an_interrupted_book_is_marked_failed_in_the_database(book):
     ingestion.restore_sources()
     assert db.sources[book.id].status == "failed"
     assert "interrupted" in records.load_sources()[book.id].error
+
+
+@pytest.mark.parametrize("key, status", [(None, "ready"), ("old-model--v1", "failed")])
+def test_on_startup_a_ready_book_needs_chunks_of_the_current_model(book, key, status):
+    from app.core.schemas import Chunk, ChunkLocation
+    from app.rag import vectorstore
+    records.update_source(book.model_copy(update={"status": "ready", "chunk_count": 1}))
+    chunk = Chunk(id="chk_a_1", source_id=book.id, text="t", token_count=1, location=ChunkLocation())
+    records.replace_chunks(book.project_id, book.id, [chunk], ["t"], [[1.0]], key or vectorstore.EMBEDDING_KEY)
+    db.sources.clear()
+    ingestion.restore_sources()
+    assert db.sources[book.id].status == status
+    assert ("chk_a_1" in db.chunks) == (status == "ready")

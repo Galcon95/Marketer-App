@@ -29,17 +29,17 @@ server/
 │   │   ├── llm.py      chat model (ChatOpenAI via OpenRouter), GenerationError, token counts
 │   │   ├── schemas.py  Pydantic request/response models
 │   │   ├── state.py    in-memory stores (projects, sources, chunks, summaries, assets)
-│   │   ├── storage.py  files on disk: uploads, chunks, covers
+│   │   ├── storage.py  files on disk: uploaded books and covers
 │   │   ├── usage.py    tokens and costs of every model call
 │   │   └── style.py    platform rules, tones, "how human" levels, AI-cliché check and rewrite
 │   ├── db/             the database (PostgreSQL at Supabase; SQLAlchemy)
 │   │   ├── database.py     connection (DATABASE_URL), sessions, DatabaseError
-│   │   ├── tables.py       tables: projects, sources, summaries, assets, conversations, usage_log; api_keys (private)
+│   │   ├── tables.py       tables: projects, sources, summaries, chunks, assets, conversations, usage_log; api_keys
 │   │   ├── records.py      read and write all records; usage sums and budgets
-│   │   └── import_files.py one-time import of the old JSON files (projects, keys, books, summaries, assets, chats, usage)
+│   │   └── import_files.py one-time import of the old files (JSON, chunks, Chroma vectors)
 │   ├── rag/            Phase 1 Knowledge Hub
 │   │   ├── ingestion.py    PDF → chapters → chunks → vectors
-│   │   ├── vectorstore.py  embeddings in Chroma
+│   │   ├── vectorstore.py  embeddings in PostgreSQL (pgvector, LangChain PGVectorStore)
 │   │   ├── retrieval.py    vector search, prompt context, citations
 │   │   ├── summary.py      book summaries (LangGraph map-reduce)
 │   │   ├── qa.py           ask your book (LangGraph)
@@ -52,7 +52,7 @@ server/
 │   ├── agents/         Phase 4 Agent Workspace, not built yet
 │   └── api/            FastAPI routers: health, projects, sources, knowledge, assets, campaigns (+ deps.py)
 ├── migrations/         Alembic migrations of the database (alembic.ini next to server.py)
-└── assets/             data (not committed): uploads, chroma
+└── assets/             data (not committed): uploaded books and covers
 ```
 
 ## MCP server: mcp-book-knowledge

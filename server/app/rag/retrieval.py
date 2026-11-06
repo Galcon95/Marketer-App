@@ -1,6 +1,6 @@
 """Retrieval helpers shared by generation and Q&A: vector search, prompt context and citations.
 
-    retrieve_chunks     the k chunks most similar to a query (Chroma, see vectorstore.py; or hybrid, see below)
+    retrieve_chunks     the k chunks most similar to a query (pgvector, see vectorstore.py; or hybrid, see below)
     format_context      numbered excerpts <passage n="1">..<passage n="k"> with source, chapter and page for the prompt
     format_background   the summaries of the excerpts' books (summary.py) as background
     keep_cited          the [n] markers the model wrote → Citations, renumbered in text order

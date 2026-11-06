@@ -1,9 +1,9 @@
 """File storage for uploaded sources: server/assets/uploads/{project_id}/{source_id}/{filename}, with the book's
-chunks and cover. Projects, API keys, the source records, book summaries, generated assets, chats and the usage log
-are in the database (app/db).
+cover. Everything else is in the database (app/db): projects, API keys, the source records, book summaries, chunks
+with their vectors, generated assets, chats and the usage log.
 
-The old record files (.source.json, .summary.json) are only read by the one-time import (app/db/import_files.py:
-load_sources, load_summary).
+The old record files (.source.json, .summary.json, .chunks.jsonl) are only read by the one-time import
+(app/db/import_files.py: load_sources, load_summary, load_chunks).
 
 Each source directory also holds META_FILENAME, the source's record as JSON, and after ingestion
 CHUNKS_FILENAME with its chunks. The upload directory
@@ -230,24 +230,6 @@ def source_file_path(source: Source) -> Path:
         source: The source whose file path to build.
     """
     return UPLOAD_DIR / source.project_id / source.id / source.filename
-
-
-def write_chunks(source: Source, chunks: list[Chunk]) -> None:
-    """Save the chunks of a source in its upload directory, replacing any previous chunks.
-
-    Written to a temporary file first and then renamed, like write_source_meta.
-
-    Args:
-        source: The source the chunks belong to; its directory must already exist.
-        chunks: All chunks of the source, in reading order.
-
-    Raises:
-        OSError: If the file cannot be written.
-    """
-    source_dir = UPLOAD_DIR / source.project_id / source.id
-    tmp = source_dir / f"{CHUNKS_FILENAME}.tmp"
-    tmp.write_text("".join(c.model_dump_json() + "\n" for c in chunks), encoding="utf-8")
-    tmp.replace(source_dir / CHUNKS_FILENAME)
 
 
 def load_chunks(source: Source) -> list[Chunk] | None:
