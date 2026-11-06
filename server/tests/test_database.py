@@ -3,13 +3,14 @@ saved and loaded, one project per owner, a kit saved in one transaction, the one
 and the connection settings."""
 
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.core import config
+from app.core import config, usage
 from app.core import state as db
 from app.core.schemas import (Asset, ChatTurn, Chunk, ChunkLocation, Citation, Conversation, Project,
-                              SearchHit)
+                              SearchHit, UsageRecord, UsageTotals)
 from app.db import database, import_files, records
 from app.db.database import DatabaseError
 from app.db.tables import AssetRow, ConversationRow
@@ -177,3 +178,63 @@ def test_the_import_of_assets_and_chats_skips_known_ids_and_unknown_projects(tmp
 def test_an_asset_needs_an_existing_project():
     with pytest.raises(DatabaseError):
         records.save_assets([_asset("ast_1", project_id="prj_unknown")])
+
+
+# ---------- Usage log ----------
+
+def _call(cost: float, when: datetime, user_id: str | None = OWNER.id, operation: str = "ask/answer",
+          project_id: str | None = db.DEFAULT_PROJECT_ID) -> UsageRecord:
+    return UsageRecord(timestamp=when, operation=operation, kind="chat", model="m", input_tokens=10, output_tokens=5,
+                       input_cost=cost, output_cost=0.0, cost=cost, cost_source="estimate", project_id=project_id,
+                       user_id=user_id)
+
+
+NOON = datetime(2026, 11, 6, 12, 0, tzinfo=timezone.utc)
+TODAY, MONTH = NOON.replace(hour=0), NOON.replace(day=1, hour=0)
+
+
+def test_spending_sums_today_this_month_and_the_whole_app():
+    for rec in [_call(1.0, NOON), _call(2.0, NOON.replace(day=2)),  # the user: today, earlier this month
+                _call(4.0, NOON.replace(month=10)),  # last month: not counted
+                _call(8.0, NOON, user_id=STRANGER.id, project_id="prj_other"),  # someone else today
+                _call(16.0, NOON, user_id=None)]:  # before sign-in existed, in the user's project
+        records.add_usage(rec)
+    user_today, user_month, app_today = records.spending(OWNER.id, [db.DEFAULT_PROJECT_ID], TODAY, MONTH)
+    assert (user_today, user_month, app_today) == (17.0, 19.0, 25.0)
+    assert records.spending(STRANGER.id, ["prj_other"], TODAY, MONTH) == (8.0, 8.0, 25.0)
+
+
+def test_times_from_other_time_zones_count_in_utc():
+    berlin = timezone(timedelta(hours=1))
+    records.add_usage(_call(1.0, datetime(2026, 11, 6, 0, 30, tzinfo=berlin)))  # = 23:30 UTC the day before
+    assert records.spending(OWNER.id, [], TODAY, MONTH) == (0.0, 1.0, 0.0)
+    assert records.recent_usage(1)[0].timestamp == datetime(2026, 11, 5, 23, 30, tzinfo=timezone.utc)
+
+
+def test_the_report_sums_per_operation_and_lists_the_latest_calls():
+    records.add_usage(_call(1.0, NOON, operation="ask/answer"))
+    records.add_usage(_call(3.0, NOON.replace(hour=13), operation="generate/generate"))
+    records.add_usage(_call(2.0, NOON.replace(hour=14), operation="ask/answer", user_id=STRANGER.id))
+    report = usage.report(10, OWNER.id, [db.DEFAULT_PROJECT_ID])
+    assert (report.totals.calls, report.totals.cost, report.totals.input_tokens) == (2, 4.0, 20)
+    assert list(report.by_operation) == ["generate/generate", "ask/answer"]  # highest cost first
+    assert [r.cost for r in report.recent] == [3.0, 1.0]  # newest first, only the user's
+    assert usage.report(1).recent[0].user_id == STRANGER.id  # all users, the latest one
+
+
+def test_a_call_is_logged_even_if_saving_it_fails(monkeypatch):
+    def broken(rec):
+        raise DatabaseError("Database error (OperationalError)")
+    monkeypatch.setattr(records, "add_usage", broken)
+    monkeypatch.setattr(usage, "_totals", UsageTotals())
+    usage.record(_call(1.0, NOON))  # no exception: the model call's request goes on
+    assert usage._totals.calls == 1
+
+
+def test_the_import_of_the_usage_log_skips_known_calls_and_bad_lines(tmp_path):
+    path = tmp_path / "usage.jsonl"
+    path.write_text("\n".join([_call(1.0, NOON).model_dump_json(), "not json",
+                               _call(2.0, NOON.replace(hour=13)).model_dump_json()]), encoding="utf-8")
+    assert import_files.import_usage(path) == 2
+    assert import_files.import_usage(path) == 0
+    assert records.usage_totals().cost == 3.0

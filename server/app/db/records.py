@@ -9,12 +9,12 @@ from datetime import datetime
 from typing import TypeVar
 
 from pydantic import BaseModel
-from sqlalchemy import delete, select, update
+from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy import inspect as sa_inspect
 
-from app.core.schemas import ApiKey, Asset, Conversation, Project
+from app.core.schemas import ApiKey, Asset, Conversation, Project, UsageRecord, UsageTotals
 from app.db.database import session
-from app.db.tables import ApiKeyRow, AssetRow, Base, ConversationRow, ProjectRow
+from app.db.tables import ApiKeyRow, AssetRow, Base, ConversationRow, ProjectRow, UsageRow
 
 # Fields saved in a JSON column (nested models, lists): written in JSON mode, so datetimes inside become strings.
 ASSET_JSON_FIELDS = {"citations", "source_ids", "ai_tells"}
@@ -129,3 +129,71 @@ def delete_conversations(conversation_ids: Iterable[str]) -> None:
     if ids:
         with session() as s:
             s.execute(delete(ConversationRow).where(ConversationRow.id.in_(ids)))
+
+
+# ---------- Usage log (model calls and their costs) ----------
+def add_usage(rec: UsageRecord) -> None:
+    """Save one model call."""
+    with session() as s:
+        s.add(UsageRow(**rec.model_dump()))
+
+
+def _of_user(user_id: str, project_ids: Iterable[str]):
+    """The calls a user caused: their user id is on it, or it is from before sign-in existed (no user id) and belongs
+    to one of their projects."""
+    return or_(UsageRow.user_id == user_id,
+               and_(UsageRow.user_id.is_(None), UsageRow.project_id.in_(list(project_ids))))
+
+
+def _where(user_id: str | None, project_ids: Iterable[str]) -> list:
+    return [] if user_id is None else [_of_user(user_id, project_ids)]
+
+
+_SUMS = (func.count(), func.coalesce(func.sum(UsageRow.input_tokens), 0),
+         func.coalesce(func.sum(UsageRow.output_tokens), 0), func.coalesce(func.sum(UsageRow.input_cost), 0.0),
+         func.coalesce(func.sum(UsageRow.output_cost), 0.0), func.coalesce(func.sum(UsageRow.cost), 0.0))
+
+
+def _totals(row) -> UsageTotals:
+    calls, input_tokens, output_tokens, input_cost, output_cost, cost = row
+    return UsageTotals(calls=calls, input_tokens=input_tokens, output_tokens=output_tokens,
+                       input_cost=input_cost, output_cost=output_cost, cost=cost)
+
+
+def usage_totals(user_id: str | None = None, project_ids: Iterable[str] = ()) -> UsageTotals:
+    """Sums over all calls, or with `user_id` over that user's calls."""
+    with session() as s:
+        return _totals(s.execute(select(*_SUMS).where(*_where(user_id, project_ids))).one())
+
+
+def usage_by_operation(user_id: str | None = None, project_ids: Iterable[str] = ()) -> dict[str, UsageTotals]:
+    """Sums per operation (highest cost first), of all calls or of the user's."""
+    query = (select(UsageRow.operation, *_SUMS).where(*_where(user_id, project_ids))
+             .group_by(UsageRow.operation).order_by(func.sum(UsageRow.cost).desc()))
+    with session() as s:
+        return {row[0]: _totals(row[1:]) for row in s.execute(query)}
+
+
+def recent_usage(limit: int, user_id: str | None = None, project_ids: Iterable[str] = ()) -> list[UsageRecord]:
+    """The latest `limit` calls, newest first, of all calls or of the user's."""
+    query = (select(UsageRow).where(*_where(user_id, project_ids))
+             .order_by(UsageRow.timestamp.desc(), UsageRow.id.desc()).limit(limit))
+    with session() as s:
+        return [UsageRecord.model_validate({k: getattr(row, k) for k in UsageRecord.model_fields})
+                for row in s.scalars(query)]
+
+
+def spending(user_id: str, project_ids: Iterable[str], today: datetime, month: datetime) -> tuple[float, float, float]:
+    """In one query: what the user spent since `today` and since `month`, and what all users spent since `today`
+    (USD). The budget check runs before every model request, so this is one round trip, not three."""
+    mine, since_today = _of_user(user_id, project_ids), UsageRow.timestamp >= today
+
+    def total(condition) -> object:
+        return func.coalesce(func.sum(case((condition, UsageRow.cost), else_=0.0)), 0.0)
+
+    # Only this month's rows are read (the timestamp index); today lies within them.
+    query = (select(total(and_(mine, since_today)), total(mine), total(since_today))
+             .where(UsageRow.timestamp >= min(month, today)))
+    with session() as s:
+        user_today, user_month, app_today = s.execute(query).one()
+    return float(user_today), float(user_month), float(app_today)

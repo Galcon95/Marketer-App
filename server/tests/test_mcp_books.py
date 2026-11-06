@@ -14,6 +14,7 @@ from app.core import api_keys, logs, usage
 from app.core import state as db
 from app.core.mcp_auth import RequireMcpAuth
 from app.core.schemas import Source, UsageRecord
+from app.db import records
 from app.market import book_server as books
 from tests.conftest import OWNER, STRANGER
 
@@ -90,7 +91,7 @@ def test_another_users_book_cannot_be_reached(server, tool, arguments):
 
 
 def test_model_tools_have_the_apps_budget(server):
-    usage._records.append(UsageRecord(
+    records.add_usage(UsageRecord(
         timestamp=NOW, operation="ask/answer", kind="chat", model="m", input_tokens=1, output_tokens=1,
         input_cost=5.0, output_cost=0.0, cost=5.0, cost_source="estimate", project_id=PROJECT, user_id=OWNER.id))
     for tool, arguments in [("search_book", {"query": "garden cities"}), ("ask_book", {"question": "Why?"})]:
@@ -106,4 +107,4 @@ def test_model_costs_are_logged_for_the_keys_owner(server, monkeypatch):
     monkeypatch.setattr(books, "retrieve_chunks", fake_retrieve)
     result = call_tool(server, STRANGER, "search_book", {"query": "garden cities"})
     assert result.get("isError") is not True
-    assert [(r.operation, r.user_id) for r in usage._records] == [("mcp_search_book", STRANGER.id)]
+    assert [(r.operation, r.user_id) for r in records.recent_usage(10)] == [("mcp_search_book", STRANGER.id)]

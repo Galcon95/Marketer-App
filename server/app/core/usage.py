@@ -8,9 +8,11 @@ vectorstore.py: LangChain does not pass their usage on, so their tokens are coun
 (the embedding models' own tokenizer) and priced from PRICES.
 
 Each call is
-  - appended to USAGE_FILE (server/assets/usage/usage.jsonl), one JSON object per line, with the id of the HTTP
-    request that caused it (logs.py), and
+  - saved in the database (table usage_log, app/db/records.py) with the id of the HTTP request that caused it
+    (logs.py) and the signed-in user, and
   - logged to the server console with the totals so far (input cost, output cost, all costs).
+Reports and budgets are sums the database computes (records.usage_totals, records.spending); only the app-wide
+totals for the console line are kept in memory.
 The operation name comes from the run's metadata: "operation" set by the graph invocation plus the
 LangGraph node, e.g. "summarize_book/summarize_chapter".
 """
@@ -26,13 +28,9 @@ from uuid import UUID
 import tiktoken
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
-from pydantic import ValidationError
-
-from app.core.config import DATA_DIR
 from app.core.logs import current_request_id, current_user_id
 from app.core.schemas import UsageRecord, UsageReport, UsageTotals
-
-USAGE_FILE = DATA_DIR / "usage" / "usage.jsonl"
+from app.db import records
 
 # USD per 1 million tokens (input, output), by model name without provider prefix. Used for
 # embeddings and when the provider reports no cost. Source: OpenAI price list (= OpenRouter prices).
@@ -46,15 +44,15 @@ PRICES: dict[str, tuple[float, float]] = {
 logger = logging.getLogger("usage")  # goes to the console handler set up in logs.py
 
 _lock = threading.Lock()
-_records: list[UsageRecord] = []  # all calls so far (loaded from USAGE_FILE on startup)
-_totals = UsageTotals()
+_totals = UsageTotals()  # all calls so far, for the console line (loaded from the database on startup)
 
 
 # ---------- Recording ----------
 def record(rec: UsageRecord) -> None:
-    """Log one model call: append it to USAGE_FILE, update the totals and print a console line.
+    """Log one model call: save it in the database, update the totals and print a console line.
 
-    Logging must never break the actual request, so file errors are only reported.
+    Logging must never break the actual request, so database errors are only reported (the call is then missing
+    from the reports and budgets).
 
     Args:
         rec: The call to log; its request_id and user_id are filled in from the current HTTP request if not set.
@@ -63,17 +61,13 @@ def record(rec: UsageRecord) -> None:
         rec.request_id = current_request_id()
     if rec.user_id is None:
         rec.user_id = current_user_id()
+    try:
+        records.add_usage(rec)
+    except OSError as e:  # DatabaseError
+        logger.warning("Could not save the usage of %s: %s", rec.operation, e)
     with _lock:
-        _records.append(rec)
         _add(_totals, rec)
         totals = _totals.model_copy()
-        try:
-            USAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with USAGE_FILE.open("a", encoding="utf-8") as f:
-                f.write(rec.model_dump_json() + "\n")
-        except OSError as e:
-            logger.warning("Could not write %s: %s", USAGE_FILE, e)
-            
     logger.info(
         "%-38s %-28s in %7s tok %s | out %6s tok %s | call %s || total so far: in %s, out %s, all %s (%d calls)",
         rec.operation, rec.model, f"{rec.input_tokens:,}", _usd(rec.input_cost), f"{rec.output_tokens:,}",
@@ -167,54 +161,39 @@ handler = UsageCallbackHandler()  # attached to the chat model in llm.chat_model
 
 # ---------- Reading ----------
 def load() -> None:
-    """Read USAGE_FILE into memory and compute the totals (called once on server startup)."""
+    """Compute the app-wide totals for the console line from the database (called once on server startup).
+
+    Raises:
+        DatabaseError: If the database cannot be read.
+    """
+    global _totals
+    totals = records.usage_totals()
     with _lock:
-        _records.clear()
-        global _totals
-        _totals = UsageTotals()
-        try:
-            lines = USAGE_FILE.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            return
-        for line in lines:
-            try:
-                rec = UsageRecord.model_validate_json(line)
-            except ValidationError:
-                continue
-            _records.append(rec)
-            _add(_totals, rec)
+        _totals = totals
 
 
 def report(limit: int = 50, user_id: str | None = None, project_ids: Iterable[str] = ()) -> UsageReport:
     """Totals so far, totals per operation (highest cost first) and the latest `limit` calls: of all calls, or with
-    `user_id` only of that user's calls (see _belongs)."""
-    with _lock:
-        records = _records if user_id is None else [r for r in _records if _belongs(r, user_id, set(project_ids))]
-        totals = _totals.model_copy() if user_id is None else UsageTotals()
-        by_operation: dict[str, UsageTotals] = {}
-        for rec in records:
-            _add(by_operation.setdefault(rec.operation, UsageTotals()), rec)
-            if user_id is not None:
-                _add(totals, rec)
-        return UsageReport(
-            totals=totals,
-            by_operation=dict(sorted(by_operation.items(), key=lambda item: item[1].cost, reverse=True)),
-            recent=list(reversed(records[-limit:])),
-        )
+    `user_id` only of that user's calls (records._of_user).
+
+    Raises:
+        DatabaseError: If the database cannot be read.
+    """
+    project_ids = list(project_ids)
+    return UsageReport(totals=records.usage_totals(user_id, project_ids),
+                       by_operation=records.usage_by_operation(user_id, project_ids),
+                       recent=records.recent_usage(limit, user_id, project_ids))
 
 
-def cost_since(since: datetime, user_id: str | None = None, project_ids: Iterable[str] = ()) -> float:
-    """USD of the calls since `since` (UTC): of all calls, or with `user_id` only of that user's (see _belongs)."""
-    project_ids = set(project_ids)
-    with _lock:
-        return sum(r.cost for r in reversed(_records) if r.timestamp >= since
-                   and (user_id is None or _belongs(r, user_id, project_ids)))
+def spending(user_id: str, project_ids: Iterable[str], now: datetime) -> tuple[float, float, float]:
+    """What the user spent today and this month (UTC) and what all users spent today, in USD.
 
-
-def _belongs(rec: UsageRecord, user_id: str, project_ids: set[str]) -> bool:
-    """True if the user caused the call: their user id is on it, or it is from before sign-in existed (no user id)
-    and belongs to one of their projects."""
-    return rec.user_id == user_id or (rec.user_id is None and rec.project_id in project_ids)
+    Raises:
+        DatabaseError: If the database cannot be read.
+    """
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    user_today, user_month, app_today = records.spending(user_id, project_ids, today, today.replace(day=1))
+    return user_today, user_month, app_today
 
 
 # ---------- Helpers ----------

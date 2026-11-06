@@ -63,13 +63,12 @@ def keys(test_database, monkeypatch):
 
 @pytest.fixture
 def offline(tmp_path, monkeypatch):
-    """For tests that send requests to API routes: files, vectors and an empty usage log in tmp_path, and no model
+    """For tests that send requests to API routes: files and vectors in tmp_path (the usage log is in the empty test
+    database), and no model
     can be called (no API key: model routes answer 503; a chat model call fails the test). So a request that gets
     past a check it should not pass can neither touch the real library nor cost money."""
     monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path / "upload_dir")
     monkeypatch.setattr(vectorstore, "CHROMA_DIR", tmp_path / "chroma")
-    monkeypatch.setattr(usage, "USAGE_FILE", tmp_path / "usage.jsonl")
-    monkeypatch.setattr(usage, "_records", [])
     monkeypatch.setattr(usage, "_totals", UsageTotals())
     monkeypatch.setattr(config, "API_KEY", None)  # chat model: llm.is_configured() is False → 503
     monkeypatch.setattr(vectorstore, "API_KEY", None)  # embeddings: vectorstore.is_configured() is False → 503

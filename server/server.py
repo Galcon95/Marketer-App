@@ -33,7 +33,7 @@ from app.rag import ingestion, retrieval, summary  # noqa: E402
 
 def restore_data() -> None:
     """Restore the saved data, so it survives server restarts: from the database the projects and their owners, the
-    API keys, generated assets and chats; from disk the uploaded sources (with their chunks) and the usage log.
+    API keys, generated assets, chats and the usage log; from disk the uploaded sources (with their chunks).
     Runs on startup (lifespan), not on import, so tests can import this module to check its routes without reading
     the real data. Without the database (DATABASE_URL not set or not reachable) the server does not start: it would
     create a second library for every returning user and accept no API key."""
@@ -42,7 +42,7 @@ def restore_data() -> None:
     ingestion.restore_sources()
     state.assets.update(records.load_assets())
     state.conversations.update(records.load_conversations())
-    usage.load()  # totals of all model calls so far (usage.jsonl)
+    usage.load()  # totals of all model calls so far, for the console line
     if old := summary.outdated_summaries():
         logging.getLogger("app.startup").warning(
             "%d book summaries were written with older prompts than %s; regenerate them in the Knowledge Hub: %s",

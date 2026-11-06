@@ -4,7 +4,7 @@
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import admin_only
 from app.core import accounts, llm, usage
@@ -60,15 +60,16 @@ def get_usage(limit: int = Query(50, ge=1, le=1000), scope: Literal["me", "app"]
         Totals (input/output tokens and costs, all costs), totals per operation, latest calls, the user's budget.
 
     Raises:
-        HTTPException: 403 for scope "app" from anyone but the admin.
+        HTTPException: 403 for scope "app" from anyone but the admin; 503 if the database cannot be read.
     """
     if scope == "app":
         admin_only(user)
     projects = [p.id for p in db.projects.values() if accounts.owns(user, p)]
-    report = usage.report(limit) if scope == "app" else usage.report(limit, user.id, projects)
-    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    report.budget = UsageBudget(
-        spent_today=usage.cost_since(today, user.id, projects), limit_today=LIMITS.per_user.cost_per_day_usd,
-        spent_month=usage.cost_since(today.replace(day=1), user.id, projects),
-        limit_month=LIMITS.per_user.cost_per_month_usd)
+    try:
+        report = usage.report(limit) if scope == "app" else usage.report(limit, user.id, projects)
+        spent_today, spent_month, _ = usage.spending(user.id, projects, datetime.now(timezone.utc))
+    except OSError as e:  # DatabaseError
+        raise HTTPException(503, "The usage cannot be read right now, please try again.") from e
+    report.budget = UsageBudget(spent_today=spent_today, limit_today=LIMITS.per_user.cost_per_day_usd,
+                                spent_month=spent_month, limit_month=LIMITS.per_user.cost_per_month_usd)
     return report

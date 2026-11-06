@@ -34,9 +34,9 @@ server/
 │   │   └── style.py    platform rules, tones, "how human" levels, AI-cliché check and rewrite
 │   ├── db/             the database (PostgreSQL at Supabase; SQLAlchemy)
 │   │   ├── database.py     connection (DATABASE_URL), sessions, DatabaseError
-│   │   ├── tables.py       the tables: projects, assets, conversations (public), api_keys (private)
-│   │   ├── records.py      read and write projects, API keys, assets and chats
-│   │   └── import_files.py one-time import of the old JSON files (projects, keys, assets, chats)
+│   │   ├── tables.py       the tables: projects, assets, conversations, usage_log (public), api_keys (private)
+│   │   ├── records.py      read and write projects, API keys, assets, chats; usage sums and budgets
+│   │   └── import_files.py one-time import of the old JSON files (projects, keys, assets, chats, usage)
 │   ├── rag/            Phase 1 Knowledge Hub
 │   │   ├── ingestion.py    PDF → chapters → chunks → vectors
 │   │   ├── vectorstore.py  embeddings in Chroma
@@ -52,7 +52,7 @@ server/
 │   ├── agents/         Phase 4 Agent Workspace, not built yet
 │   └── api/            FastAPI routers: health, projects, sources, knowledge, assets, campaigns (+ deps.py)
 ├── migrations/         Alembic migrations of the database (alembic.ini next to server.py)
-└── assets/             data (not committed): uploads, chroma, usage
+└── assets/             data (not committed): uploads, chroma
 ```
 
 ## MCP server: mcp-book-knowledge

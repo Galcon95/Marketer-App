@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.core import logs, usage
 from app.core.schemas import UsageRecord
+from app.db import records
 
 
 @pytest.fixture
@@ -69,9 +70,7 @@ def test_records_outside_a_request_get_a_dash():
     assert record.request_id == "-"
 
 
-def test_usage_records_get_the_current_request_id(monkeypatch, tmp_path):
-    monkeypatch.setattr(usage, "USAGE_FILE", tmp_path / "usage.jsonl")
-    monkeypatch.setattr(usage, "_records", [])
+def test_usage_records_get_the_current_request_id(monkeypatch):
     monkeypatch.setattr(usage, "_totals", usage.UsageTotals())
     rec = UsageRecord(timestamp=datetime.now(timezone.utc), operation="ask/answer", kind="chat", model="m",
                       input_tokens=1, output_tokens=1, input_cost=0.0, output_cost=0.0, cost=0.0,
@@ -81,5 +80,4 @@ def test_usage_records_get_the_current_request_id(monkeypatch, tmp_path):
         usage.record(rec)
     finally:
         logs.request_id.reset(token)
-    saved = json.loads((tmp_path / "usage.jsonl").read_text(encoding="utf-8"))
-    assert saved["request_id"] == "req-7"
+    assert [r.request_id for r in records.recent_usage(10)] == ["req-7"]  # saved in the database with it

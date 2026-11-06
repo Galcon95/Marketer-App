@@ -35,7 +35,8 @@ def llm_limits(user: User = Depends(current_user)) -> None:
     A call's cost is known only after it, so one request can go a little over a budget; the next one is blocked.
 
     Raises:
-        HTTPException: 429 with a Retry-After header (seconds) when a limit is reached.
+        HTTPException: 429 with a Retry-After header (seconds) when a limit is reached; 503 when the costs so far
+            cannot be read from the database.
     """
     limits = LIMITS.per_user
     now = datetime.now(timezone.utc)
@@ -43,13 +44,18 @@ def llm_limits(user: User = Depends(current_user)) -> None:
     month = today.replace(day=1)
     tomorrow, next_month = today + timedelta(days=1), (month + timedelta(days=32)).replace(day=1)
     projects = [p.id for p in db.projects.values() if accounts.owns(user, p)]
-    if usage.cost_since(month, user.id, projects) >= limits.cost_per_month_usd:
+    try:
+        user_today, user_month, app_today = usage.spending(user.id, projects, now)
+    except OSError as e:  # DatabaseError: without knowing the costs, no model call (fail closed)
+        logger.error("Could not check the budgets: %s", e)
+        raise HTTPException(503, "The usage budget cannot be checked right now, please try again.") from e
+    if user_month >= limits.cost_per_month_usd:
         raise _budget_used(f"Your monthly budget of ${limits.cost_per_month_usd:.2f} is used up. "
                            "It renews on the 1st of next month (UTC).", next_month - now)
-    if usage.cost_since(today, user.id, projects) >= limits.cost_per_day_usd:
+    if user_today >= limits.cost_per_day_usd:
         raise _budget_used(f"Your daily budget of ${limits.cost_per_day_usd:.2f} is used up. "
                            "It renews at midnight UTC.", tomorrow - now)
-    if usage.cost_since(today) >= LIMITS.app.cost_per_day_usd:
+    if app_today >= LIMITS.app.cost_per_day_usd:
         logger.warning("The app's daily budget of $%.2f is used up", LIMITS.app.cost_per_day_usd)
         raise _budget_used("The app's daily budget is used up. It renews at midnight UTC.", tomorrow - now)
 

@@ -1,9 +1,11 @@
 """One-time import of the old JSON files in server/assets/ into the database: projects.json, api_keys.json,
-generated/{project_id}/*.json (assets) and conversations/{project_id}/*.json (chats).
+generated/{project_id}/*.json (assets), conversations/{project_id}/*.json (chats) and usage/usage.jsonl (the
+model calls and their costs).
 
     uv run python -m app.db.import_files        (from server/, after `uv run alembic upgrade head`)
 
-Records already in the database (same id) are left as they are, so running it twice changes nothing. Assets and
+Records already in the database (same id; for model calls, which have no id: the same time, operation and model)
+are left as they are, so running it twice changes nothing. Assets and
 chats of a project that is not in the database are skipped (they would belong to nobody). The files are not changed;
 once the app works with the database, delete them (or keep a copy outside the project).
 """
@@ -15,15 +17,16 @@ from pathlib import Path
 from sqlalchemy import select
 
 from app.core.config import DATA_DIR
-from app.core.schemas import ApiKey, Asset, Conversation, Project
+from app.core.schemas import ApiKey, Asset, Conversation, Project, UsageRecord
 from app.db import records
 from app.db.database import session
-from app.db.tables import ApiKeyRow, AssetRow, ConversationRow, ProjectRow
+from app.db.tables import ApiKeyRow, AssetRow, ConversationRow, ProjectRow, UsageRow
 
 PROJECTS_FILE = DATA_DIR / "projects.json"
 KEYS_FILE = DATA_DIR / "api_keys.json"
 GENERATED_DIR = DATA_DIR / "generated"
 CONVERSATIONS_DIR = DATA_DIR / "conversations"
+USAGE_FILE = DATA_DIR / "usage" / "usage.jsonl"
 
 
 def _read(path: Path) -> list[dict]:
@@ -84,12 +87,32 @@ def import_conversations(folder: Path = CONVERSATIONS_DIR) -> int:
     return _import_dir(folder, Conversation, ConversationRow, records.CONVERSATION_JSON_FIELDS)
 
 
+def import_usage(path: Path = USAGE_FILE) -> int:
+    """Insert the model calls of usage.jsonl that are not in the database yet; returns how many. Unreadable lines
+    are skipped, as the app always did."""
+    if not path.is_file():
+        print(f"{path.name}: not found, nothing to import")
+        return 0
+    calls = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            calls.append(UsageRecord.model_validate_json(line))
+        except ValueError:  # ValidationError
+            continue
+    with session() as s:
+        known = {tuple(row) for row in s.execute(select(UsageRow.timestamp, UsageRow.operation, UsageRow.model))}
+        new = [c for c in calls if (c.timestamp, c.operation, c.model) not in known]
+        s.add_all(UsageRow(**c.model_dump()) for c in new)
+    return len(new)
+
+
 def main() -> None:
     try:
         print(f"projects: {import_projects()} imported")
         print(f"API keys: {import_api_keys()} imported")
         print(f"assets: {import_assets()} imported")
         print(f"conversations: {import_conversations()} imported")
+        print(f"model calls: {import_usage()} imported")
     except OSError as e:  # DatabaseError
         sys.exit(f"Import failed: {e} ({e.__cause__})")
 

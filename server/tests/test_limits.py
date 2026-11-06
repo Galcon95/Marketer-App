@@ -13,6 +13,7 @@ from app.core import limits, logs, usage
 from app.core import state as db
 from app.core.limits import AppWide, Limits, LimitsError, PerUser
 from app.core.schemas import Source, UsageRecord
+from app.db import records
 from tests.conftest import OWNER, STRANGER, sign_in
 
 pytestmark = pytest.mark.usefixtures("offline")  # requests that pass every limit end at "no API key" (503)
@@ -88,7 +89,7 @@ def client_for(app: FastAPI, user) -> TestClient:
 
 def spend(cost: float, user_id: str | None, when: datetime = NOW, project_id: str | None = PROJECT) -> None:
     """Pretend a model call of `cost` USD was made (added to the usage log)."""
-    usage._records.append(UsageRecord(
+    records.add_usage(UsageRecord(
         timestamp=when, operation="ask/answer", kind="chat", model="m", input_tokens=1, output_tokens=1,
         input_cost=cost, output_cost=0.0, cost=cost, cost_source="estimate", project_id=project_id, user_id=user_id))
 
@@ -110,6 +111,17 @@ def test_daily_budget_blocks_until_midnight(app):
     assert response.status_code == 429
     assert "daily budget of $1.00" in response.json()["detail"]
     assert 0 < int(response.headers["Retry-After"]) <= 24 * 3600 + 1
+
+
+def test_no_model_call_when_the_costs_cannot_be_read(app, monkeypatch):
+    """Fail closed: without the costs so far, a budget could be overrun, so the request stops before the model."""
+    from app.db.database import DatabaseError
+
+    def broken(*args):
+        raise DatabaseError("Database error (OperationalError)")
+    monkeypatch.setattr(records, "spending", broken)
+    response = search(client_for(app, OWNER))
+    assert response.status_code == 503 and "budget cannot be checked" in response.json()["detail"]
 
 
 def test_monthly_budget_blocks(app):
@@ -192,5 +204,5 @@ def test_each_model_call_is_logged_with_the_user_who_caused_it(monkeypatch):
     app.add_middleware(logs.RequestIdMiddleware)
     with TestClient(app) as client:
         client.post("/work")
-    assert [r.user_id for r in usage._records] == ["user-ada", "user-ada"]
+    assert [r.user_id for r in records.recent_usage(10)] == ["user-ada", "user-ada"]
     assert logs.current_user_id() is None  # nothing is left over outside the request
