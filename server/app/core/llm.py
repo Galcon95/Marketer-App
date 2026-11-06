@@ -23,7 +23,16 @@ from app.core import tracing as tracing_switch
 
 logger = logging.getLogger(__name__)
 
-LLM_TEMPERATURE = 0.7  # some creativity for marketing copy; facts are constrained by the prompts
+LLM_TEMPERATURE = 0.7  # default: creative structured steps (campaign personas)
+
+# Temperature per task, not per module. Steps whose output must be faithful or reproducible run deterministic:
+# search queries and filters, the follow-up rewrite, chapter summaries and the book overview (summaries are reused
+# as background everywhere). Chat answers run nearly deterministic ("never guess"). Marketing copy uses
+# style.temperature_for(humanize) instead. The values are part of the prompt versions (core/prompts.py).
+TEMPERATURES: dict[str, float] = {
+    "condense": 0.0, "filters": 0.0, "plan_query": 0.0, "chapter_summary": 0.0, "book_overview": 0.0,
+    "answer": 0.2,
+}
 STRUCTURED_ATTEMPTS = 2  # a structured reply that does not fit its schema is asked for once more
 
 Schema = TypeVar("Schema", bound=BaseModel)

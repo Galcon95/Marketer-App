@@ -2,7 +2,8 @@
 conversation history and tool calling.
 
     START ─(history?)─► condense ─► filter ─► retrieve ─► answer ─(tool calls?)─► tools ─► respond ─► END
-              └─────(first question)──┘                     └──────(no tool calls)───────────────────►┘
+              └─────(first question)──┘          │          └──────(no tool calls)───────────────────►┘
+                                                 └─(no relevant passage)─► not_covered ─────────────────►┘
 
     condense  only for follow-ups: the chat model rewrites the latest question into a standalone search
               question using the recent turns ("and in chapter 3?" → "What does chapter 3 say about ...?")
@@ -10,7 +11,11 @@ conversation history and tool calling.
               structured output extracts them and code resolves them to real metadata values ("chapter 17 of
               Butler" → that book, "CHAPTER XVII. SHORT SELLING"); questions without such hints skip the model call
     retrieve  the (standalone) question is embedded; the k most similar passages come from Chroma (vectorstore.py),
-              restricted by the filters; if the filters find nothing, it searches again without them
+              restricted by the filters; if the filters find nothing, it searches again without them. Passages below
+              MIN_RELEVANCE (config.py) are dropped, so the model never gets weakly related text as "sources"
+    not_covered  no passage is relevant enough (an off-topic or out-of-library question): a fixed answer that names
+              the library's books, without a model call. In the chat (use_tools) the model still answers, with no
+              passages, because questions about the library itself or "write a post" requests need its tools
     answer    ChatPromptTemplate: recent turns as chat messages + question + book background (summary.py)
               + numbered passages → ChatOpenAI (via OpenRouter) writes an answer from the passages only, citing them as [n].
               With use_tools (the chat), the model also gets the chat tools (chat_tools.py: list_books,
@@ -37,11 +42,11 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from app.core import prompts, tracing
-from app.core.config import LLM_MODEL
+from app.core.config import LLM_MODEL, MIN_RELEVANCE, RETRIEVAL_MODE
 from app.core.guard import UNTRUSTED_RULE
 from app.core.logs import current_request_id
 from app.core.llm import (
-    STRUCTURED_ATTEMPTS, GenerationError, chat_model, is_configured, model_failure, structured, tokens_used,
+    STRUCTURED_ATTEMPTS, TEMPERATURES, GenerationError, chat_model, is_configured, model_failure, structured, tokens_used,
 )
 from app.core.schemas import AskResponse, ChatTurn, Chunk, Citation, SearchHit, ToolCallRecord
 from app.rag import vectorstore
@@ -49,6 +54,7 @@ from app.rag.chat_tools import make_tools, run_tool_calls
 from app.rag.filters import (
     FILTER_PROMPT, QueryFilters, ResolvedFilters, extract_filters, might_filter, resolve_filters,
 )
+from app.rag.library import book_title, ready_books
 from app.rag.retrieval import format_background, format_context, keep_cited, retrieve_chunks
 
 logger = logging.getLogger(__name__)
@@ -129,7 +135,7 @@ class _QAState(TypedDict, total=False):
     search_query: str  # what retrieval searches for: the question, or its standalone rewrite
     filters: ResolvedFilters | None  # book/chapter/page filters taken from the question (structured retrieval)
     filter_note: str  # what was filtered, for the GUI, e.g. "Successful Stock Speculation · CHAPTER XVII. ..."
-    context: list[tuple[Chunk, float]]  # retrieved passages with similarity, best first
+    context: list[tuple[Chunk, float]]  # retrieved passages with similarity at least MIN_RELEVANCE, best first
     messages: list[BaseMessage]  # the answer prompt plus the model's tool calls and their results (tool round only)
     tool_calls: list[ToolCallRecord]  # the tools that ran, for the GUI
     answer: str
@@ -137,9 +143,13 @@ class _QAState(TypedDict, total=False):
     tokens: int
 
 
-# Version of this feature's prompts, e.g. "qa@3f9a1c2e"; changes by itself when a prompt changes (core/prompts.py).
+# Version of this feature's prompts and retriever settings, e.g. "qa@3f9a1c2e"; changes by itself when a prompt changes (core/prompts.py).
 PROMPT_VERSION = prompts.register("qa", QA_PROMPT, TOOLS_NOTE, CONDENSE_PROMPT, FILTER_PROMPT, QueryFilters,
-                                  StandaloneQuestion, QAAnswer)
+                                  StandaloneQuestion, QAAnswer,
+                                  {k: TEMPERATURES[k] for k in ("condense", "filters", "answer")},
+                                  # the retriever too, so an eval run shows when retrieval changed
+                                  {"retrieval": RETRIEVAL_MODE, "index": vectorstore.INDEX_FORMAT,
+                                   "min_relevance": MIN_RELEVANCE})
 
 
 # ---------- Public API ----------
@@ -200,7 +210,8 @@ def answer_question(project_id: str, question: str, k: int, source_ids: list[str
 # ---------- Graph ----------
 @cache
 def _graph():
-    """Build and compile the LangGraph: START → (condense →) filter → retrieve → answer → (tools → respond →) END."""
+    """Build and compile the LangGraph: START → (condense →) filter → retrieve → answer (or not_covered)
+    → (tools → respond →) END."""
     builder = StateGraph(_QAState)
     builder.add_node("condense", _condense)
     builder.add_node("filter", _filter)
@@ -208,11 +219,14 @@ def _graph():
     builder.add_node("answer", _answer)
     builder.add_node("tools", _tools)
     builder.add_node("respond", _respond)
+    builder.add_node("not_covered", _not_covered)
     builder.add_conditional_edges(START, lambda s: "condense" if s.get("history") else "filter",
                                   {"condense": "condense", "filter": "filter"})
     builder.add_edge("condense", "filter")
     builder.add_edge("filter", "retrieve")
-    builder.add_edge("retrieve", "answer")
+    builder.add_conditional_edges("retrieve", lambda s: "answer" if s["context"] or s.get("use_tools") else "not_covered",
+                                  {"answer": "answer", "not_covered": "not_covered"})
+    builder.add_edge("not_covered", END)
     builder.add_conditional_edges("answer", lambda s: "tools" if s.get("messages") else END, {"tools": "tools", END: END})
     builder.add_edge("tools", "respond")
     builder.add_edge("respond", END)
@@ -227,7 +241,7 @@ def _condense(state: _QAState) -> _QAState:
     """
     history = "\n\n".join(f"User: {t.question}\nAssistant: {_plain(t.answer, 600)}" for t in state["history"])
     rewritten, tokens = structured(CONDENSE_PROMPT, {"history": history, "question": state["question"]},
-                                   StandaloneQuestion, "standalone question", 0.0)
+                                   StandaloneQuestion, "standalone question", TEMPERATURES["condense"])
     return {"search_query": rewritten.question.strip() or state["question"], "tokens": tokens}
 
 
@@ -246,6 +260,7 @@ def _filter(state: _QAState) -> _QAState:
 def _retrieve(state: _QAState) -> _QAState:
     """Retrieval node: the k passages most similar to the (standalone) question, within the filters. If the filters
     leave nothing, the search runs again without them (and the note says so), so a filter never empties an answer.
+    Passages below MIN_RELEVANCE are dropped; the note says so when none is left.
 
     Raises:
         GenerationError: 409 if the project has no searchable passages.
@@ -262,7 +277,22 @@ def _retrieve(state: _QAState) -> _QAState:
         note = "; ".join(x for x in [note, "nothing matched the filter, so all passages were searched"] if x)
     if not context:
         raise GenerationError(409, "No searchable books in this project yet. Upload and process a book first.")
-    return {"search_query": query, "context": context, "filter_note": note}
+    relevant = [(chunk, score) for chunk, score in context if score >= MIN_RELEVANCE]
+    if not relevant:
+        note = "; ".join(x for x in [note, f"no passage was relevant enough (best similarity {context[0][1]:.2f}, "
+                                           f"minimum {MIN_RELEVANCE:.2f})"] if x)
+    return {"search_query": query, "context": relevant, "filter_note": note}
+
+
+def _not_covered(state: _QAState) -> _QAState:
+    """Not-covered node: no passage reached MIN_RELEVANCE, so the books do not cover the question. A fixed answer
+    that names the library's books instead of a model call on unrelated passages."""
+    titles = [book_title(source) for source in ready_books(state["project_id"])
+              if not state.get("source_ids") or source.id in state["source_ids"]]
+    answer = "The books don't cover this: no passage is close enough to your question."
+    if titles:
+        answer += " They are about other topics: " + "; ".join(titles) + ". Try asking about one of them."
+    return {"answer": answer, "citations": [], "tokens": state.get("tokens", 0)}
 
 
 def _answer(state: _QAState) -> _QAState:
@@ -274,7 +304,8 @@ def _answer(state: _QAState) -> _QAState:
     use_tools = state.get("use_tools", False)
     messages = QA_PROMPT.format_messages(
         history=_history_messages(state.get("history", [])), question=state["question"],
-        background=format_background(state["context"]), context=format_context(state["context"]),
+        background=format_background(state["context"]),
+        context=format_context(state["context"]) or "(none: no passage is close enough to the question)",
         tools_note=TOOLS_NOTE if use_tools else "",
     )
     reply, answer, used = _invoke_answer(messages, make_tools(state["project_id"]) if use_tools else None)
@@ -317,8 +348,9 @@ def _invoke_answer(messages: list[BaseMessage], tools: list | None = None,
     Raises:
         GenerationError: 502 if no attempt gives a usable answer.
     """
-    model = (chat_model().bind_tools([*tools, QAAnswer], tool_choice="required") if tools and not final
-             else chat_model().bind_tools([*(tools or []), QAAnswer], tool_choice=QAAnswer.__name__))
+    model = chat_model(TEMPERATURES["answer"])
+    model = (model.bind_tools([*tools, QAAnswer], tool_choice="required") if tools and not final
+             else model.bind_tools([*(tools or []), QAAnswer], tool_choice=QAAnswer.__name__))
     tokens = 0
     for attempt in range(1, STRUCTURED_ATTEMPTS + 1):
         reply: AIMessage = model.invoke(messages)

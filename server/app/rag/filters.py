@@ -17,7 +17,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from app.core import state as db
-from app.core.llm import GenerationError, structured
+from app.core.llm import TEMPERATURES, GenerationError, structured
 from app.rag.library import book_title, find_book, ready_books
 from app.rag.retrieval import source_name
 
@@ -101,7 +101,8 @@ def extract_filters(project_id: str, question: str) -> tuple[QueryFilters, int]:
     """
     books = "\n".join(f"- {source_name(s.id) or s.filename}" for s in ready_books(project_id)) or "(none)"
     try:
-        return structured(FILTER_PROMPT, {"books": books, "question": question}, QueryFilters, "search filters", 0.0)
+        return structured(FILTER_PROMPT, {"books": books, "question": question}, QueryFilters, "search filters",
+                          TEMPERATURES["filters"])
     except GenerationError:
         logger.warning("No usable filters for %r; searching without filters", question)
         return QueryFilters(), 0

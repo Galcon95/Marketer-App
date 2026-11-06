@@ -40,6 +40,13 @@ Status as of commit `e114f04` (2026-10-22).
 ### Ask your book (LangGraph Q&A chat with history)
 - Ask a question about one book or all of them. The answer cites passages as `[n]`, each with chapter, page and quote.
 - Says so when the books don't answer the question.
+- **Retrieval quality controls** (measured 2026-10-29, details in `eval/README.md`):
+  - **Relevance floor** `MIN_RELEVANCE` (default 0.3): passages below it never reach the model. If none is left, a `not_covered` node answers "The books don't cover this" and names the library's books, without a model call. In the chat, the model still answers with no passages, because library questions and "write a post" requests need its tools. The value sits in a clear gap: off-topic questions scored at most 0.26, while every eval question's best passage scored at least 0.54.
+  - **Contextual chunk headers:** each chunk is embedded as "book · chapter" plus its text, so a passage like "He then sold the remainder at a loss" carries its context in the vector. The prompt still shows the plain text.
+  - **HNSW recall fix:** Chroma's default nearest-neighbour index missed 6 of 96 true top-6 passages (for one eval question all six, so it looked off-topic). Built with `ef_construction` 200 and `max_neighbors` 32, it misses none.
+  - **Index format in the collection name** (`…--v2`): after a change, the server marks the books for Retry on startup instead of mixing old and new vectors.
+  - **Hybrid search, evaluated:** `RETRIEVAL_MODE=hybrid` adds BM25 keyword search (`keyword.py`) fused by reciprocal rank. It ranked better (context precision 0.94 vs 0.88) but its answers were less relevant (0.83 vs 0.90), so dense stays the default. A cross-encoder re-ranker was not tried, because it needs a local model (torch) or a separate re-rank API.
+  - The retriever settings (mode, index format, floor) are part of the QA version, so eval runs show when retrieval changed.
 - **Conversation history:** follow-up questions can refer to earlier turns ("and who collects that money?").
   - Query translation: a `condense` step rewrites a follow-up into a standalone question before retrieval, shown in the GUI as "Searched for: …".
   - The answer prompt gets the last 4 turns as chat messages (earlier answers shortened, citation markers removed); only the current passages may be cited.
@@ -179,6 +186,12 @@ Three layers, all in code and on every request (never left to the model):
 - Unusable search filters mean "no filters" (logged), not a failed answer.
 - Not used: provider-side `strict` mode. OpenRouter routes to different providers with different JSON-schema support; the Pydantic validation above checks every reply either way.
 
+### Prompt engineering choices
+- **Temperature per task, not per module** (`core/llm.TEMPERATURES`): 0.0 for steps that must be faithful or reproducible (follow-up rewrite, search filters, reply query planning, chapter summaries, book overview), 0.2 for chat answers ("never guess"), `temperature_for(humanize)` (0.5-1.0) only for marketing copy and its rewrite, 0.7 for the creative personas step. The values are part of the prompt versions.
+- **Worked examples** for the two most complex formats: the video script (HOOK, SCENE n with Visual / Voice-over / On-screen text, CTA, CAPTION) and the YouTube page (Title options, Description, Chapters, Tags) get one short example output (a made-up book, "structure only") in their instructions.
+- **Section check:** after generation, a regex checks that these formats contain their required headings; a draft without them is written once more with a note on what was missing (at most one extra draft; if still missing, it is logged).
+- **AI-cliché list kept in the prompt, on evidence:** the review suggested that listing banned phrases verbatim primes the model to use them. Measured with this app's model (gpt-4o-mini, 10 grounded LinkedIn post drafts per variant at humanize 75, before the rewrite step): with the list 8/10 drafts had no AI tells (2 in total), with positive guidance only 2/10 (9 in total). So the list stays; the level texts themselves now describe the voice positively and quote no banned phrase. Worth re-checking when the chat model changes.
+
 ### Prompt versions
 - Every model-backed feature has a prompt version derived from a short hash of all its prompt text (`core/prompts.py`): `qa@...`, `generation@...`, `summary@...`, `campaign@...`. The hash covers the system and user templates, instruction tables (asset types, platforms, tones, "how human" levels) and the structured-output schemas, so any prompt edit gives a new version by itself; nothing has to be bumped by hand.
 - The version goes into the graph run's metadata (LangSmith, next to model and request id) and is stored with what the prompts produced: `Asset` (also the model now), `BookSummary` and `AskResponse`. Data saved before versioning has none.
@@ -200,7 +213,7 @@ Three layers, all in code and on every request (never left to the model):
 - First run (k=6): faithfulness 0.95, answer relevancy 0.85, context precision 0.93, context recall 1.00. Findings: the Garden City estate answer added unsupported claims (faithfulness 0.56); the stop-loss answer got answer relevancy 0 because the judge treats a hedge as noncommittal (a false negative).
 
 ### Tests
-- Backend: 112 pytest tests in `server/tests/` (guardrails, timeouts and retries of model calls, request ids and log format, prompt versions, quoting of summaries/chapter text/tool results, structured-output schemas and retries, platform check, citations, passage format, chapter detection, structured retrieval filters, uploads (wrong types, duplicates), deleting a book with what belongs only to it, and API tests that bad input is rejected before any model call, including the rate limit). Run `uv run pytest` in `server/`.
+- Backend: 135 pytest tests in `server/tests/` (relevance floor and not-covered answer, chunk headers, BM25 and hybrid fusion, temperatures per task, format examples and section check, guardrails, timeouts and retries of model calls, request ids and log format, prompt versions, quoting of summaries/chapter text/tool results, structured-output schemas and retries, platform check, citations, passage format, chapter detection, structured retrieval filters, uploads (wrong types, duplicates), deleting a book with what belongs only to it, and API tests that bad input is rejected before any model call, including the rate limit). Run `uv run pytest` in `server/`.
 - Frontend: 15 Vitest tests in `client/tests/` (helpers in `lib/api.ts` and the API client's error handling with a stubbed `fetch`). Run `npm test` in `client/`.
 - No model calls, no API key needed; answer quality is measured separately with RAGAs (`eval/`).
 

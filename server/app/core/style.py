@@ -7,6 +7,11 @@ Shared by single-asset generation (rag/generation.py) and the campaign kit (camp
     HUMAN_LEVELS   style guidance per humanize level (0-100), added to the system prompt
     AI_TELLS       AI-typical phrases ("AI slop"): avoided in the prompt from humanize 50 on,
                    detected after generation (find_ai_tells) and rewritten from REWRITE_FROM on
+
+Listing banned phrases verbatim can prime some models to use them. Measured for this app's model instead of assumed
+(2026-10-29, gpt-4o-mini, 10 grounded LinkedIn post drafts per variant at humanize 75, before the rewrite step):
+with the list 8/10 drafts had no AI tells (2 tells in total), with positive guidance only 2/10 (9 tells). So the
+list stays; re-check it when the chat model changes (see style_guidance).
 """
 
 import re
@@ -57,9 +62,10 @@ TONES: dict[Tone, str] = {
 HUMAN_LEVELS: list[tuple[int, str]] = [
     (0, "Style: polished, persuasive marketing copy is fine."),
     (25, "Style: clear and engaging; avoid the most worn-out marketing clichés."),
-    (50, "Style: write like a thoughtful human copywriter, not like an AI: vary sentence length, use contractions "
-         "and concrete details, at most one exclamation mark, no clichés, no rhetorical-question opener, no "
-         "'not just X, but Y', no lists of three adjectives."),
+    (50, "Style: write like a thoughtful human copywriter: vary sentence length, use contractions and concrete "
+         "details, open with a concrete statement rather than a question, say what something is directly instead "
+         "of contrasting it with what it is not, choose one precise adjective over a string of them, and use at "
+         "most one exclamation mark."),
     (75, "Style: sound like a real person writing it themselves, e.g. a reader who loved the book: plain everyday "
          "words, first person where it fits, a genuine opinion, short and specific, slightly informal is fine. "
          "No marketing clichés, no hype words, no exclamation-mark chains, emojis and hashtags only as many as "
@@ -89,7 +95,8 @@ REWRITE_PROMPT = ChatPromptTemplate.from_messages([
 
 
 def style_guidance(humanize: int) -> str:
-    """Style guidance for a "humanize" level (0-100), plus the list of AI clichés to avoid from level 50 on."""
+    """Style guidance for a "humanize" level (0-100): the voice to aim for (HUMAN_LEVELS), plus from level 50 on the
+    list of AI clichés to avoid. The list is kept because it measurably helps gpt-4o-mini (module docstring)."""
     guidance = next(text for bound, text in reversed(HUMAN_LEVELS) if humanize >= bound)
     if humanize >= 50:
         guidance += " Never use these AI-typical phrases: " + ", ".join(f'"{t}"' for t in AI_TELLS) + "."

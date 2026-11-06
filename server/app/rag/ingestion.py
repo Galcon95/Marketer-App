@@ -33,6 +33,7 @@ from app.core import state as db
 from app.core import storage
 from app.core.schemas import Chunk, ChunkLocation, Source
 from app.rag import vectorstore
+from app.rag.retrieval import source_name
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,7 @@ def ingest_source(source_id: str) -> None:
                 raise IngestionError("No text found in the PDF. Scanned books need OCR, which is not supported yet.")
 
             _update(source_id, status="embedding", progress=0, chunk_count=len(chunks))
-            vectorstore.add_chunks(source.project_id, source_id, chunks,
+            vectorstore.add_chunks(source.project_id, source_id, chunks, title=source_name(source_id),
                                    on_progress=lambda done: _update_progress(source_id, round(done * 100)))
             storage.write_chunks(source, chunks)
             replace_source_chunks(source_id, chunks)
@@ -136,7 +137,7 @@ def restore_sources() -> None:
             if loaded is None:
                 source = _mark_failed(source, "The saved chunks are missing. Press Retry.")
             elif _vector_count(source) not in (None, len(loaded)):
-                source = _mark_failed(source, "Not in the vector database yet (or the embedding model changed). Press Retry.")
+                source = _mark_failed(source, "Not in the vector database yet (or the embedding model or the way chunks are embedded changed). Press Retry.")
             else:
                 chunks = loaded
         db.sources[source.id] = source

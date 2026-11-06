@@ -1,22 +1,32 @@
 """Retrieval helpers shared by generation and Q&A: vector search, prompt context and citations.
 
-    retrieve_chunks     the k chunks most similar to a query (Chroma, see vectorstore.py)
+    retrieve_chunks     the k chunks most similar to a query (Chroma, see vectorstore.py; or hybrid, see below)
     format_context      numbered excerpts <passage n="1">..<passage n="k"> with source, chapter and page for the prompt
     format_background   the summaries of the excerpts' books (summary.py) as background
     keep_cited          the [n] markers the model wrote → Citations, renumbered in text order
+
+Retrieval is dense (vector search) by default. RETRIEVAL_MODE=hybrid (config.py) adds BM25 keyword search
+(keyword.py): both return HYBRID_CANDIDATES candidates, reciprocal rank fusion merges the two rankings, and the
+best k are kept. Every hit keeps its cosine similarity as its score, so the relevance floor (qa.py) works in both
+modes. Measured with the RAGAs eval (2026-10-29, eval/README.md), hybrid ranked better (context precision 0.94
+vs 0.88) but answers were less relevant (0.83 vs 0.90): no clear gain on 13 questions, so dense stays the default.
 """
 
 import re
 
 from app.core import state as db
+from app.core.config import RETRIEVAL_MODE
 from app.core.guard import quote_untrusted
 from app.core.schemas import Chunk, Citation
-from app.rag import vectorstore
+from app.rag import keyword, vectorstore
+
+HYBRID_CANDIDATES = 20  # candidates per ranking in hybrid mode
+RRF_K = 60  # reciprocal rank fusion constant: a hit adds 1 / (RRF_K + rank) per ranking it appears in
 
 
 def retrieve_chunks(project_id: str, query: str, k: int, source_ids: list[str] | None = None,
                     operation: str = "search", where: dict | None = None) -> list[tuple[Chunk, float]]:
-    """Find the project's chunks most similar to a query (vector search in Chroma).
+    """Find the project's chunks most relevant to a query (dense, or hybrid with RETRIEVAL_MODE=hybrid).
 
     Looks the hits up in the in-memory chunks; hits whose chunk no longer exists (e.g. deleted
     source) are skipped.
@@ -35,8 +45,25 @@ def retrieve_chunks(project_id: str, query: str, k: int, source_ids: list[str] |
     Raises:
         vectorstore.VectorStoreError: If no API key is configured or the search fails.
     """
-    hits = vectorstore.search(project_id, query, k, source_ids, operation=operation, where=where)
+    if RETRIEVAL_MODE == "hybrid":
+        hits = _hybrid(project_id, query, k, source_ids, operation, where)
+    else:
+        hits = vectorstore.search(project_id, query, k, source_ids, operation=operation, where=where)
     return [(db.chunks[chunk_id], round(score, 3)) for chunk_id, score in hits if chunk_id in db.chunks]
+
+
+def _hybrid(project_id: str, query: str, k: int, source_ids: list[str] | None, operation: str,
+            where: dict | None) -> list[tuple[str, float]]:
+    """Dense and BM25 candidates merged by reciprocal rank fusion; the best k with their cosine similarity."""
+    dense = dict(vectorstore.search(project_id, query, HYBRID_CANDIDATES, source_ids, operation=operation, where=where))
+    keywords = keyword.search(project_id, query, HYBRID_CANDIDATES, source_ids, where)
+    fused: dict[str, float] = {}
+    for ranking in (list(dense), keywords):
+        for rank, chunk_id in enumerate(ranking, start=1):
+            fused[chunk_id] = fused.get(chunk_id, 0.0) + 1 / (RRF_K + rank)
+    best = sorted(fused, key=fused.get, reverse=True)[:k]
+    scores = dense | vectorstore.similarities(project_id, query, [c for c in best if c not in dense], operation)
+    return [(chunk_id, scores.get(chunk_id, 0.0)) for chunk_id in best]
 
 
 def format_context(context: list[tuple[Chunk, float]]) -> str:

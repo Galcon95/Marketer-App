@@ -10,6 +10,10 @@ Read once on import from environment variables (and server/.env, if present), fi
     LLM_TIMEOUT_SECONDS → optional, seconds one chat model request may take before it is retried (default 45)
     EMBEDDING_TIMEOUT_SECONDS → optional, the same for one embedding request (default 30)
     LLM_MAX_RETRIES     → optional, retries of a failed or timed-out model request (default 3)
+    MIN_RELEVANCE       → optional, the lowest similarity (0-1) a passage needs to reach the chat model (default 0.3);
+                          a question with no passage above it is answered "not covered" without a model call
+    RETRIEVAL_MODE      → optional, "dense" (default: vector search) or "hybrid" (vector + BM25 keyword search,
+                          fused by rank; see retrieval.py)
     LOG_FORMAT          → optional, "json" (default: one JSON object per log line) or "text" (readable lines)
     LOG_LEVEL           → optional, the lowest level that is logged (default "INFO"; "DEBUG" also logs GET requests)
     DEBUG_MODE=true     → developer debug mode: every graph run is traced in LangSmith (needs LANGSMITH_API_KEY;
@@ -48,6 +52,9 @@ else:
 LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "45"))
 EMBEDDING_TIMEOUT_SECONDS = float(os.getenv("EMBEDDING_TIMEOUT_SECONDS", "30"))
 LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "3"))
+
+MIN_RELEVANCE = float(os.getenv("MIN_RELEVANCE", "0.3"))
+RETRIEVAL_MODE = "hybrid" if os.getenv("RETRIEVAL_MODE", "dense").strip().lower() == "hybrid" else "dense"
 
 LOG_FORMAT = "text" if os.getenv("LOG_FORMAT", "json").strip().lower() == "text" else "json"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()

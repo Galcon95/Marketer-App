@@ -50,6 +50,22 @@ what the book actually says.
 RAGAs 0.4 needs older versions of `langchain-community` and of the OpenAI SDK than the app uses. Its own
 environment here keeps the app's dependencies unchanged; the evaluation talks to the app only over HTTP.
 
+## Retrieval experiments (2026-10-29)
+
+| Run | Faithfulness | Answer relevancy | Context precision | Context recall |
+|---|---|---|---|---|
+| Baseline: dense, no floor, no chunk headers | 0.99 | 0.84 | 0.93 | 1.00 |
+| Dense + chunk headers + HNSW fix + floor 0.3 (now the default) | 0.99 | 0.90 | 0.88 | 0.97 |
+| Hybrid BM25 + dense (RRF), otherwise the same | 0.98 | 0.83 | 0.94 | 0.95 |
+
+With 13 questions one changed passage moves an average by several points, so these differences are small. The
+headers changed which passages rank in the top 6 for three questions; chapter titles ("WHAT IS SPECULATION?") now
+pull whole chapters up. Hybrid ranked better but answered less relevantly, so dense stays the default. The relevance
+floor was set from the similarities of the eval questions against 12 off-topic questions; it removed only weak
+extra passages here (e.g. "puts and calls" kept 3 of 6). The same session found and fixed an HNSW recall problem
+(see `server/app/rag/vectorstore.py`). Off-topic questions are not part of the RAGAs set, because RAGAs needs
+passages to score.
+
 ## Known limits
 
 - The judge is itself a language model, so scores vary a little between runs, and it can be wrong: e.g.

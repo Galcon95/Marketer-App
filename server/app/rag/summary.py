@@ -27,7 +27,7 @@ from app.core import prompts, storage, tracing
 from app.core.config import LLM_MODEL
 from app.core.guard import UNTRUSTED_RULE, quote_untrusted
 from app.core.logs import current_request_id
-from app.core.llm import GenerationError, is_configured, model_failure, structured
+from app.core.llm import TEMPERATURES, GenerationError, is_configured, model_failure, structured
 from app.core.schemas import BookSummary, ChapterSummary, Chunk, Source
 from app.rag.retrieval import source_name
 
@@ -100,7 +100,8 @@ class _SummaryState(TypedDict, total=False):
 
 
 # Version of this feature's prompts, e.g. "summary@3f9a1c2e"; changes by itself when a prompt changes (core/prompts.py).
-PROMPT_VERSION = prompts.register("summary", CHAPTER_PROMPT, BOOK_PROMPT, ChapterDigest, BookOverview)
+PROMPT_VERSION = prompts.register("summary", CHAPTER_PROMPT, BOOK_PROMPT, ChapterDigest, BookOverview,
+                                  {k: TEMPERATURES[k] for k in ("chapter_summary", "book_overview")})
 
 
 # ---------- Public API ----------
@@ -190,7 +191,7 @@ def _summarize_chapter(section: _Section) -> _SummaryState:
     digest, tokens = structured(CHAPTER_PROMPT, {
         "book": section["book"], "chapter": chapter, "pages": pages,
         "text": quote_untrusted(section["text"], "passage", source=f"{chapter} ({pages})"),
-    }, ChapterDigest, "chapter summary")
+    }, ChapterDigest, "chapter summary", TEMPERATURES["chapter_summary"])
     if not digest.is_content:
         return {"chapter_summaries": [], "tokens": tokens}
     summary = ChapterSummary(chapter=section["chapter"], first_page=section["first_page"],
@@ -207,7 +208,7 @@ def _combine(state: _SummaryState) -> _SummaryState:
         quote_untrusted(c.summary, "passage", source=f"{c.chapter or 'Front matter'} ({_pages_label(c.first_page, c.last_page)})")
         for c in chapters)
     overview, tokens = structured(BOOK_PROMPT, {"book": state["book"], "summaries": listing}, BookOverview,
-                                  "book overview")
+                                  "book overview", TEMPERATURES["book_overview"])
     return {"overview": overview, "tokens": tokens}
 
 

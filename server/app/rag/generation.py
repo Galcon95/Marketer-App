@@ -9,7 +9,8 @@
     generate  (Augmentation) ChatPromptTemplate: instructions (type, platform, length, tone, audience),
                              request (brief, or the post + angle), book background and numbered excerpts
               (Generation)   ChatOpenAI (via OpenRouter) writes the asset and cites excerpts as [n]
-    check_style              finds AI-typical clichés ("Imagine a world", "Dive into", emoji piles, ...)
+    check_style              finds AI-typical clichés ("Imagine a world", "Dive into", emoji piles, ...) and, for
+                             video scripts and YouTube pages, missing section headings: then generate runs once more
     rewrite                  at humanize ≥ 60: rephrases just those parts once, keeping facts, quotes and markers
     finalize                 turns the [n] markers into citations and records the clichés that remain
 
@@ -25,6 +26,7 @@ core/llm.py and core/config.py.
 """
 
 import logging
+import re
 from functools import cache
 from typing import TypedDict
 
@@ -38,7 +40,9 @@ from app.core import state as db
 from app.core.config import LLM_MODEL
 from app.core.guard import UNTRUSTED_RULE, quote_untrusted
 from app.core.logs import current_request_id
-from app.core.llm import GenerationError, chat_model, is_configured, model_failure, structured, tokens_used
+from app.core.llm import (
+    TEMPERATURES, GenerationError, chat_model, is_configured, model_failure, structured, tokens_used,
+)
 from app.core.schemas import Asset, AssetType, Chunk, Citation, GenerateRequest, Length
 from app.core.style import (
     PLATFORM_POST, PLATFORM_REPLY, PLATFORM_VIDEO, REWRITE_FROM, REWRITE_PROMPT, TONES, find_ai_tells,
@@ -77,6 +81,38 @@ ASSET_INSTRUCTIONS: dict[AssetType, str] = {
                    "and {size} bullet points of what the reader will get.",
     "persona": "an audience persona for this book of {size} words: name and short description, demographics, "
                "goals, pain points, where to reach them, and why this book appeals to them.",
+}
+
+# One worked example per complex format, appended to the instructions: one example shows the layout better than a
+# paragraph of rules. A made-up book, so the model takes the structure from it, not the content.
+FORMAT_EXAMPLES: dict[AssetType, str] = {
+    "video_script": (
+        "HOOK: \"Most of us have never grown anything we didn't buy as a seedling.\"\n\n"
+        "SCENE 1\nVisual: Hands press a seed into a cracked clay pot on a city windowsill.\n"
+        "Voice-over: \"The author starts with one seed and a fourth-floor flat.\"\nOn-screen text: One seed. One window.\n\n"
+        "SCENE 2\nVisual: Time-lapse of the first leaf opening.\n"
+        "Voice-over: \"What follows is a year of small failures and one stubborn tomato.\"\n"
+        "On-screen text: A year on the windowsill\n\n"
+        "SCENE 3\nVisual: The book on a table next to the now full-grown plant.\n"
+        "Voice-over: \"It's a book about patience, and about soil.\"\nOn-screen text: The Windowsill Year\n\n"
+        "CTA: \"If you've ever wanted to grow something, start with chapter one.\"\n\n"
+        "CAPTION: A small memoir about patience and soil. #gardening #memoir #booktok"
+    ),
+    "youtube_video": (
+        "Title options:\n1. I Grew Food on a Windowsill for a Year\n2. What a Tomato Taught Me About Patience\n"
+        "3. The Windowsill Year: A Small Book Review\n\n"
+        "Description:\nOne seed, one city flat, one year. This memoir turns a windowsill into a garden.\n"
+        "In this video I talk about what the book gets right about patience, and what surprised me.\n\n"
+        "Chapters:\n0:00 Intro\n1:15 The first seed\n3:40 Failures that helped\n6:05 What I'd grow next\n\n"
+        "Tags:\nwindowsill garden, urban gardening, gardening memoir, book review, indoor plants, grow tomatoes, "
+        "small space garden, patience, nature writing, booktube"
+    ),
+}
+
+# Headings the complex formats must contain (checked after generation; a draft without them is written once more).
+REQUIRED_SECTIONS: dict[AssetType, list[str]] = {
+    "video_script": ["HOOK", "SCENE 1", "Visual:", "Voice-over:", "On-screen text:", "CTA", "CAPTION"],
+    "youtube_video": ["Title options:", "Description:", "Chapters:", "Tags:"],
 }
 
 # The {size} per asset type and length (short, standard, long).
@@ -159,6 +195,8 @@ class GenerationState(TypedDict, total=False):
     draft: str  # the model's text with its original [n] excerpt numbers
     used: list[int]  # excerpt numbers the model reported as used (structured output)
     ai_tells: list[str]  # AI-typical phrases found in the draft (check_style) / final text (finalize)
+    missing_sections: list[str]  # required headings the draft lacks (check_style; video_script, youtube_video)
+    attempts: int  # drafts checked so far; a draft without its required headings is written once more
     rewritten: bool  # True after the rewrite step ran (it runs at most once)
     text: str  # the generated asset text, citation markers renumbered
     citations: list[Citation]  # the cited chunks, in marker order
@@ -167,7 +205,7 @@ class GenerationState(TypedDict, total=False):
 
 # Version of this feature's prompts, e.g. "generation@3f9a1c2e"; changes by itself when a prompt changes (core/prompts.py).
 PROMPT_VERSION = prompts.register("generation", GROUNDED_PROMPT, ZERO_SHOT_PROMPT, PLAN_QUERY_PROMPT, ASSET_INSTRUCTIONS,
-                                 GeneratedText, SearchQuery, REWRITE_PROMPT, style.PLATFORM_POST, style.PLATFORM_REPLY,
+                                 FORMAT_EXAMPLES, GeneratedText, SearchQuery, {"plan_query": TEMPERATURES["plan_query"]}, REWRITE_PROMPT, style.PLATFORM_POST, style.PLATFORM_REPLY,
                                  style.PLATFORM_VIDEO, style.TONES, style.HUMAN_LEVELS, style.AI_TELLS)
 
 
@@ -266,7 +304,19 @@ def build_instructions(req: GenerateRequest) -> str:
         text += f" Tone: {TONES[req.tone]}."
     if req.audience.strip():
         text += f" Target audience: {req.audience.strip()}."
+    if example := FORMAT_EXAMPLES.get(req.asset_type):
+        text += ("\n\nExample of the format only (a made-up book: take the structure and labels from it, never its "
+                 f"content):\n<example>\n{example}\n</example>")
     return text
+
+
+def missing_sections(asset_type: AssetType, text: str) -> list[str]:
+    """The required headings (REQUIRED_SECTIONS) a text lacks, e.g. ["CTA"]; [] for formats without any.
+
+    A heading counts at the start of a line, in any case, also with stray Markdown (** or #) around it.
+    """
+    return [heading for heading in REQUIRED_SECTIONS.get(asset_type, [])
+            if not re.search(rf"^[\s*#]*{re.escape(heading.rstrip(':'))}\b", text, re.IGNORECASE | re.MULTILINE)]
 
 
 def emojis_are_normal(req: GenerateRequest) -> bool:
@@ -288,7 +338,7 @@ def build_request(req: GenerateRequest) -> str:
 @cache
 def _graph():
     """Build and compile the LangGraph:
-    START → (plan_query →) (retrieve →) generate → check_style → (rewrite →) finalize → END."""
+    START → (plan_query →) (retrieve →) generate → check_style → (generate again →) (rewrite →) finalize → END."""
     builder = StateGraph(GenerationState)
     builder.add_node("plan_query", _plan_query)
     builder.add_node("retrieve", _retrieve)
@@ -300,7 +350,8 @@ def _graph():
     builder.add_edge("plan_query", "retrieve")
     builder.add_edge("retrieve", "generate")
     builder.add_edge("generate", "check_style")
-    builder.add_conditional_edges("check_style", _needs_rewrite, {"rewrite": "rewrite", "finalize": "finalize"})
+    builder.add_conditional_edges("check_style", _after_check,
+                                  {"generate": "generate", "rewrite": "rewrite", "finalize": "finalize"})
     builder.add_edge("rewrite", "finalize")
     builder.add_edge("finalize", END)
     return builder.compile()
@@ -322,7 +373,7 @@ def _plan_query(state: GenerationState) -> GenerationState:
     a short query of its key topics finds better passages than searching with the whole post.
     """
     planned, tokens = structured(PLAN_QUERY_PROMPT, {"request": build_request(state["req"])}, SearchQuery,
-                                 "search query")
+                                 "search query", TEMPERATURES["plan_query"])
     return {"query": planned.query.strip(), "tokens": tokens}
 
 
@@ -349,7 +400,11 @@ def _generate(state: GenerationState) -> GenerationState:
     The token usage of this call is added to that of plan_query (if any) as "tokens".
     """
     req = state["req"]
-    values = {"instructions": build_instructions(req), "request": build_request(req), "style": style_guidance(req.humanize)}
+    request = build_request(req)
+    if missing := state.get("missing_sections"):  # second attempt after the format check
+        request += (f"\n\n(A first draft lacked these required section headings: {', '.join(missing)}. Use exactly "
+                    "the headings of the requested format.)")
+    values = {"instructions": build_instructions(req), "request": request, "style": style_guidance(req.humanize)}
     model = chat_model(temperature_for(req.humanize))
     tokens_before = state.get("tokens", 0)
     if not req.grounded:
@@ -364,12 +419,19 @@ def _generate(state: GenerationState) -> GenerationState:
 
 
 def _check_style(state: GenerationState) -> GenerationState:
-    """Style check node: find AI-typical clichés in the draft (no model call)."""
-    return {"ai_tells": find_ai_tells(state["draft"], emojis_are_normal(state["req"]))}
+    """Check node (no model call): AI-typical clichés in the draft, and required section headings it lacks."""
+    req = state["req"]
+    missing = missing_sections(req.asset_type, state["draft"])
+    return {"ai_tells": find_ai_tells(state["draft"], emojis_are_normal(req)), "missing_sections": missing,
+            "attempts": state.get("attempts", 0) + 1}
 
 
-def _needs_rewrite(state: GenerationState) -> str:
-    """Edge after check_style: rewrite once if clichés were found and humanize is at least REWRITE_FROM."""
+def _after_check(state: GenerationState) -> str:
+    """Edge after check_style: write the draft once more if required headings are missing; else rewrite once if
+    clichés were found and humanize is at least REWRITE_FROM; else finalize."""
+    if state["missing_sections"] and state["attempts"] < 2:
+        logger.info("%s draft lacks %s; writing it once more", state["req"].asset_type, state["missing_sections"])
+        return "generate"
     if state["ai_tells"] and state["req"].humanize >= REWRITE_FROM and not state.get("rewritten"):
         return "rewrite"
     return "finalize"
@@ -388,6 +450,8 @@ def _rewrite(state: GenerationState) -> GenerationState:
 def _finalize(state: GenerationState) -> GenerationState:
     """Final node: turn the [n] markers (and reported sources) into citations; record the clichés that remain."""
     draft = state["draft"]
+    if missing := missing_sections(state["req"].asset_type, draft):
+        logger.warning("%s still lacks %s after %d drafts", state["req"].asset_type, missing, state.get("attempts", 1))
     if state["req"].grounded:
         result = keep_cited(draft, state["context"], also_cited=state.get("used", []))
     else:

@@ -1,13 +1,22 @@
 """Vector store for RAG retrieval, built on LangChain: chunk embeddings in Chroma.
 
-    Chunk ──OpenAIEmbeddings──► vector ──► Chroma collection per project and model (server/assets/chroma/)
+    "book · chapter" header + chunk ──OpenAIEmbeddings──► vector ──► Chroma collection per project and model
     query ──OpenAIEmbeddings──► vector ──► nearest chunks by cosine similarity (relevance 0-1)
+
+Each chunk is embedded with a contextual header, its book and chapter ("Successful Stock Speculation — J. J.
+Butler · CHAPTER XVII. SHORT SELLING"), so a passage like "He then sold the remainder at a loss" carries what it is
+about in its vector, not only in the filter metadata. The prompt still shows the plain chunk text.
 
 Each vector is stored under its chunk id with metadata source_id, chunk_id, chapter and page, so a
 source's vectors can be replaced or deleted and searches can be limited to some sources. The chunk
 files (.chunks.jsonl) stay the source of truth: the vectors can always be rebuilt from them by
-re-indexing a source. The collection name contains the embedding model, because vectors of
-different models cannot be compared: after switching models, sources must be re-indexed.
+re-indexing a source. The collection name contains the embedding model and INDEX_FORMAT, because
+vectors of different models or of differently built texts cannot be compared: after a change, the
+server marks the books for Retry on startup (ingestion.restore_sources) and they must be re-indexed.
+
+The nearest-neighbour index (HNSW) is built with more links than Chroma's defaults (HNSW below). Measured on the
+eval questions (2026-10-29, 2,368 chunks): with the defaults the approximate search missed 6 of 96 true top-6
+passages, for one question all six, so an in-scope question looked off-topic; with these settings it missed none.
 
 Provider, API key and embedding model come from core/config.py (OPENROUTER_API_KEY or
 OPENAI_API_KEY, optional EMBEDDING_MODEL).
@@ -16,9 +25,10 @@ OPENAI_API_KEY, optional EMBEDDING_MODEL).
 import logging
 import re
 from collections.abc import Callable
-from functools import cache
+from functools import cache, lru_cache
 
 import chromadb
+import numpy as np
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
@@ -32,6 +42,12 @@ logger = logging.getLogger(__name__)
 
 CHROMA_DIR = DATA_DIR / "chroma"
 EMBED_BATCH = 64  # chunks per embedding request; also the step size of the progress updates
+# How the collection is built; part of its name, so change it whenever _to_document or HNSW changes.
+# "v2": "book · chapter" header in each chunk's text, HNSW as below.
+INDEX_FORMAT = "v2"
+# HNSW settings, applied when a collection is created: more links per vector and wider searches than the defaults
+# (ef_construction 100, max_neighbors 16, ef_search 100), so the approximate search finds the true nearest chunks.
+HNSW = {"space": "cosine", "ef_construction": 200, "max_neighbors": 32, "ef_search": 200}
 
 class VectorStoreError(Exception):
     """A vector store problem whose message can be shown to the user (missing key, API error, ...)."""
@@ -42,7 +58,8 @@ def is_configured() -> bool:
     return bool(API_KEY)
 
 
-def add_chunks(project_id: str, source_id: str, chunks: list[Chunk], on_progress: Callable[[float], None] | None = None) -> None:
+def add_chunks(project_id: str, source_id: str, chunks: list[Chunk], on_progress: Callable[[float], None] | None = None,
+               title: str | None = None) -> None:
     """Embed the chunks of a source and store them, replacing the source's previous vectors.
 
     Chunk ids are stable (chk_<source>_<n>), so re-indexing overwrites existing vectors in place
@@ -54,6 +71,7 @@ def add_chunks(project_id: str, source_id: str, chunks: list[Chunk], on_progress
         source_id: Source the chunks belong to.
         chunks: All chunks of the source.
         on_progress: Optional callback with the fraction of chunks embedded (0.0-1.0).
+        title: Readable name of the book, embedded in each chunk's header (retrieval.source_name).
 
     Raises:
         VectorStoreError: If no API key is configured or embedding/storing fails.
@@ -62,7 +80,7 @@ def add_chunks(project_id: str, source_id: str, chunks: list[Chunk], on_progress
     try:
         for start in range(0, len(chunks), EMBED_BATCH):
             batch = chunks[start:start + EMBED_BATCH]
-            store.add_documents([_to_document(c) for c in batch], ids=[c.id for c in batch])
+            store.add_documents([_to_document(c, title) for c in batch], ids=[c.id for c in batch])
             usage.record_embedding("embed_chunks", EMBEDDING_MODEL, tokens=sum(c.token_count for c in batch),
                                    project_id=project_id, source_id=source_id)
             if on_progress:
@@ -117,11 +135,30 @@ def search(project_id: str, query: str, k: int, source_ids: list[str] | None = N
     conditions = [c for c in ({"source_id": {"$in": source_ids}} if source_ids else None, where) if c]
     combined = None if not conditions else conditions[0] if len(conditions) == 1 else {"$and": conditions}
     try:
-        results = store.similarity_search_with_relevance_scores(query, k=k, filter=combined)
-        usage.record_embedding(f"{operation}/embed_query", EMBEDDING_MODEL, texts=[query], project_id=project_id)
+        results = store.similarity_search_by_vector_with_relevance_scores(
+            _embed_query(project_id, query, operation), k=k, filter=combined)
     except Exception as e:
         raise VectorStoreError(f"Vector search failed: {e}") from e
-    return [(doc.metadata["chunk_id"], score) for doc, score in results]
+    return [(doc.metadata["chunk_id"], 1 - distance) for doc, distance in results]  # cosine distance → similarity
+
+
+def similarities(project_id: str, query: str, chunk_ids: list[str], operation: str = "search") -> dict[str, float]:
+    """Cosine similarity between a query and the given chunks (for hits found by keyword search, see retrieval.py).
+
+    The query embedding is cached, so after search() with the same query this makes no further embedding call.
+
+    Raises:
+        VectorStoreError: If no API key is configured or the lookup fails.
+    """
+    if not chunk_ids:
+        return {}
+    try:
+        query_vector = np.array(_embed_query(project_id, query, operation))
+        stored = _store(project_id).get(ids=chunk_ids, include=["embeddings"])
+    except Exception as e:
+        raise VectorStoreError(f"Vector lookup failed: {e}") from e
+    return {chunk_id: float(np.dot(v, query_vector) / (np.linalg.norm(v) * np.linalg.norm(query_vector)))
+            for chunk_id, v in zip(stored["ids"], stored["embeddings"])}
 
 
 def health() -> tuple[bool, str]:
@@ -160,13 +197,21 @@ def _embeddings() -> OpenAIEmbeddings:
                             timeout=EMBEDDING_TIMEOUT_SECONDS, max_retries=LLM_MAX_RETRIES)
 
 
+@lru_cache(maxsize=256)
+def _embed_query(project_id: str, query: str, operation: str) -> list[float]:
+    """The query's embedding, cached so that search() and similarities() for one question embed it only once."""
+    vector = _store(project_id, with_embeddings=True).embeddings.embed_query(query)
+    usage.record_embedding(f"{operation}/embed_query", EMBEDDING_MODEL, texts=[query], project_id=project_id)
+    return vector
+
+
 @cache
 def _store(project_id: str, with_embeddings: bool = False) -> Chroma:
-    """The LangChain Chroma store of a project's collection, created on first use with cosine distance.
+    """The LangChain Chroma store of a project's collection, created on first use with cosine distance and HNSW.
 
     Args:
         project_id: Project whose collection to open; the collection is named
-            "<project_id>--<model>", e.g. "demo-campaign--text-embedding-3-large".
+            "<project_id>--<model>--<INDEX_FORMAT>", e.g. "demo-campaign--text-embedding-3-large--v2".
         with_embeddings: True for operations that embed text (add, search); requires the API key.
             Maintenance operations (get, delete, count) work without it.
 
@@ -177,10 +222,10 @@ def _store(project_id: str, with_embeddings: bool = False) -> Chroma:
         raise VectorStoreError("No API key set. Add OPENROUTER_API_KEY (or OPENAI_API_KEY) to server/.env and restart the server.")
     model = re.sub(r"[^a-zA-Z0-9._-]", "-", EMBEDDING_MODEL.split("/")[-1])
     return Chroma(
-        collection_name=f"{project_id}--{model}",
+        collection_name=f"{project_id}--{model}--{INDEX_FORMAT}",
         embedding_function=_embeddings() if with_embeddings else None,
         client=_client(),
-        collection_configuration={"hnsw": {"space": "cosine"}},
+        collection_configuration={"hnsw": HNSW},
     )
 
 
@@ -189,11 +234,14 @@ def _source_ids(project_id: str, source_id: str) -> list[str]:
     return _store(project_id).get(where={"source_id": source_id}, include=[])["ids"]
 
 
-def _to_document(chunk: Chunk) -> Document:
-    """A LangChain Document for a chunk: its text plus the metadata used for filtering and lookup.
+def _to_document(chunk: Chunk, title: str | None = None) -> Document:
+    """A LangChain Document for a chunk: a "book · chapter" header and its text (what is embedded), plus the
+    metadata used for filtering and lookup.
 
     Chroma metadata values cannot be None, so a missing chapter or page is left out.
     """
+    header = " · ".join(x for x in (title, chunk.location.chapter) if x)
     metadata = {"source_id": chunk.source_id, "chunk_id": chunk.id,
                 "chapter": chunk.location.chapter, "page": chunk.location.page}
-    return Document(page_content=chunk.text, metadata={k: v for k, v in metadata.items() if v is not None})
+    return Document(page_content=f"{header}\n\n{chunk.text}" if header else chunk.text,
+                    metadata={k: v for k, v in metadata.items() if v is not None})
