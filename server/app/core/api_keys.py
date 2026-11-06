@@ -1,16 +1,16 @@
 """Personal API keys: how external MCP clients (Claude Desktop via mcp-remote) prove which user they act for.
 
 A key looks like "mk_" + 43 random characters (32 random bytes). It is shown to its user once, when it is created;
-the server keeps only its SHA-256 hash, so a leaked api_keys.json does not reveal any key. (A slow password hash
+the server keeps only its SHA-256 hash, so a leaked table does not reveal any key. (A slow password hash
 like bcrypt is not needed: the key is random and long, not a password a person chose.) A user can have up to
 max_api_keys keys (limits.toml), e.g. one per tool, and revokes a key by deleting it.
 
-Keys are saved in api_keys.json (git-ignored, user data) until they move to a database.
+Keys are saved in the database table private.api_keys (app/db), which Supabase's REST API cannot read; this
+module keeps a copy in memory, loaded on startup, so checking a key needs no database query.
 """
 
 import hashlib
 import hmac
-import json
 import logging
 import secrets
 import threading
@@ -18,13 +18,12 @@ from datetime import timedelta
 
 from app.core import state as db
 from app.core.auth import User
-from app.core.config import DATA_DIR
 from app.core.limits import LIMITS
 from app.core.schemas import ApiKey
+from app.db import records
 
 logger = logging.getLogger(__name__)
 
-KEYS_FILE = DATA_DIR / "api_keys.json"
 PREFIX = "mk_"
 SHOWN_CHARS = 8  # characters after the prefix kept for display ("mk_AbC123x7…"), so a user can tell keys apart
 LAST_USED_PRECISION = timedelta(minutes=5)  # last_used_at is saved at most this often per key (not on every call)
@@ -42,29 +41,14 @@ def _hash(key: str) -> str:
 
 
 def load() -> None:
-    """Read the saved keys (called once on server startup). An unreadable file is logged and no key is accepted
-    (fail closed: nobody gets in, rather than the wrong person)."""
-    _keys.clear()
-    if not KEYS_FILE.is_file():
-        return
-    try:
-        keys = [ApiKey.model_validate(k) for k in json.loads(KEYS_FILE.read_text(encoding="utf-8"))]
-    except (OSError, ValueError) as e:  # ValidationError is a ValueError
-        logger.error("Could not read %s, no API key is accepted: %s", KEYS_FILE, e)
-        return
-    _keys.update({k.id: k for k in keys})
-
-
-def _save() -> None:
-    """Write all keys to KEYS_FILE via a temporary file (call with _lock held).
+    """Read the saved keys from the database (called once on server startup).
 
     Raises:
-        OSError: If the file cannot be written.
+        DatabaseError: If the database cannot be read (the server then does not start: no key would work).
     """
-    KEYS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = KEYS_FILE.with_name(f".{KEYS_FILE.name}.tmp")
-    tmp.write_text(json.dumps([k.model_dump(mode="json") for k in _keys.values()], indent=2), encoding="utf-8")
-    tmp.replace(KEYS_FILE)
+    keys = records.load_api_keys()
+    _keys.clear()
+    _keys.update({k.id: k for k in keys})
 
 
 def create(user: User, name: str) -> tuple[ApiKey, str]:
@@ -79,7 +63,7 @@ def create(user: User, name: str) -> tuple[ApiKey, str]:
 
     Raises:
         TooManyKeys: If the user already has max_api_keys keys.
-        OSError: If the keys cannot be saved (the key is then not created).
+        DatabaseError: If the key cannot be saved (it is then not created).
     """
     key = PREFIX + secrets.token_urlsafe(32)
     record = ApiKey(id=db.new_id("key"), user_id=user.id, email=user.email, name=name.strip(),
@@ -87,12 +71,8 @@ def create(user: User, name: str) -> tuple[ApiKey, str]:
     with _lock:
         if len(keys_of(user)) >= LIMITS.per_user.max_api_keys:
             raise TooManyKeys(f"You can have at most {LIMITS.per_user.max_api_keys} keys. Revoke one first.")
+        records.add_api_key(record)  # first in the database: if that fails, the key does not exist anywhere
         _keys[record.id] = record
-        try:
-            _save()
-        except OSError:
-            del _keys[record.id]
-            raise
     logger.info("Created API key %s", record.id)
     return record, key
 
@@ -109,18 +89,14 @@ def revoke(user: User, key_id: str) -> bool:
         True if it was deleted; False if the user has no key with this id (another user's key counts as unknown).
 
     Raises:
-        OSError: If the keys cannot be saved (the key then still works).
+        DatabaseError: If the change cannot be saved (the key then still works).
     """
     with _lock:
         record = _keys.get(key_id)
         if record is None or record.user_id != user.id:
             return False
+        records.delete_api_key(key_id)  # first in the database: if that fails, the key still works everywhere
         del _keys[key_id]
-        try:
-            _save()
-        except OSError:
-            _keys[key_id] = record
-            raise
     logger.info("Revoked API key %s", key_id)
     return True
 
@@ -143,7 +119,7 @@ def user_for(key: str) -> User | None:
             if record.id in _keys:  # not revoked meanwhile
                 _keys[record.id] = record.model_copy(update={"last_used_at": now})
                 try:
-                    _save()
-                except OSError as e:  # only the "last used" date is lost
+                    records.set_api_key_last_used(record.id, now)
+                except OSError as e:  # DatabaseError; only the "last used" date is lost
                     logger.warning("Could not save the last use of API key %s: %s", record.id, e)
     return User(id=record.user_id, email=record.email)

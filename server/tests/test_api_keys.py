@@ -1,12 +1,14 @@
-"""Tests of the personal API keys (api_keys.py): creating, finding the user of a key, revoking, saving, and that the
-key itself is never stored."""
+"""Tests of the personal API keys (api_keys.py): creating, finding the user of a key, revoking, saving in the
+database (the in-memory test database of conftest.py), and that the key itself is never stored."""
 
-import json
 from datetime import timedelta
 
 import pytest
+from sqlalchemy import text
 
 from app.core import api_keys
+from app.db import records
+from app.db.database import DatabaseError
 from app.core.limits import AppWide, Limits, PerUser
 from tests.conftest import OWNER, STRANGER
 
@@ -34,11 +36,13 @@ def test_a_key_that_differs_by_one_character_finds_nobody():
     assert api_keys.user_for(key[:-1] + ("A" if key[-1] != "A" else "B")) is None
 
 
-def test_the_key_itself_is_never_saved():
+def test_the_key_itself_is_never_saved(test_database):
     _, key = api_keys.create(OWNER, "k")
-    saved = api_keys.KEYS_FILE.read_text(encoding="utf-8")
+    with test_database.connect() as connection:
+        rows = [tuple(row) for row in connection.execute(text("SELECT * FROM api_keys"))]
+    saved = repr(rows)
     assert key not in saved and key[11:] not in saved  # only the shown beginning and the hash
-    assert json.loads(saved)[0]["key_hash"] == api_keys._hash(key)
+    assert [k.key_hash for k in records.load_api_keys()] == [api_keys._hash(key)]
 
 
 def test_keys_are_loaded_again_after_a_restart():
@@ -49,11 +53,13 @@ def test_keys_are_loaded_again_after_a_restart():
     assert api_keys.user_for(key) == OWNER
 
 
-def test_an_unreadable_file_accepts_no_key():
-    _, key = api_keys.create(OWNER, "k")
-    api_keys.KEYS_FILE.write_text("not json", encoding="utf-8")
-    api_keys.load()
-    assert api_keys.user_for(key) is None
+def test_an_unreachable_database_stops_the_start(monkeypatch):
+    """No silent start without keys: load() raises, so the server does not start (server.restore_data)."""
+    def broken():
+        raise DatabaseError("Database error (OperationalError)")
+    monkeypatch.setattr(records, "load_api_keys", broken)
+    with pytest.raises(DatabaseError):
+        api_keys.load()
 
 
 def test_a_revoked_key_stops_working_also_after_a_restart():
@@ -89,12 +95,29 @@ def test_the_number_of_keys_is_limited(monkeypatch):
 
 
 def test_a_key_is_not_created_when_it_cannot_be_saved(monkeypatch):
-    def broken():
-        raise OSError("disk full")
-    monkeypatch.setattr(api_keys, "_save", broken)
-    with pytest.raises(OSError):
+    def broken(record):
+        raise DatabaseError("Database error (OperationalError)")
+    monkeypatch.setattr(records, "add_api_key", broken)
+    with pytest.raises(DatabaseError):
         api_keys.create(OWNER, "k")
     assert api_keys.keys_of(OWNER) == []
+
+
+def test_a_key_still_works_when_revoking_cannot_be_saved(monkeypatch):
+    record, key = api_keys.create(OWNER, "k")
+    def broken(key_id):
+        raise DatabaseError("Database error (OperationalError)")
+    monkeypatch.setattr(records, "delete_api_key", broken)
+    with pytest.raises(DatabaseError):
+        api_keys.revoke(OWNER, record.id)
+    assert api_keys.user_for(key) == OWNER  # memory and database still agree
+
+
+def test_a_failed_save_answers_500(app, monkeypatch):
+    def broken(record):
+        raise DatabaseError("Database error (OperationalError)")
+    monkeypatch.setattr(records, "add_api_key", broken)
+    assert client_for(app, OWNER).post("/api-keys", json={"name": "k"}).status_code == 500
 
 
 def test_last_use_is_noted_but_not_on_every_call(monkeypatch):
@@ -109,6 +132,7 @@ def test_last_use_is_noted_but_not_on_every_call(monkeypatch):
     monkeypatch.setattr(api_keys.db, "now", lambda: later)
     api_keys.user_for(key)
     assert api_keys.keys_of(OWNER)[0].last_used_at == later
+    assert records.load_api_keys()[0].last_used_at == later  # also in the database
 
 
 # ---------- Endpoints: GET/POST /api-keys, DELETE /api-keys/{id} ----------

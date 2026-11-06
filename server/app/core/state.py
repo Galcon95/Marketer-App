@@ -2,7 +2,7 @@
 
 The module-level dicts (projects, sources, chunks, summaries, assets, conversations) are the working copy
 the API reads from. Sources, chunks, summaries, assets and conversations are persisted on disk by storage.py and loaded into these dicts on
-startup; projects are saved in projects.json (storage.write_projects, loaded on startup).
+startup; projects are saved in the database (app/db/records.py, loaded on startup).
 """
 
 from datetime import datetime, timezone
@@ -35,7 +35,7 @@ def new_id(prefix: str) -> str:
 # Projects by id. A project is a client (shown as "Current client" in the GUI): its books, chats, campaigns and
 # assets. Each signed-in user owns one (accounts.py). The default project holds the data from before sign-in
 # existed (the id "demo-campaign" stays because data on disk and in Chroma is stored under it); it has no owner
-# until DEFAULT_CLIENT_OWNER signs in. The saved projects (storage.load_projects) replace these on startup.
+# until DEFAULT_CLIENT_OWNER signs in. The saved projects (records.load_projects) replace these on startup.
 projects: dict[str, Project] = {
     DEFAULT_PROJECT_ID: Project(
         id=DEFAULT_PROJECT_ID,

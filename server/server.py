@@ -24,6 +24,7 @@ logs.setup()  # first, so the imports below already log through it (JSON lines w
 
 from app.api import assets, campaigns, health, keys, knowledge, mcp_console, projects, sources  # noqa: E402
 from app.core import api_keys, auth, state, storage, usage  # noqa: E402
+from app.db import records  # noqa: E402
 from app.core.mcp_auth import RequireMcpAuth  # noqa: E402
 from app.market.book_server import book_server  # noqa: E402
 from app.market.guard_server import guard_server  # noqa: E402
@@ -31,10 +32,12 @@ from app.rag import ingestion, retrieval, summary  # noqa: E402
 
 
 def restore_data() -> None:
-    """Restore the saved data from disk, so it survives server restarts: projects and their owners, API keys,
-    uploaded sources (with their chunks), generated assets, chats and the usage log. Runs on startup (lifespan),
-    not on import, so tests can import this module to check its routes without reading the real data."""
-    state.projects.update(storage.load_projects())  # the clients and their owners
+    """Restore the saved data, so it survives server restarts: from the database the projects and their owners and
+    the API keys; from disk the uploaded sources (with their chunks), generated assets, chats and the usage log.
+    Runs on startup (lifespan), not on import, so tests can import this module to check its routes without reading
+    the real data. Without the database (DATABASE_URL not set or not reachable) the server does not start: it would
+    create a second library for every returning user and accept no API key."""
+    state.projects.update(records.load_projects())  # the clients and their owners
     api_keys.load()  # personal API keys for the MCP servers
     ingestion.restore_sources()
     state.assets.update(storage.load_assets())

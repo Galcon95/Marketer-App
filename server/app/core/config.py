@@ -19,6 +19,9 @@ Read once on import from environment variables (and server/.env, if present), fi
                           with its public signing keys); without it every API request except /health gets 503
     DEFAULT_CLIENT_OWNER → email of the user who owns the default client ("demo-campaign", the data from before
                           sign-in existed) and is the app's admin (app-wide usage, MCP console); see accounts.py
+    DATABASE_URL        → connection string of the PostgreSQL database (Supabase), e.g.
+                          "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres";
+                          required: the server does not start without it (see app/db/database.py)
 """
 
 import os
@@ -54,6 +57,18 @@ LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT") or os.getenv("LANGCHAIN_PROJE
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
 DEFAULT_CLIENT_OWNER = os.getenv("DEFAULT_CLIENT_OWNER", "").strip().lower()
+
+
+def _sqlalchemy_url(url: str) -> str:
+    """The connection string as Supabase shows it ("postgresql://..." or "postgres://..."), with the psycopg driver
+    SQLAlchemy should use ("postgresql+psycopg://..."). Other URLs (e.g. sqlite in tests) stay as they are."""
+    for prefix in ("postgresql://", "postgres://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
+
+
+DATABASE_URL = _sqlalchemy_url(os.getenv("DATABASE_URL", "").strip())
 
 
 def langsmith_key_set() -> bool:

@@ -6,8 +6,12 @@ see the [main README](../README.md).
 ## Run
 
 ```sh
+uv run alembic upgrade head        # once, and after every update with a new migration (needs DATABASE_URL)
 uv run fastapi dev server.py
 ```
+
+The server needs the database (`DATABASE_URL` in `.env`, see `.env.example`): projects and API keys live there.
+Moving from the old JSON files once: `uv run python -m app.db.import_files` (after `alembic upgrade head`).
 
 - API: http://127.0.0.1:8000
 - Interactive docs: http://127.0.0.1:8000/docs
@@ -28,6 +32,11 @@ server/
 │   │   ├── storage.py  files on disk: uploads, chunks, summaries, covers, generated assets
 │   │   ├── usage.py    tokens and costs of every model call
 │   │   └── style.py    platform rules, tones, "how human" levels, AI-cliché check and rewrite
+│   ├── db/             the database (PostgreSQL at Supabase; SQLAlchemy)
+│   │   ├── database.py     connection (DATABASE_URL), sessions, DatabaseError
+│   │   ├── tables.py       the tables: public.projects, private.api_keys
+│   │   ├── records.py      read and write projects and API keys
+│   │   └── import_files.py one-time import of projects.json and api_keys.json
 │   ├── rag/            Phase 1 Knowledge Hub
 │   │   ├── ingestion.py    PDF → chapters → chunks → vectors
 │   │   ├── vectorstore.py  embeddings in Chroma
@@ -42,6 +51,7 @@ server/
 │   │   └── guard_server.py mcp-guardrails: input validation and prompt-injection checks (/guardrails/mcp)
 │   ├── agents/         Phase 4 Agent Workspace, not built yet
 │   └── api/            FastAPI routers: health, projects, sources, knowledge, assets, campaigns (+ deps.py)
+├── migrations/         Alembic migrations of the database (alembic.ini next to server.py)
 └── assets/             data (not committed): uploads, chroma, generated, usage
 ```
 

@@ -1,17 +1,21 @@
 """Shared test setup: a signed-in test user who owns the default project, without Supabase.
 
-Every test gets a fresh project list (the default project, owned by OWNER) and a temporary projects.json, and no
-API keys with a temporary api_keys.json, so the real files are never written. Tests that build an app with API routers call sign_in(app) to be OWNER (or another user).
+Every test gets an empty in-memory SQLite database instead of the real one (DATABASE_URL is never used), a fresh
+project list (the default project, owned by OWNER, also saved in that database) and no API keys. Tests that build an app with API routers call sign_in(app) to be OWNER (or another user).
 """
 
 import pytest
 from fastapi import FastAPI
+from sqlalchemy import create_engine
+from sqlalchemy.pool import StaticPool
 
 from app.campaign import kit
 from app.core import api_keys, auth, config, llm, storage, usage
 from app.core import state as db
 from app.core.auth import User
 from app.core.schemas import Project, UsageTotals
+from app.db import database, records
+from app.db.tables import PRIVATE, Base
 from app.rag import vectorstore
 
 OWNER = User(id="user-owner", email="owner@example.com")  # owns the default project
@@ -24,19 +28,32 @@ def sign_in(app: FastAPI, user: User = OWNER) -> None:
 
 
 @pytest.fixture(autouse=True)
-def projects(tmp_path, monkeypatch):
-    """The default project, owned by OWNER; projects.json goes to a temporary folder."""
-    monkeypatch.setattr(storage, "PROJECTS_FILE", tmp_path / "projects.json")
+def test_database(monkeypatch):
+    """An empty in-memory SQLite database with all tables, used instead of DATABASE_URL. SQLite has no "private"
+    schema: its tables go to SQLite's only one. StaticPool: one connection, so every session sees the same data."""
+    engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+    engine = engine.execution_options(schema_translate_map={PRIVATE: None})
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(database, "_engine", None)
+    monkeypatch.setattr(database, "_sessions", None)
+    database.use_engine(engine)
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def projects(test_database, monkeypatch):
+    """The default project, owned by OWNER, in memory and in the test database."""
     default = Project(id=db.DEFAULT_PROJECT_ID, name="My library", description="", created_at=db.now(),
                       owner_id=OWNER.id)
+    records.save_project(default)
     monkeypatch.setattr(db, "projects", {default.id: default})
     return db.projects
 
 
 @pytest.fixture(autouse=True)
-def keys(tmp_path, monkeypatch):
-    """No API keys; api_keys.json goes to a temporary folder, so the real one is never read or written."""
-    monkeypatch.setattr(api_keys, "KEYS_FILE", tmp_path / "api_keys.json")
+def keys(test_database, monkeypatch):
+    """No API keys (in memory; the test database starts empty)."""
     monkeypatch.setattr(api_keys, "_keys", {})
     return api_keys._keys
 

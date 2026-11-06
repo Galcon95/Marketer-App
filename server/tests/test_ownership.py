@@ -10,9 +10,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import assets, campaigns, deps, health, knowledge, mcp_console, projects, sources
-from app.core import accounts, storage
+from app.core import accounts
 from app.core import state as db
 from app.core.schemas import Asset, BookSummary, Conversation, Source
+from app.db import records
 from tests.conftest import OWNER, STRANGER, sign_in
 
 PROJECT = db.DEFAULT_PROJECT_ID
@@ -143,7 +144,7 @@ def test_a_new_user_gets_an_empty_project_named_after_their_email(app):
     assert me["project"]["id"] != PROJECT and me["project"]["source_count"] == 0
     # The same project on the next call, and it is saved.
     assert stranger.get("/me").json()["project"]["id"] == me["project"]["id"]
-    assert me["project"]["id"] in storage.load_projects()
+    assert me["project"]["id"] in records.load_projects()
 
 
 def test_the_default_project_goes_to_the_default_client_owner(app, monkeypatch):
@@ -152,7 +153,7 @@ def test_the_default_project_goes_to_the_default_client_owner(app, monkeypatch):
     admin = client_for(app, OWNER.model_copy(update={"id": "user-admin", "email": "Admin@Example.com"}))
     me = admin.get("/me").json()
     assert (me["admin"], me["project"]["id"], me["project"]["source_count"]) == (True, PROJECT, 1)
-    assert storage.load_projects()[PROJECT].owner_id == "user-admin"
+    assert records.load_projects()[PROJECT].owner_id == "user-admin"
 
 
 def test_the_default_project_does_not_go_to_anyone_else(app, monkeypatch):
