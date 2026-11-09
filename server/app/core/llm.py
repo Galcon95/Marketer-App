@@ -35,6 +35,8 @@ TEMPERATURES: dict[str, float] = {
     # Discussion Relevance Agent (agents/discussion.py): which tools to call and what to search, then the
     # recommendation; its reply draft uses style.temperature_for like other marketing copy.
     "research": 0.0, "assess": 0.0,
+    # Reddit scan (agents/discussion_scan.py): how well the book fits each thread found.
+    "triage": 0.0,
 }
 STRUCTURED_ATTEMPTS = 2  # a structured reply that does not fit its schema is asked for once more
 

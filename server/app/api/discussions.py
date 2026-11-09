@@ -1,5 +1,6 @@
 """Discussions (Market Intelligence): the Discussion Relevance Agent and its saved results.
 
+    POST   /projects/{id}/discussions/scan  search Reddit for threads on a topic, ranked for one book (not saved)
     POST   /projects/{id}/discussions   analyse a pasted discussion for one book (runs the agent), save the result
     GET    /projects/{id}/discussions   the saved analyses, newest first
     GET    /discussions/{id}            one analysis
@@ -9,15 +10,45 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.agents import discussion
+from app.agents import discussion, discussion_scan
 from app.agents.discussion_tools import BookNotReady
 from app.api.deps import check_sources, checked_optional, checked_text, llm_limits, owned_discussion, owned_project
 from app.core import state as db
 from app.core.llm import GenerationError
-from app.core.schemas import DiscussionAnalysis, DiscussionRequest, DiscussionUpdate
+from app.core.schemas import DiscussionAnalysis, DiscussionRequest, DiscussionUpdate, ScanRequest, ScanResult
 from app.db import records
 
 router = APIRouter()
+
+
+@router.post("/projects/{project_id}/discussions/scan", response_model=ScanResult,
+             dependencies=[Depends(owned_project), Depends(llm_limits)])
+def scan(project_id: str, body: ScanRequest):
+    """Search Reddit for recent threads on a topic and rank them by how well one book fits (agents/discussion_scan.py).
+
+    The topic is the author's own text and is checked for prompt injection. The threads found are third-party text:
+    the scan gives them to the model only as quoted data. Nothing is saved; the author picks threads to analyse.
+
+    Args:
+        project_id: Id of the project (path parameter). 404 if unknown.
+        body: The book, the topic, optional subreddits (at most 5), the time range and the threads per search.
+
+    Returns:
+        The threads, best fit first, each with its fit, a reason, the search snippet and, when available, its text.
+
+    Raises:
+        HTTPException: 400 if the topic is a likely prompt injection; 404 if the book is not in the project; 409 if
+            the book is not processed yet; 422 if the request is invalid; 429 if a limit is reached; 503 if no
+            Tavily or model key is configured; 502 if the search or the model call fails; 504 on a timeout.
+    """
+    check_sources(project_id, [body.source_id])
+    body = body.model_copy(update={"topic": checked_text(body.topic, "short_text", "topic")})
+    try:
+        return discussion_scan.scan_discussions(project_id, body)
+    except BookNotReady as e:
+        raise HTTPException(409, "The book must be processed (status ready) before Reddit can be scanned for it.") from e
+    except GenerationError as e:
+        raise HTTPException(e.status_code, str(e)) from e
 
 
 @router.post("/projects/{project_id}/discussions", response_model=DiscussionAnalysis, status_code=201,

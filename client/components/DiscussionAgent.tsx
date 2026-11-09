@@ -8,12 +8,14 @@
  */
 
 import { useState, type SubmitEvent } from "react";
-import { Bot, ChevronDown, MessagesSquare } from "lucide-react";
+import { Bot, ChevronDown, ClipboardPaste, MessagesSquare, Radar } from "lucide-react";
 import {
-  api, bookTitle, DISCUSSION_PLATFORMS, errorMessage, humanizeLabel, platformFromUrl, TONES, type DiscussionPlatform, type Source, type Tone,
+  api, bookTitle, DISCUSSION_PLATFORMS, errorMessage, humanizeLabel, platformFromUrl, TONES, type DiscussionPlatform,
+  type ScannedThread, type Source, type Tone,
 } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import DiscussionCard from "./DiscussionCard";
+import RedditScan, { threadAsDiscussion } from "./RedditScan";
 import { Button, Card, ErrorNote, Field, Placeholder, RangeField, SectionHeading } from "./ui";
 
 const MAX_DISCUSSION = 8000; // as the server's DiscussionRequest
@@ -36,6 +38,8 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
   const [platform, setPlatform] = useState<DiscussionPlatform>("reddit");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<"scan" | "paste">("scan");
+  const [fromScan, setFromScan] = useState<ScannedThread | null>(null); // the scanned thread loaded into the form
 
   const book = books.find((b) => b.id === bookId) ?? (books.length === 1 ? books[0] : undefined);
   const titles = new Map(books.map((b) => [b.id, bookTitle(b.filename)]));
@@ -47,6 +51,15 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
     setUrl(value);
     const guessed = platformFromUrl(value);
     if (guessed) setPlatform(guessed);
+  }
+
+  /** A thread picked in the scan: load its text and link into the paste form, to review and run the agent. */
+  function analyseThread(t: ScannedThread) {
+    setDiscussion(threadAsDiscussion(t));
+    setUrl(t.url);
+    setPlatform("reddit");
+    setFromScan(t);
+    setMode("paste");
   }
 
   /** Form submit: run the agent on the discussion for the chosen book; the result appears at the top of the list. */
@@ -73,7 +86,25 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
     <div className="bc-stack" style={{ gap: 16 }}>
       <SectionHeading icon={Bot} title="Discussion Relevance Agent" count={shown.length} />
       <Card>
+        <div className="bc-row" role="group" aria-label="How to find a discussion" style={{ gap: 8, marginBottom: 16 }}>
+          <Button size="sm" icon={Radar} variant={mode === "scan" ? "secondary" : "ghost"} aria-pressed={mode === "scan"}
+            onClick={() => setMode("scan")}>Scan Reddit</Button>
+          <Button size="sm" icon={ClipboardPaste} variant={mode === "paste" ? "secondary" : "ghost"} aria-pressed={mode === "paste"}
+            onClick={() => setMode("paste")}>Paste a discussion</Button>
+        </div>
+        <div hidden={mode !== "scan"}>
+          <RedditScan bookId={book?.id} bookTitle={book ? bookTitle(book.filename) : undefined} onAnalyse={analyseThread} />
+        </div>
+        {mode === "paste" && (
         <form className="bc-stack" onSubmit={submit}>
+          {fromScan && (
+            <span className="bc-hint" style={{ color: "var(--accent-text)" }}>
+              Loaded from the scan: <strong>{fromScan.title}</strong>.{" "}
+              {fromScan.full_text
+                ? "Check the text, set angle and tone, then analyse."
+                : <>The search had only a short excerpt: <a href={fromScan.url} target="_blank" rel="noopener noreferrer">open the thread</a> and paste the post and the comments that matter, then analyse.</>}
+            </span>
+          )}
           <span className="bc-hint">
             Copy a post and, if they matter, some of its replies from Reddit, LinkedIn, YouTube or a forum. The agent
             searches {book ? <strong>{bookTitle(book.filename)}</strong> : "the book"}, says whether a reply from the
@@ -123,6 +154,7 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
           {pending && <span className="bc-hint">This takes up to a minute: the agent searches several times before it decides.</span>}
           {error && <ErrorNote>{error}</ErrorNote>}
         </form>
+        )}
       </Card>
       {discussions.error ? (
         <ErrorNote>{discussions.error}</ErrorNote>

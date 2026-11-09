@@ -203,6 +203,39 @@ export interface DiscussionRequest {
   humanize?: number; // how human the reply should sound, 0-100 (server default 80); AI clichés are rewritten from 60
   tone?: Tone; // the reply's tone (default neutral)
 }
+/** How far back a Reddit scan looks. */
+export type ScanTime = "day" | "week" | "month" | "year";
+/** How well the book fits a thread found by the scan. */
+export type Fit = "high" | "medium" | "low";
+/** Body of POST /projects/{id}/discussions/scan: search Reddit for threads on a topic, ranked for one book. */
+export interface ScanRequest {
+  source_id: string;
+  topic: string; // max 300 characters
+  subreddits?: string[]; // at most 5, e.g. ["Futurology", "r/singularity"]; empty = all of Reddit
+  time_range?: ScanTime; // default "month"
+  max_results?: number; // threads per search, 5-20 (default 10)
+}
+/** A Reddit thread found by the scan. full_text is "" when the search had only a snippet: open the thread. */
+export interface ScannedThread {
+  url: string;
+  subreddit: string; // without "r/"
+  title: string;
+  snippet: string;
+  full_text: string;
+  score: number; // the search engine's relevance to the topic (0-1)
+  fit: Fit;
+  why: string;
+}
+/** Result of a Reddit scan (not saved): the threads, best fit first. */
+export interface ScanResult {
+  source_id: string;
+  topic: string;
+  subreddits: string[];
+  time_range: ScanTime;
+  threads: ScannedThread[];
+  found: number;
+  tokens: number;
+}
 /** The agent's advice on naming the book in the reply; the author decides. */
 export interface BookMention { suggest: boolean; reason: string }
 /** A saved result of the Discussion Relevance Agent. */
@@ -705,6 +738,9 @@ export const api = {
   /** POST /projects/{id}/discussions: run the Discussion Relevance Agent on a pasted discussion (takes up to a minute). */
   analyzeDiscussion: async (body: DiscussionRequest) =>
     request<DiscussionAnalysis>(`/projects/${await projectId()}/discussions`, postJson(body)),
+  /** POST /projects/{id}/discussions/scan: search Reddit for threads on a topic, ranked for one book (not saved). */
+  scanDiscussions: async (body: ScanRequest) =>
+    request<ScanResult>(`/projects/${await projectId()}/discussions/scan`, postJson(body)),
   /** GET /projects/{id}/discussions: the saved analyses, newest first. */
   listDiscussions: async () => request<DiscussionAnalysis[]>(`/projects/${await projectId()}/discussions`),
   /** PATCH /discussions/{id}: save the author's edited reply (the agent's suggestion is kept). */

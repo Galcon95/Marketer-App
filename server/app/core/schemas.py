@@ -5,6 +5,7 @@ Every class here is a Pydantic model. FastAPI uses them to validate incoming JSO
 Class docstrings also appear as schema descriptions in the generated OpenAPI docs (/docs).
 """
 
+import re
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
@@ -430,6 +431,64 @@ class DiscussionUpdate(BaseModel):
     """Request body for PATCH /discussions/{id}: the author's edited reply."""
 
     reply: str = Field(min_length=1, max_length=12000)
+
+
+# ---------- Reddit scan (Market Intelligence: find discussions for the agent) ----------
+ScanTime = Literal["day", "week", "month", "year"]  # how far back the search looks
+Fit = Literal["high", "medium", "low"]  # how well the book fits a thread found by the scan
+_SUBREDDIT = re.compile(r"^[A-Za-z0-9_]{2,21}$")  # Reddit's rule for subreddit names
+
+
+class ScanRequest(BaseModel):
+    """Request body for POST /projects/{id}/discussions/scan: search Reddit for threads on a topic, for one book."""
+
+    source_id: str = Field(min_length=1)  # the book the threads are ranked for
+    topic: str = Field(min_length=1, max_length=300)  # what to search, e.g. "AI future, AI societies, civilizations"
+    subreddits: list[str] = Field(default=[], max_length=5)  # e.g. ["Futurology", "r/singularity"]; [] = all of Reddit
+    time_range: ScanTime = "month"
+    max_results: int = Field(default=10, ge=5, le=20)  # threads per search (Tavily returns at most 20)
+
+    @model_validator(mode="after")
+    def _check_subreddits(self) -> "ScanRequest":
+        """Accept "Futurology", "r/Futurology" or "/r/Futurology/"; keep each name once; reject anything else."""
+        names: list[str] = []
+        for raw in self.subreddits:
+            name = raw.strip().strip("/").removeprefix("r/").removeprefix("R/").strip()
+            if not name:
+                continue
+            if not _SUBREDDIT.match(name):
+                raise ValueError(f"'{raw}' is not a subreddit name (2-21 letters, digits or _).")
+            if name.lower() not in (n.lower() for n in names):
+                names.append(name)
+        self.subreddits = names
+        return self
+
+
+class ScannedThread(BaseModel):
+    """A Reddit thread found by the scan, with how well the book fits it."""
+
+    url: str
+    subreddit: str  # without "r/"
+    title: str
+    snippet: str = ""  # the search engine's short excerpt
+    full_text: str = ""  # the post and top comments from the page, when the search had them; "" = open the thread
+    score: float = 0.0  # the search engine's relevance to the topic (0-1)
+    fit: Fit
+    why: str  # one sentence: how the book connects, or why it does not
+
+
+class ScanResult(BaseModel):
+    """The result of a Reddit scan (not saved): the threads, best fit first."""
+
+    source_id: str
+    topic: str
+    subreddits: list[str] = []
+    time_range: ScanTime = "month"
+    threads: list[ScannedThread] = []
+    found: int = 0  # threads found before ranking (at most MAX_TRIAGE of them are ranked)
+    tokens: int = 0
+    model: str | None = None
+    prompt_version: str | None = None
 
 
 # ---------- MCP console (Market Intelligence) ----------
