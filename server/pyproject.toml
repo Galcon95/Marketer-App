@@ -17,6 +17,7 @@ dependencies = [
     "langsmith>=0.14.11",
     "mcp>=2.3.0",
     "numpy>=2.4.6",
+    "playwright>=1.64.1",
     "psycopg[binary]>=3.3.8",
     "pyjwt[crypto]>=2.15.1",
     "pymupdf>=2.0",

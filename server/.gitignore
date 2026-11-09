@@ -6,3 +6,6 @@ __pycache__/
 # Sample books for trying the app (never committed: can be large or copyrighted). All user data is in Supabase
 # (database and Storage), nothing is stored here any more.
 assets/
+
+# Browser automation (app/browser/): login profiles with the user's cookies, one per platform. Never committed.
+.browser/

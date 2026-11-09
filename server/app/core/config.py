@@ -20,6 +20,11 @@ Read once on import from environment variables (and server/.env, if present), fi
                           see tracing.py). Default off; keep it off for customers and in production
     TAVILY_API_KEY      → optional, key of the Tavily search API ("tvly-..."): the Reddit scan finds threads with it
                           (agents/discussion_scan.py); without it the scan answers 503, everything else works
+    BROWSER_AUTOMATION  → optional, "on" lets the server read pages of platforms like Reddit in a visible browser
+                          (Playwright, app/browser/) with logins the user makes in the browser window; default "off". Only for a
+                          server running on the user's own computer
+    BROWSER_PROFILE_DIR → optional, folder of the browser's login profiles, one per platform (default
+                          server/.browser/profiles; git-ignored: it holds login cookies)
     LANGSMITH_PROJECT   → optional, the LangSmith project the traces go to (default "marketer-app")
     SUPABASE_URL        → URL of the Supabase project whose users may sign in (auth.py checks their access tokens
                           with its public signing keys); without it every API request except /health gets 503
@@ -61,6 +66,9 @@ MIN_RELEVANCE = float(os.getenv("MIN_RELEVANCE", "0.3"))
 RETRIEVAL_MODE = "hybrid" if os.getenv("RETRIEVAL_MODE", "dense").strip().lower() == "hybrid" else "dense"
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
+
+BROWSER_AUTOMATION = os.getenv("BROWSER_AUTOMATION", "off").strip().lower() in ("on", "true", "1", "yes")
+BROWSER_PROFILE_DIR = Path(os.getenv("BROWSER_PROFILE_DIR") or SERVER_DIR / ".browser" / "profiles")
 
 LOG_FORMAT = "text" if os.getenv("LOG_FORMAT", "json").strip().lower() == "text" else "json"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()
