@@ -84,37 +84,46 @@ def make_tools(project_id: str) -> list[BaseTool]:
     return [list_books, check_platform_fit, draft_social_post]
 
 
-def run_tool_calls(project_id: str, tool_calls: list[dict]) -> tuple[list[ToolMessage], list[ToolCallRecord]]:
+def run_tool_calls(project_id: str, tool_calls: list[dict], tools: list[BaseTool] | None = None,
+                   max_calls: int = MAX_TOOL_CALLS,
+                   max_result_chars: int = MAX_RESULT_CHARS) -> tuple[list[ToolMessage], list[ToolCallRecord]]:
     """Run the tool calls of a model reply, in order.
 
     Every call gets a ToolMessage answer (the API requires one per call id): the result as JSON, or an
-    error text for unknown tools, invalid arguments, failures and calls beyond MAX_TOOL_CALLS. Either way it is
+    error text for unknown tools, invalid arguments, failures and calls beyond max_calls. Either way it is
     quoted as data in a <tool_result name="..."> block (guard.quote_untrusted): results carry text from books,
     summaries and generated posts, which must not act as instructions.
+
+    Args:
+        project_id: The client whose chat tools to use (when `tools` is not given).
+        tool_calls: The reply's tool calls.
+        tools: Other tools to run instead of the chat tools (e.g. the Discussion Relevance Agent's).
+        max_calls: How many of the calls may run; the rest get an error result.
+        max_result_chars: A result is cut to this length for the model.
 
     Returns:
         The ToolMessages for the model and a ToolCallRecord per call for the GUI.
     """
-    tools = {t.name: t for t in make_tools(project_id)}
+    by_name = {t.name: t for t in (tools if tools is not None else make_tools(project_id))}
     messages: list[ToolMessage] = []
     records: list[ToolCallRecord] = []
     for i, call in enumerate(tool_calls):
         name, args = call["name"], call.get("args") or {}
         started = time.perf_counter()
         ok, result = False, None
-        if i >= MAX_TOOL_CALLS:
-            result = f"Not run: at most {MAX_TOOL_CALLS} tool calls per answer."
-        elif name not in tools:
+        if i >= max_calls:
+            result = "Not run: the limit of tool calls is reached."
+        elif name not in by_name:
             result = f"Unknown tool '{name}'."
         else:
             try:
-                result, ok = tools[name].invoke(args), True
+                result, ok = by_name[name].invoke(args), True
             except Exception as e:  # invalid arguments (ValidationError), ToolException, generation errors
-                logger.warning("Chat tool %s failed: %s", name, e)
+                logger.warning("Tool %s failed: %s", name, e)
                 result = f"Error: {e}"
         records.append(ToolCallRecord(name=name, arguments=args, ok=ok, result=result,
                                       duration_ms=round((time.perf_counter() - started) * 1000)))
         content = json.dumps(result, ensure_ascii=False, default=str) if ok else str(result)
-        messages.append(ToolMessage(content=quote_untrusted(content[:MAX_RESULT_CHARS], "tool_result", name=name),
+        messages.append(ToolMessage(content=quote_untrusted(content[:max_result_chars], "tool_result", name=name),
                                     tool_call_id=call["id"], name=name, status="success" if ok else "error"))
     return messages, records

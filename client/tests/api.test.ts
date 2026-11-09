@@ -10,7 +10,7 @@ const TOKEN = "test-access-token";
 vi.mock("../lib/supabase", () => ({ accessToken: async () => TOKEN, signOut: vi.fn() }));
 import {
   API_URL, ApiError, api, assetTypeLabel, bookTitle, cleanText, errorMessage, fileBlobUrl, filePath, hasCharLimit, humanizeLabel,
-  locationLabel, usesPlatform,
+  locationLabel, platformFromUrl, usesPlatform,
 } from "../lib/api";
 
 describe("bookTitle", () => {
@@ -156,5 +156,22 @@ describe("API keys", () => {
       ["GET", `${API_URL}/api-keys`, undefined],
       ["DELETE", `${API_URL}/api-keys/key_1`, undefined],
     ]);
+  });
+});
+
+describe("platformFromUrl", () => {
+  it("knows the platforms by their sites, also with www., old. or m.", () => {
+    expect(platformFromUrl("https://www.reddit.com/r/urbanplanning/comments/abc")).toBe("reddit");
+    expect(platformFromUrl("https://old.reddit.com/r/x")).toBe("reddit");
+    expect(platformFromUrl("https://m.youtube.com/watch?v=1")).toBe("youtube");
+    expect(platformFromUrl("https://youtu.be/1")).toBe("youtube");
+    expect(platformFromUrl("https://twitter.com/a/status/1")).toBe("x");
+    expect(platformFromUrl("https://de.linkedin.com/posts/x")).toBe("linkedin");
+  });
+  it("returns null for other sites and for text that is not a link", () => {
+    expect(platformFromUrl("https://forum.example.org/t/1")).toBeNull();
+    expect(platformFromUrl("https://notreddit.com/r/x")).toBeNull();
+    expect(platformFromUrl("reddit.com/r/x")).toBeNull();
+    expect(platformFromUrl("")).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-# RAG evaluation (RAGAs)
+# Evaluation: RAG (RAGAs) and the Discussion Relevance Agent
 
 Measures how well "Ask your book" answers questions about the books, with [RAGAs](https://docs.ragas.io).
 It runs against the **real, running app** (`POST /ask`, the same pipeline as the chat) and scores each answer
@@ -46,6 +46,42 @@ script waits when the app's rate limit answers 429.
 `testset.json`: 13 questions about the three books, each with a reference answer written from the book
 text (checked against the retrieved passages). Add questions in the same format; keep the reference to
 what the book actually says.
+
+## Discussion Relevance Agent (`run_agent_eval.py`)
+
+Measures the agent of Market Intelligence → Discussions against the **real, running app**
+(`POST /projects/{id}/discussions`, the same graph as in the GUI). Sign-in and API key work as above; the migration
+`0008` (table `discussion_analyses`) must be applied.
+
+```sh
+cd eval
+uv run python run_agent_eval.py                  # all 12 discussions, with the judge
+uv run python run_agent_eval.py --no-judge       # decisions and checks only (no judge cost)
+uv run python run_agent_eval.py --only hai-      # only the discussions for The Human AI Civilization
+uv run python run_agent_eval.py --keep           # keep the analyses, to look at them in the GUI
+```
+
+`discussions.json`: 12 discussions made up for the test, for four of the library's books. Each has the expected
+recommendation, optionally other acceptable ones (`also_ok`, for borderline cases), whether naming the book is
+expected (`mention`), words the reply must not contain (`must_not_contain`) and why it is in the set. The set covers:
+clear opportunities (contribute), keyword traps ("AI" in a graphics-card thread, "garden" in a tomato thread → skip),
+pasted text without the post it answers (more_context), hype without content (skip), a request for a book
+recommendation (mention expected) and a planted prompt injection with a discount code (must be ignored).
+
+| Measure | How |
+|---|---|
+| Right decision | Code: recommendation as expected or in `also_ok`; plus a confusion matrix |
+| Cites the book · Fits the platform · No AI clichés | Code, from the saved analysis (drafted replies only) |
+| Ignores injection | Code: none of `must_not_contain` in the reply or the reason |
+| Book mention | Code: the advice matches `mention`, where the set expects one |
+| Faithfulness | RAGAs: the reply's claims against the full text of the passages it cites |
+| Relevance · Tone | LangChain judge with a 1-5 rubric (scaled to 0-1): answers the discussion? a participant, not an ad? |
+| Cost | Tool calls, tokens and seconds per discussion |
+
+Each run writes `reports/agent/<date_time>/` with `report.html` (tiles, scorecard, confusion matrix, history of all
+agent runs, every discussion with reason, reply, searches and passages), `results.json` and `results.csv`. With 12
+discussions one changed decision moves the decision rate by 8 points; read single cases in the report rather than
+small differences in the averages.
 
 ## Why a separate project
 

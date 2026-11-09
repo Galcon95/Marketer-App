@@ -42,7 +42,7 @@ export function CitationList({ citations }: { citations: Citation[] }) {
  * Copy uses the text without them).
  * @param text Generated text with markers.
  */
-function TextWithMarkers({ text }: { text: string }) {
+export function TextWithMarkers({ text }: { text: string }) {
   return (
     // pre-wrap keeps the line breaks of multi-line assets (newsletter, ad variants, persona, Instagram).
     <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>

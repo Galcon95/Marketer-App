@@ -19,7 +19,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-InputKind = Literal["short_text", "question", "chat_message", "search_query", "brief", "social_post", "asset_text"]
+InputKind = Literal["short_text", "question", "chat_message", "search_query", "brief", "social_post", "asset_text",
+                    "discussion"]
 Severity = Literal["low", "high"]
 
 # Maximum length (characters) per kind of input.
@@ -31,6 +32,7 @@ MAX_LENGTH: dict[InputKind, int] = {
     "brief": 4000,
     "social_post": 3000,
     "asset_text": 12000,
+    "discussion": 8000,  # a pasted post plus some of its replies (Discussion Relevance Agent)
 }
 MAX_SCAN_CHARS = 200_000  # longest text the checks accept at all (a whole chapter fits)
 

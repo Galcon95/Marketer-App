@@ -189,6 +189,51 @@ export interface Conversation { id: string; title: string; created_at: string; u
 /** A conversation without its turns, for the list of past chats. */
 export interface ConversationInfo { id: string; title: string; created_at: string; updated_at: string; turn_count: number }
 
+/** Where a discussion was found (the social platforms match Platform; reddit, forum and other have no fixed rules). */
+export type DiscussionPlatform = Platform | "reddit" | "forum" | "other";
+/** What the Discussion Relevance Agent recommends: write a reply, add more of the discussion, or leave it. */
+export type Recommendation = "contribute" | "more_context" | "skip";
+/** Body of POST /projects/{id}/discussions: a pasted discussion to analyse for one book. */
+export interface DiscussionRequest {
+  source_id: string;
+  discussion: string; // the post and, if useful, some replies (max 8000 characters)
+  url?: string; // http(s) link to the discussion, so the author can go back and post
+  platform?: DiscussionPlatform;
+  angle?: string; // optional: what the author would like to bring in
+  humanize?: number; // how human the reply should sound, 0-100 (server default 80); AI clichés are rewritten from 60
+  tone?: Tone; // the reply's tone (default neutral)
+}
+/** The agent's advice on naming the book in the reply; the author decides. */
+export interface BookMention { suggest: boolean; reason: string }
+/** A saved result of the Discussion Relevance Agent. */
+export interface DiscussionAnalysis {
+  id: string;
+  project_id: string;
+  source_id: string; // the book analysed against
+  discussion: string;
+  url: string;
+  platform: DiscussionPlatform;
+  angle: string;
+  recommendation: Recommendation;
+  reason: string; // with [n] markers matching `citations`
+  missing_context: string; // for more_context: what to add
+  suggested_reply: string; // the agent's draft with [n] markers; "" unless contribute
+  reply: string; // the author's version (starts as suggested_reply)
+  edited: boolean;
+  book_mention: BookMention | null;
+  citations: Citation[]; // shared by the reason and the reply
+  search_queries: string[]; // what the agent searched, in order
+  tool_calls: ToolCallRecord[]; // the agent's trace
+  platform_issues: string[]; // problems of the draft for the platform (length, AI clichés left after the rewrite)
+  humanize: number; // the "how human" setting the reply was written with
+  tone: Tone;
+  model: string | null;
+  prompt_version: string | null;
+  tokens: number;
+  created_at: string;
+  updated_at: string;
+}
+
 /** One tool of an MCP server (GET /mcp-servers). */
 export interface McpTool {
   name: string;
@@ -243,6 +288,7 @@ export interface SourceDeletion {
   name: string; // readable book name
   assets: number; // generated assets made only from this book (incl. its campaign kits)
   conversations: number; // chats whose passages all come from this book
+  discussions: number; // discussion analyses made for this book (Market Intelligence)
 }
 
 /** One logged model call with its tokens and costs in USD (server/app/core/usage.py). */
@@ -340,6 +386,34 @@ export const PLATFORMS: { value: Platform; label: string; postLimit: number; rep
   { value: "tiktok", label: "TikTok", postLimit: 4000, replyLimit: 150 },
   { value: "youtube", label: "YouTube", postLimit: 5000, replyLimit: 10000 },
 ];
+
+/** Where a discussion can come from, with the reply limit where the platform has one (Reddit: 10,000). */
+export const DISCUSSION_PLATFORMS: { value: DiscussionPlatform; label: string; replyLimit?: number }[] = [
+  { value: "reddit", label: "Reddit", replyLimit: 10000 },
+  ...PLATFORMS.map((p) => ({ value: p.value, label: p.label, replyLimit: p.replyLimit })),
+  { value: "forum", label: "Forum / community" },
+  { value: "other", label: "Other" },
+];
+
+/**
+ * Guess the platform from a discussion's link, e.g. "https://www.reddit.com/r/…" → "reddit".
+ * @param url The pasted link.
+ * @returns The platform, or null when the host is not a known one.
+ */
+export function platformFromUrl(url: string): DiscussionPlatform | null {
+  let host: string;
+  try {
+    host = new URL(url.trim()).hostname.replace(/^(www|m|old|mobile)\./, "");
+  } catch {
+    return null;
+  }
+  const hosts: [DiscussionPlatform, string[]][] = [
+    ["reddit", ["reddit.com", "redd.it"]], ["linkedin", ["linkedin.com"]], ["youtube", ["youtube.com", "youtu.be"]],
+    ["x", ["x.com", "twitter.com"]], ["facebook", ["facebook.com", "fb.com"]], ["instagram", ["instagram.com"]],
+    ["tiktok", ["tiktok.com"]],
+  ];
+  return hosts.find(([, names]) => names.some((n) => host === n || host.endsWith(`.${n}`)))?.[0] ?? null;
+}
 
 /** True for asset types made for a platform (a platform is chosen instead of a length): posts, replies, video scripts. */
 export function usesPlatform(type: AssetType) {
@@ -627,6 +701,17 @@ export const api = {
     request<McpCall>(`/mcp-servers/${server}/call`, postJson({ tool, arguments: args })),
   /** GET /mcp-calls: the most recent console calls, newest first. */
   listMcpCalls: () => request<McpCall[]>("/mcp-calls"),
+
+  /** POST /projects/{id}/discussions: run the Discussion Relevance Agent on a pasted discussion (takes up to a minute). */
+  analyzeDiscussion: async (body: DiscussionRequest) =>
+    request<DiscussionAnalysis>(`/projects/${await projectId()}/discussions`, postJson(body)),
+  /** GET /projects/{id}/discussions: the saved analyses, newest first. */
+  listDiscussions: async () => request<DiscussionAnalysis[]>(`/projects/${await projectId()}/discussions`),
+  /** PATCH /discussions/{id}: save the author's edited reply (the agent's suggestion is kept). */
+  updateDiscussion: (discussionId: string, reply: string) =>
+    request<DiscussionAnalysis>(`/discussions/${discussionId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reply }) }),
+  /** DELETE /discussions/{id}: delete a saved analysis. */
+  deleteDiscussion: (discussionId: string) => request<void>(`/discussions/${discussionId}`, { method: "DELETE" }),
 
   /** POST /projects/{id}/verify: check each claim of `text` against the project's sources. */
   verify: async (text: string) => request<VerifyResponse>(`/projects/${await projectId()}/verify`, postJson({ text })),

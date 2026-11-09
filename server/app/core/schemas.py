@@ -155,6 +155,7 @@ class SourceDeletion(BaseModel):
     name: str  # readable book name, e.g. "Successful Stock Speculation — J. J. Butler"
     assets: int  # generated assets made only from this book
     conversations: int  # chats whose passages all come from this book
+    discussions: int = 0  # discussion analyses made for this book (Market Intelligence)
 
 
 class ChunkPage(BaseModel):
@@ -352,6 +353,83 @@ class ConversationInfo(BaseModel):
     created_at: datetime
     updated_at: datetime
     turn_count: int
+
+
+# ---------- Discussions (Market Intelligence: Discussion Relevance Agent) ----------
+# Where a discussion was found. The social platforms match Platform, so the draft reply can be checked against
+# their rules (core/platforms.py); "reddit", "forum" and "other" have no fixed rules.
+DiscussionPlatform = Literal["reddit", "linkedin", "youtube", "x", "facebook", "instagram", "tiktok", "forum", "other"]
+# What the agent recommends: write a reply, ask the author for more of the discussion, or leave it.
+Recommendation = Literal["contribute", "more_context", "skip"]
+
+
+class DiscussionRequest(BaseModel):
+    """Request body for POST /projects/{id}/discussions: a discussion from another platform to analyse for one book.
+
+    The author copies a post (and, if useful, some replies) from Reddit, LinkedIn, YouTube or a forum and pastes
+    it here. The text is third-party content: it is checked by the guard and given to the model as data only.
+    """
+
+    source_id: str = Field(min_length=1)  # the book to contribute from
+    discussion: str = Field(min_length=1, max_length=8000)  # the pasted post and replies (cleaned again by guard)
+    url: str = Field(default="", max_length=2000)  # where the discussion is, so the author can go back and post
+    platform: DiscussionPlatform = "forum"
+    angle: str = Field(default="", max_length=1000)  # optional: what the author would like to bring in
+    # How human the reply should sound (core/style.py): 0 = polished, 100 = casual person. From 60 on, AI clichés found
+    # in the draft are rewritten once. Default 80: a person in a discussion, not marketing copy.
+    humanize: int = Field(default=80, ge=0, le=100)
+    tone: Tone = "neutral"  # the reply's tone, as in the generator (core/style.TONES)
+
+    @model_validator(mode="after")
+    def _check_url(self) -> "DiscussionRequest":
+        """Accept an empty URL or a web address (http or https), nothing else (no javascript: links in the GUI)."""
+        self.url = self.url.strip()
+        if self.url and not self.url.lower().startswith(("http://", "https://")):
+            raise ValueError("The URL must start with http:// or https://.")
+        return self
+
+
+class BookMention(BaseModel):
+    """The agent's advice on naming the book in the reply; the author decides."""
+
+    suggest: bool  # True = mentioning the book would help the discussion (not just advertise it)
+    reason: str  # why, or why not
+
+
+class DiscussionAnalysis(BaseModel):
+    """The Discussion Relevance Agent's result for one discussion, saved for the author to review and edit."""
+
+    id: str  # unique id, e.g. "dsc_1a2b3c4d"
+    project_id: str
+    source_id: str  # the book analysed against
+    discussion: str  # the pasted text (after cleaning)
+    url: str = ""
+    platform: DiscussionPlatform = "forum"
+    angle: str = ""
+    recommendation: Recommendation
+    reason: str  # why the discussion is or is not a good opportunity for this book
+    missing_context: str = ""  # for "more_context": what the author should add (e.g. the question the replies answer)
+    suggested_reply: str = ""  # the agent's draft with [n] citation markers; "" unless the recommendation is contribute
+    reply: str = ""  # the reply as the author edited it (starts as suggested_reply)
+    edited: bool = False  # True once the author changed the reply
+    book_mention: BookMention | None = None  # set when a reply was drafted
+    citations: list[Citation] = []  # the passages the reason and the reply draw on, numbered like the markers
+    search_queries: list[str] = []  # what the agent searched in the book, in order
+    tool_calls: list[ToolCallRecord] = []  # the agent's tool calls, for the trace in the GUI
+    platform_issues: list[str] = []  # problems of the draft for the platform (length, AI clichés left after the rewrite)
+    humanize: int = 70  # the "how human" setting the reply was written with (analyses before it was a setting: 70)
+    tone: Tone = "neutral"  # the tone the reply was written in
+    model: str | None = None  # chat model that ran the agent
+    prompt_version: str | None = None  # e.g. "discussion@3f9a1c2e" (core/prompts.py)
+    tokens: int = 0  # LLM tokens used by the whole run
+    created_at: datetime
+    updated_at: datetime
+
+
+class DiscussionUpdate(BaseModel):
+    """Request body for PATCH /discussions/{id}: the author's edited reply."""
+
+    reply: str = Field(min_length=1, max_length=12000)
 
 
 # ---------- MCP console (Market Intelligence) ----------

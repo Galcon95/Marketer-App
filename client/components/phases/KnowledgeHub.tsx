@@ -10,13 +10,14 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode, type SubmitEvent } from "react";
-import { AlertTriangle, BookOpen, Check, Database, FileText, Film, Library, MessageSquare, Play, Plus, RotateCcw, Sparkles, Target, Trash2, Upload, Wrench } from "lucide-react";
+import { AlertTriangle, BookOpen, Check, Database, FileText, Film, Library, MessageSquare, Play, Plus, RotateCcw, Sparkles, Target, Trash2, Upload } from "lucide-react";
 import {
   api, bookTitle, errorMessage, locationLabel, MAX_UPLOAD_BYTES, PROCESSING_STATUSES, UPLOAD_EXTENSIONS,
-  type BookSummary, type ChatTurn, type Chunk, type ChunkPage, type Source, type ToolCallRecord,
+  type BookSummary, type ChatTurn, type Chunk, type ChunkPage, type Source,
 } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { CitationList } from "../AssetCard";
+import ToolCallCard from "../ToolCallCard";
 import BookCover, { PageLink } from "../BookCover";
 import BookPicker, { readyBooks } from "../BookPicker";
 import { Badge, Button, Card, Drawer, ErrorNote, Field, Placeholder, ProgressBar, Score, SectionHeading } from "../ui";
@@ -151,8 +152,8 @@ function UploadPanel({ sources, sourcesLoading, onChange }: { sources: Source[];
 
 /* ---------- Deleting a book ---------- */
 /** "1 chat" / "2 chats". */
-function plural(n: number, word: string) {
-  return `${n} ${word}${n === 1 ? "" : "s"}`;
+function plural(n: number, word: string, many = `${word}s`) {
+  return `${n} ${n === 1 ? word : many}`;
 }
 
 /**
@@ -167,6 +168,7 @@ async function confirmAndDeleteBook(source: Source): Promise<boolean> {
     "its chunks and summary",
     preview.assets ? `${plural(preview.assets, "generated text")} made only from it` : "",
     preview.conversations ? `${plural(preview.conversations, "chat")} that only used it` : "",
+    preview.discussions ? plural(preview.discussions, "discussion analysis", "discussion analyses") : "",
   ].filter(Boolean);
   const message = [
     `Delete "${preview.name}"?`,
@@ -715,41 +717,6 @@ function QuestionLine({ question }: { question: string }) {
       <Badge tone="accent">You</Badge>
       <strong>{question}</strong>
     </div>
-  );
-}
-
-/** Short labels of the chat tools, shown on their cards. */
-const TOOL_LABELS: Record<string, string> = {
-  list_books: "Looked up the library",
-  check_platform_fit: "Checked the post for the platform",
-  draft_social_post: "Drafted a post (saved to the asset library)",
-};
-
-/**
- * A tool the chat model called for an answer: what it did, with which arguments, whether it worked and how
- * long it took; the full result (JSON) is collapsed below.
- * @param call The tool call.
- */
-function ToolCallCard({ call }: { call: ToolCallRecord }) {
-  const args = JSON.stringify(call.arguments);
-  return (
-    <details className="bc-cite-src" style={{ borderLeft: 0, borderRadius: "var(--radius-md)" }}>
-      <summary className="bc-row" style={{ gap: 8, cursor: "pointer", flexWrap: "wrap" }}>
-        <Badge tone={call.ok ? "accent" : "danger"} icon={Wrench} mono>{call.name}</Badge>
-        <span className="bc-hint">{call.ok ? TOOL_LABELS[call.name] ?? "Called a tool" : "Tool call failed"}</span>
-        <Badge mono>{call.duration_ms} ms</Badge>
-      </summary>
-      <div className="bc-stack" style={{ gap: 6, marginTop: 8 }}>
-        <span className="bc-hint bc-mono" style={{ wordBreak: "break-word" }}>
-          arguments: {args.length > 300 ? args.slice(0, 297) + "…" : args}
-        </span>
-        <pre className="bc-mono" style={{ margin: 0, padding: 10, maxHeight: 300, overflow: "auto", fontSize: 12,
-          whiteSpace: "pre-wrap", wordBreak: "break-word", background: "var(--surface-sunken)",
-          border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
-          {typeof call.result === "string" ? call.result : JSON.stringify(call.result, null, 2)}
-        </pre>
-      </div>
-    </details>
   );
 }
 

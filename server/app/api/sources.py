@@ -147,10 +147,11 @@ def get_source(source: Source = Depends(owned_source)):
 @router.get("/sources/{source_id}/deletion", response_model=SourceDeletion)
 def preview_deletion(source: Source = Depends(owned_source)):
     """What deleting this book would remove besides the book itself (for the confirmation): the generated assets
-    made only from it and the chats that only used its passages. Nothing is deleted. 404 if unknown."""
+    made only from it, the chats that only used its passages and its discussion analyses. Nothing is deleted. 404 if
+    unknown; 500 if the analyses cannot be counted."""
     assets, conversations = _dependents(source)
     return SourceDeletion(source_id=source.id, name=source_name(source.id) or source.filename,
-                          assets=len(assets), conversations=len(conversations))
+                          assets=len(assets), conversations=len(conversations), discussions=_discussions(source.id))
 
 
 @router.delete("/sources/{source_id}", response_model=SourceDeletion)
@@ -170,6 +171,7 @@ def delete_source(source_id: str, source: Source = Depends(owned_source)):
     """
     name = source_name(source.id) or source.filename
     assets, conversations = _dependents(source)
+    discussions = _discussions(source_id)
     # The database first, in one transaction (book, summary, assets, chats): if that fails, everything is still there.
     try:
         records.delete_source(source_id, (a.id for a in assets), (c.id for c in conversations))
@@ -183,7 +185,16 @@ def delete_source(source_id: str, source: Source = Depends(owned_source)):
         db.assets.pop(asset.id, None)
     for conversation in conversations:
         db.conversations.pop(conversation.id, None)
-    return SourceDeletion(source_id=source_id, name=name, assets=len(assets), conversations=len(conversations))
+    return SourceDeletion(source_id=source_id, name=name, assets=len(assets), conversations=len(conversations),
+                          discussions=discussions)
+
+
+def _discussions(source_id: str) -> int:
+    """How many discussion analyses were made for the book (they are deleted with it)."""
+    try:
+        return records.count_discussions(source_id)
+    except OSError as e:  # DatabaseError
+        raise HTTPException(500, "The book's discussion analyses could not be counted, please try again.") from e
 
 
 def _dependents(source: Source) -> tuple[list[Asset], list[Conversation]]:

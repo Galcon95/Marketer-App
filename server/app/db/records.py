@@ -12,15 +12,16 @@ from pydantic import BaseModel
 from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy import inspect as sa_inspect
 
-from app.core.schemas import (ApiKey, Asset, BookSummary, Chunk, ChunkLocation, Conversation, Project, Source,
-                              UsageRecord, UsageTotals)
+from app.core.schemas import (ApiKey, Asset, BookSummary, Chunk, ChunkLocation, Conversation, DiscussionAnalysis,
+                              Project, Source, UsageRecord, UsageTotals)
 from app.db.database import session
-from app.db.tables import (ApiKeyRow, AssetRow, Base, ChunkRow, ConversationRow, ProjectRow, SourceRow, SummaryRow,
-                           UsageRow)
+from app.db.tables import (ApiKeyRow, AssetRow, Base, ChunkRow, ConversationRow, DiscussionRow, ProjectRow, SourceRow,
+                           SummaryRow, UsageRow)
 
 # Fields saved in a JSON column (nested models, lists): written in JSON mode, so datetimes inside become strings.
 ASSET_JSON_FIELDS = {"citations", "source_ids", "ai_tells"}
 CONVERSATION_JSON_FIELDS = {"turns"}
+DISCUSSION_JSON_FIELDS = {"book_mention", "citations", "search_queries", "tool_calls", "platform_issues"}
 SUMMARY_JSON_FIELDS = {"themes", "chapters"}
 
 
@@ -134,6 +135,43 @@ def delete_conversations(conversation_ids: Iterable[str]) -> None:
             s.execute(delete(ConversationRow).where(ConversationRow.id.in_(ids)))
 
 
+# ---------- Discussion analyses (Discussion Relevance Agent) ----------
+# Read from the database on each request (not kept in memory like assets): they are only listed per project or
+# opened one at a time.
+def list_discussions(project_id: str) -> list[DiscussionAnalysis]:
+    """The project's discussion analyses, newest first."""
+    with session() as s:
+        rows = s.scalars(select(DiscussionRow).where(DiscussionRow.project_id == project_id)
+                         .order_by(DiscussionRow.created_at.desc()))
+        return [_record(DiscussionAnalysis, row) for row in rows]
+
+
+def get_discussion(discussion_id: str) -> DiscussionAnalysis | None:
+    """One discussion analysis by id, or None."""
+    with session() as s:
+        row = s.get(DiscussionRow, discussion_id)
+        return _record(DiscussionAnalysis, row) if row else None
+
+
+def count_discussions(source_id: str) -> int:
+    """How many discussion analyses were made for this book (deleted with it)."""
+    with session() as s:
+        return s.execute(select(func.count()).select_from(DiscussionRow)
+                         .where(DiscussionRow.source_id == source_id)).scalar_one()
+
+
+def save_discussion(analysis: DiscussionAnalysis) -> None:
+    """Insert the analysis, or replace the saved one (e.g. after the author edited the reply)."""
+    with session() as s:
+        s.merge(to_row(DiscussionRow, analysis, DISCUSSION_JSON_FIELDS))
+
+
+def delete_discussion(discussion_id: str) -> None:
+    """Delete a discussion analysis; nothing happens if there is none with this id."""
+    with session() as s:
+        s.execute(delete(DiscussionRow).where(DiscussionRow.id == discussion_id))
+
+
 # ---------- Usage log (model calls and their costs) ----------
 def add_usage(rec: UsageRecord) -> None:
     """Save one model call."""
@@ -227,10 +265,11 @@ def update_source(source: Source) -> bool:
 
 
 def delete_source(source_id: str, asset_ids: Iterable[str] = (), conversation_ids: Iterable[str] = ()) -> None:
-    """Delete a source with its summary (foreign key) and the given assets and chats, in one transaction: all of it
-    is deleted, or nothing."""
+    """Delete a source with its summary and discussion analyses (foreign keys) and the given assets and chats, in one
+    transaction: all of it is deleted, or nothing."""
     asset_ids, conversation_ids = list(asset_ids), list(conversation_ids)
     with session() as s:
+        s.execute(delete(DiscussionRow).where(DiscussionRow.source_id == source_id))  # also without foreign keys
         if asset_ids:
             s.execute(delete(AssetRow).where(AssetRow.id.in_(asset_ids)))
         if conversation_ids:

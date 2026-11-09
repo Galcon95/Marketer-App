@@ -61,7 +61,7 @@ const TABS: TabItem<PhaseId>[] = [
 const TITLES: Record<PhaseId, [title: string, crumb: string]> = {
   p1: ["Knowledge hub", "Retrieval-augmented generation over your content"],
   p2: ["Content studio", "Grounded assets from your books · zero-shot campaign kits"],
-  p3: ["Market intelligence", "Live tool calls via Model Context Protocol"],
+  p3: ["Market intelligence", "Discussions worth joining · live tool calls via Model Context Protocol"],
   p4: ["Agent workspace", "Strategist → Copywriter → Auditor → You"],
 };
 

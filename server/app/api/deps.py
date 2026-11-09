@@ -15,7 +15,8 @@ from app.core import state as db
 from app.core.auth import User, current_user
 from app.core.limits import LIMITS
 from app.core.llm import model_failure
-from app.core.schemas import Asset, Chunk, Conversation, Project, Source
+from app.core.schemas import Asset, Chunk, Conversation, DiscussionAnalysis, Project, Source
+from app.db import records
 from app.rag import vectorstore
 from app.rag.retrieval import retrieve_chunks
 
@@ -158,6 +159,22 @@ def owned_conversation(conversation_id: str, user: User = Depends(current_user))
     if conversation is None or not _owns_project(user, conversation.project_id):
         raise HTTPException(404, f"Conversation '{conversation_id}' not found")
     return conversation
+
+
+def owned_discussion(discussion_id: str, user: User = Depends(current_user)) -> DiscussionAnalysis:
+    """FastAPI dependency for routes with {discussion_id}: the discussion analysis, if its project belongs to the
+    signed-in user. Read from the database (analyses are not kept in memory).
+
+    Raises:
+        HTTPException: 404 if the analysis is unknown or not the user's; 500 if the database cannot be read.
+    """
+    try:
+        analysis = records.get_discussion(discussion_id)
+    except OSError as e:  # DatabaseError
+        raise HTTPException(500, "The discussion analysis could not be loaded, please try again.") from e
+    if analysis is None or not _owns_project(user, analysis.project_id):
+        raise HTTPException(404, f"Discussion '{discussion_id}' not found")
+    return analysis
 
 
 def admin_only(user: User = Depends(current_user)) -> User:

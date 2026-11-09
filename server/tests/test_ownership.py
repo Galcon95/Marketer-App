@@ -9,10 +9,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api import assets, campaigns, deps, health, knowledge, mcp_console, projects, sources
+from app.api import assets, campaigns, deps, discussions, health, knowledge, mcp_console, projects, sources
 from app.core import accounts
 from app.core import state as db
-from app.core.schemas import Asset, BookSummary, Conversation, Source
+from app.core.schemas import Asset, BookSummary, Conversation, DiscussionAnalysis, Source
 from app.db import records
 from tests.conftest import OWNER, STRANGER, sign_in
 
@@ -26,11 +26,16 @@ pytestmark = pytest.mark.usefixtures("offline")
 
 @pytest.fixture
 def app(monkeypatch):
-    """All API routers, with one book (src_a, with summary), one asset and one chat in OWNER's default project."""
+    """All API routers, with one book (src_a, with summary), one asset, one chat and one discussion analysis in OWNER's
+    default project."""
     deps._llm_calls.clear()
-    monkeypatch.setattr(db, "sources", {"src_a": Source(
-        id="src_a", project_id=PROJECT, filename="a.pdf", kind="document", size_bytes=1, status="ready",
-        progress=100, chunk_count=0, created_at=NOW)})
+    book = Source(id="src_a", project_id=PROJECT, filename="a.pdf", kind="document", size_bytes=1, status="ready",
+                  progress=100, chunk_count=0, created_at=NOW)
+    monkeypatch.setattr(db, "sources", {"src_a": book})
+    records.add_source(book)
+    records.save_discussion(DiscussionAnalysis(
+        id="dsc_a", project_id=PROJECT, source_id="src_a", discussion="d", recommendation="skip", reason="r",
+        created_at=NOW, updated_at=NOW))
     monkeypatch.setattr(db, "chunks", {})
     monkeypatch.setattr(db, "summaries", {"src_a": BookSummary(
         source_id="src_a", summary="s", themes=[], chapters=[], model="m", tokens=0, created_at=NOW)})
@@ -40,7 +45,7 @@ def app(monkeypatch):
     monkeypatch.setattr(db, "conversations", {"cnv_a": Conversation(
         id="cnv_a", project_id=PROJECT, title="q", created_at=NOW, updated_at=NOW)})
     app = FastAPI()
-    for module in (health, projects, sources, knowledge, assets, campaigns, mcp_console):
+    for module in (health, projects, sources, knowledge, assets, campaigns, discussions, mcp_console):
         app.include_router(module.router)
     yield app
     deps._llm_calls.clear()
@@ -62,6 +67,8 @@ OWNER_ROUTES = [
     ("post", f"/projects/{PROJECT}/ask", {"question": "What is a garden city?"}),
     ("post", f"/projects/{PROJECT}/generate", {"asset_type": "blurb", "brief": "A blurb"}),
     ("post", f"/projects/{PROJECT}/campaigns", {"title": "T", "premise": "P"}),
+    ("get", f"/projects/{PROJECT}/discussions", None),
+    ("post", f"/projects/{PROJECT}/discussions", {"source_id": "src_a", "discussion": "Can AI run a city?"}),
     ("get", "/sources/src_a", None),
     ("get", "/sources/src_a/chunks", None),
     ("get", "/sources/src_a/file", None),
@@ -76,6 +83,9 @@ OWNER_ROUTES = [
     ("delete", "/assets/ast_a", None),
     ("get", "/conversations/cnv_a", None),
     ("delete", "/conversations/cnv_a", None),
+    ("get", "/discussions/dsc_a", None),
+    ("patch", "/discussions/dsc_a", {"reply": "Rewritten by a stranger"}),
+    ("delete", "/discussions/dsc_a", None),
 ]
 
 
@@ -87,6 +97,7 @@ def test_another_user_gets_404_for_everything_of_the_owner(app, method, path, bo
     # Nothing was changed or deleted.
     assert set(db.sources) == {"src_a"} and set(db.assets) == {"ast_a"} and set(db.conversations) == {"cnv_a"}
     assert db.assets["ast_a"].text == "t"
+    assert records.get_discussion("dsc_a").reply == ""
 
 
 def test_upload_into_another_users_project_is_rejected(app):
@@ -111,6 +122,7 @@ def test_the_owner_reaches_their_own_things(app):
     ("ask", {"question": "What is a garden city?", "source_ids": ["src_a"]}),
     ("generate", {"asset_type": "blurb", "brief": "A blurb", "source_ids": ["src_a"]}),
     ("campaigns", {"title": "T", "premise": "P", "source_id": "src_a"}),
+    ("discussions", {"source_id": "src_a", "discussion": "Can AI run a city?"}),
 ])
 def test_another_users_book_cannot_be_used_in_your_own_project(app, path, body):
     stranger = client_for(app, STRANGER)

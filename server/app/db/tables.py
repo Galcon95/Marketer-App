@@ -141,6 +141,40 @@ class ConversationRow(Base):
     turns: Mapped[list] = mapped_column(Json)  # list of schemas.ChatTurn, oldest first
 
 
+class DiscussionRow(Base):
+    """A Discussion Relevance Agent result: one discussion analysed for one book; one column per field of
+    schemas.DiscussionAnalysis (a test checks they match). Deleted with its project or its book (its citations point
+    into the book)."""
+
+    __tablename__ = "discussion_analyses"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)  # "dsc_1a2b3c4d"
+    project_id: Mapped[str] = project_fk()
+    source_id: Mapped[str] = mapped_column(Text, ForeignKey("sources.id", ondelete="CASCADE"), index=True)
+    discussion: Mapped[str] = mapped_column(Text)
+    url: Mapped[str] = mapped_column(Text)
+    platform: Mapped[str] = mapped_column(Text)
+    angle: Mapped[str] = mapped_column(Text)
+    recommendation: Mapped[str] = mapped_column(Text)  # "contribute", "more_context" or "skip"
+    reason: Mapped[str] = mapped_column(Text)
+    missing_context: Mapped[str] = mapped_column(Text)
+    suggested_reply: Mapped[str] = mapped_column(Text)
+    reply: Mapped[str] = mapped_column(Text)
+    edited: Mapped[bool] = mapped_column(Boolean)
+    book_mention: Mapped[dict | None] = mapped_column(Json)  # schemas.BookMention; NULL when no reply was drafted
+    citations: Mapped[list] = mapped_column(Json)  # list of schemas.Citation
+    search_queries: Mapped[list] = mapped_column(Json)  # list of strings
+    tool_calls: Mapped[list] = mapped_column(Json)  # list of schemas.ToolCallRecord
+    platform_issues: Mapped[list] = mapped_column(Json)  # list of strings
+    humanize: Mapped[int] = mapped_column(Integer, server_default="70")  # 0-100 (since migration 0009)
+    tone: Mapped[str] = mapped_column(Text, server_default="neutral")  # schemas.Tone (since migration 0010)
+    model: Mapped[str | None] = mapped_column(Text)
+    prompt_version: Mapped[str | None] = mapped_column(Text)
+    tokens: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime)
+
+
 class UsageRow(Base):
     """One model call (chat or embedding) with its tokens and costs in USD; see schemas.UsageRecord and usage.py.
     The budgets (limits.toml) are sums over these rows. No foreign keys: the costs stay when a project is deleted."""
