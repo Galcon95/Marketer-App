@@ -103,3 +103,13 @@ def test_a_missing_file_is_404(client):
     from app.core import files
     files.delete_source_files("demo-campaign", source_id)
     assert client.get(f"/sources/{source_id}/file").status_code == 404
+
+
+def test_a_book_over_the_storage_limit_is_rejected_with_advice(client, stored_files, monkeypatch):
+    from app.core import storage
+    monkeypatch.setattr(storage, "MAX_UPLOAD_BYTES", 16)  # stands for the 50 MB of Supabase Storage
+    response = _upload(client, "big.pdf", PDF)
+    assert response.status_code == 413
+    detail = response.json()["detail"]
+    assert "Supabase" in detail and "compress" in detail and "split it into parts" in detail
+    assert db.sources == {}

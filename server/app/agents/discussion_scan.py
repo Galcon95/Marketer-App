@@ -14,7 +14,8 @@ without full text the author opens the thread and copies the discussion.
 
 Everything Tavily returns is third-party text: cleaned by the guard and given to the model only as quoted <post>
 blocks under guard.UNTRUSTED_RULE; each thread is also scanned for prompt injection (guard.scan_third_party) and
-flagged in the result, so the author sees the risk before picking it. Nothing is saved. Runs are traced in LangSmith as "scan_discussions".
+flagged in the result, so the author sees the risk before picking it. Nothing is saved. The triage prompt is
+prompts/discussion_scan_triage.md. Runs are traced in LangSmith as "scan_discussions".
 """
 
 import logging

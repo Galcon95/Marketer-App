@@ -2,13 +2,15 @@
 
     START ─► Send × chapters ─► summarize_chapter (parallel, map) ─► combine (reduce) ─► END
 
-    map      each chapter's text (its chunks joined in order) → 2-4 sentence ChapterSummary;
-             front/back matter (contents, index, license, footnotes, ...) is answered with SKIP and dropped
+    map      each chapter's text (its chunks joined in order) → ChapterDigest (structured output): is_content plus
+             a 2-4 sentence summary; front/back matter (contents, index, license, footnotes, ...) is dropped
     reduce   all chapter summaries in reading order → book summary + key themes (structured output)
 
 Unlike retrieval (top-k chunks), this reads the whole book, so it can say what the book is about
-overall. The result is saved next to the book (.summary.json) and used as background in grounded
-generation (generation.py). Runs are traced in LangSmith as "summarize_book" when tracing is on.
+overall. The result is saved in the database (table summaries) and used as background in grounded
+generation (generation.py), the chat and the Discussion agent's book profile. The prompts are in
+prompts/summary_chapter.md and prompts/summary_book.md. Runs are traced in LangSmith as "summarize_book" when tracing
+is on.
 """
 
 import logging

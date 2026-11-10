@@ -2,7 +2,8 @@
 
 /**
  * A generated asset (blurb, post, persona, ...) as a card: its text with citation markers, platform
- * character count, and the actions copy, edit, verify against the books and delete. CitationList shows
+ * character count, and the actions copy, edit, verify against the books and delete; a post written for Facebook can
+ * be published on the author's Page (admin only, once). CitationList shows
  * the cited passages; it is reused by the "Ask your book" chat.
  */
 

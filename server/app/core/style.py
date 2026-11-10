@@ -1,12 +1,17 @@
 """How generated text should sound: platform rules, tones and the "how human" (humanize) setting.
 
-Shared by single-asset generation (rag/generation.py) and the campaign kit (campaign/kit.py).
+Shared by single-asset generation (rag/generation.py), the campaign kit (campaign/kit.py) and the Discussion
+Relevance Agent's replies (agents/discussion.py). The texts are in prompt files (core/prompt_files.py); this module
+loads them and holds the logic around them:
 
     PLATFORM_*     length and style rules per social platform (posts, replies, short videos)
-    TONES          wording of the tone options
-    HUMAN_LEVELS   style guidance per humanize level (0-100), added to the system prompt
+                   (prompts/platform_posts.md, platform_replies.md, platform_videos.md)
+    TONES          wording of the tone options (prompts/tones.md)
+    HUMAN_LEVELS   style guidance per humanize level (0-100), added to the system prompt (prompts/style_levels.md)
     AI_TELLS       AI-typical phrases ("AI slop"): avoided in the prompt from humanize 50 on,
                    detected after generation (find_ai_tells) and rewritten from REWRITE_FROM on
+                   (the list stays in code: the code uses it for the check too)
+    REWRITE_PROMPT the humanizer's prompt (prompts/style_rewrite.md)
 
 Listing banned phrases verbatim can prime some models to use them. Measured for this app's model instead of assumed
 (2026-10-29, gpt-4o-mini, 10 grounded LinkedIn post drafts per variant at humanize 75, before the rewrite step):

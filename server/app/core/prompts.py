@@ -5,12 +5,15 @@
 The part after "@" is a short hash of the templates (system and user messages, placeholders, instruction tables,
 and the structured-output schemas, whose field descriptions the model reads as instructions too),
 so any edit to a prompt gives a new version by itself; nothing has to be bumped by hand, so it cannot be forgotten.
-Each module registers its version next to its prompts. The version is
+The prompt texts are loaded from the Markdown files in prompts/ (core/prompt_files.py); each module registers its
+version next to where it loads them, so the hash covers exactly the text that is sent. The version is
   - put into the graph run's metadata (LangSmith), next to the model and the request id,
-  - stored with what the prompts produced: Asset, BookSummary, AskResponse (older saved data has none), and
-  - recorded by the RAGAs evaluation (eval/run_eval.py) with the git commit, so score changes can be tied to
-    prompt changes.
-Text filled in at run time from the user or the books (passages, the question, the brief) is not part of the hash.
+  - stored with what the prompts produced: Asset, BookSummary, AskResponse, DiscussionAnalysis (older saved data
+    has none), and
+  - recorded by the evaluations (eval/run_eval.py, eval/run_agent_eval.py) with the git commit, so score changes
+    can be tied to prompt changes.
+Text filled in at run time from the user or the books (passages, the question, the brief) is not part of the hash,
+nor is the security note added after a discussion with a likely prompt injection (prompts/injection_note.md).
 The chat tools' descriptions (rag/chat_tools.py) are not part of the "qa" version yet.
 """
 

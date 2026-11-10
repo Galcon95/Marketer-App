@@ -211,8 +211,8 @@ class UsageRow(Base):
 
 
 class SourceRow(Base):
-    """An uploaded book (or other file) and its processing state; see schemas.Source. The file itself, its chunks and
-    its cover are still on disk (server/assets/uploads/{project_id}/{id}/)."""
+    """An uploaded book (or other file) and its processing state; see schemas.Source. Its chunks are in the table
+    chunks; the file itself and its cover are in Supabase Storage (bucket "books", core/files.py)."""
 
     __tablename__ = "sources"
     __table_args__ = (

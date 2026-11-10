@@ -4,6 +4,9 @@
  * A saved result of the Discussion Relevance Agent as a card: the recommendation and its reason, what is missing
  * (more_context), the reply the author can edit and copy, the advice on naming the book, the cited passages and,
  * collapsed, the discussion itself and the agent's trace (searches and tool calls).
+ * Security: a "possible prompt injection" badge and notice when the discussion's scan found one, and the output
+ * guard's warnings on the reply (injection phrases, links not from the book). For a comment on the author's Facebook
+ * Page, "Reply on Facebook" posts the reply as the Page (once; the server refuses a reply with a likely injection).
  */
 
 import { useState, type ReactNode } from "react";

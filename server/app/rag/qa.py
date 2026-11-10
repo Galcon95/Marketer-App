@@ -29,6 +29,7 @@ they do not answer the question. The history only helps to understand the questi
 are not a source. Only the passages actually cited are returned as citations (renumbered [1], [2], ...);
 all retrieved passages are returned too, so the user can inspect them. Runs are traced in LangSmith as
 "answer_question" when tracing is on. Storing the turns of a conversation is up to the caller (api/knowledge.py).
+The prompts are Markdown files: prompts/qa_answer.md, qa_tools_note.md, qa_condense.md (and qa_filters.md, filters.py).
 """
 
 import logging

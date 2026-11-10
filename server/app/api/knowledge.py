@@ -83,7 +83,7 @@ def ask(project_id: str, body: AskRequest):
     the recent turns, the k most similar passages are retrieved, and the LLM answers from those passages
     only (plus the book summary as background), citing them as [n]. The model may also call the chat tools
     once (chat_tools.py: list_books, check_platform_fit, draft_social_post). The turn is appended to the
-    conversation (a new one if conversation_id is empty) and saved to disk.
+    conversation (a new one if conversation_id is empty) and saved in the database.
 
     Args:
         project_id: Id of the project (path parameter). 404 if unknown.

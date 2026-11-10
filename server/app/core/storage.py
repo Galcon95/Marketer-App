@@ -17,6 +17,11 @@ from app.core.schemas import SourceKind
 ALLOWED_EXTENSIONS = {".pdf"}  # widen when other formats get an ingestion path (EPUB, DOCX, video, ...)
 MAX_UPLOAD_BYTES = LIMITS.per_user.max_upload_mb * 1024 * 1024  # limits.toml
 CHUNK_BYTES = 1024 * 1024  # write in 1 MB pieces, never the whole file in memory
+# The upload limit is Supabase Storage's file limit (free plan; the "books" bucket has the same limit), so a larger book
+# cannot be stored at all. Said with what to do instead (the client shows the same advice before uploading).
+TOO_LARGE = (f"The file is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB, the largest file the app's storage "
+             "(Supabase) accepts. Large PDFs are mostly images and the app only reads the text: compress the PDF, or "
+             f"split it into parts of under {MAX_UPLOAD_BYTES // (1024 * 1024)} MB and upload each part as its own book.")
 
 # File signatures ("magic bytes") the content must start with, per extension.
 SIGNATURES = {".pdf": b"%PDF-"}
@@ -95,7 +100,7 @@ def save_upload(stream: BinaryIO, filename: str) -> tuple[Path, int, str]:
                     raise UploadError(415, f"The file content is not a valid {ext[1:].upper()}")
                 size += len(chunk)
                 if size > MAX_UPLOAD_BYTES:
-                    raise UploadError(413, f"File is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB")
+                    raise UploadError(413, TOO_LARGE)
                 out.write(chunk)
                 digest.update(chunk)
         if size == 0:

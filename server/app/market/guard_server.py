@@ -1,6 +1,6 @@
 """mcp-guardrails: input validation and prompt-injection checks as an MCP server (Model Context Protocol).
 
-    MCP client (MCP Inspector, Claude Desktop, the app's chatbot later, ...)
+    MCP client (MCP Inspector, Claude Desktop, the app's MCP console, ...)
         │  Streamable HTTP, POST http://127.0.0.1:8000/guardrails/mcp
         ▼
     guard_server (MCPServer, mounted in the FastAPI app by server.py)
@@ -11,7 +11,11 @@
 The tools are thin wrappers around app/core/guard.py, which the API can also call directly. Unlike
 mcp-book-knowledge (external clients only), this server is also meant to be used by the app itself.
 All tools are read-only, deterministic and free. Texts longer than guard.MAX_SCAN_CHARS are refused
-with a ToolError. Local use only, like mcp-book-knowledge: no authentication, localhost hosts and origins only.
+with a ToolError. Like mcp-book-knowledge, every request needs a sign-in (a personal API key or the app's access
+token, core/mcp_auth.py), and only localhost hosts and origins are accepted.
+
+The app's own endpoints call guard.py directly, including the newer checks the server does not offer as tools:
+scan_third_party (Reddit threads, Facebook comments, pasted discussions) and check_output (drafted replies).
 """
 
 from mcp.server.mcpserver import MCPServer

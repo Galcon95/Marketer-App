@@ -18,7 +18,7 @@ The server needs Supabase: the database (`DATABASE_URL`) and Storage (`SUPABASE_
 
 ## Project layout
 
-Imports only go downward: `api` → `campaign` → `rag` → `core`.
+Imports only go downward: `api` → `agents` / `campaign` / `social` / `market` → `rag` → `core` / `db`.
 
 ```
 server/
@@ -38,7 +38,8 @@ server/
 │   │   └── style.py    "how human" levels, AI-cliché check and rewrite (texts in prompts/)
 │   ├── db/             the database (PostgreSQL at Supabase; SQLAlchemy)
 │   │   ├── database.py     connection (DATABASE_URL), sessions, DatabaseError
-│   │   ├── tables.py       tables: projects, sources, summaries, chunks, assets, conversations, usage_log; api_keys
+│   │   ├── tables.py       tables: projects, sources, summaries, chunks, assets, conversations,
+│   │   │                   discussion_analyses, usage_log; api_keys
 │   │   ├── records.py      read and write all records; usage sums and budgets
 │   ├── rag/            Phase 1 Knowledge Hub
 │   │   ├── ingestion.py    PDF → chapters → chunks → vectors
@@ -54,7 +55,8 @@ server/
 │   │   └── guard_server.py mcp-guardrails: input validation and prompt-injection checks (/guardrails/mcp)
 │   ├── agents/         Discussion Relevance Agent (LangGraph), its tools, the Reddit scan
 │   ├── social/         the author's Facebook Page (Graph API)
-│   └── api/            FastAPI routers: health, projects, sources, knowledge, assets, campaigns (+ deps.py)
+│   └── api/            FastAPI routers: health, projects, keys, sources, knowledge, assets, campaigns,
+│                       discussions, facebook, mcp_console (+ deps.py: ownership, input checks, limits)
 ├── prompts/            every prompt as a Markdown file (see prompts/README.md)
 ├── migrations/         Alembic migrations of the database (alembic.ini next to server.py)
 └── assets/books/       sample books for trying the app (not committed)
@@ -72,6 +74,7 @@ All data lives in one Supabase project; the server keeps only configuration (`.e
 | Book summaries | `public.summaries` | deleted with the book |
 | Chunks and their vectors | `public.chunks` | pgvector, exact cosine search via LangChain `PGVectorStore` |
 | Generated assets, chats | `public.assets`, `public.conversations` | nested parts (citations, turns) as JSONB |
+| Discussion analyses | `public.discussion_analyses` | the agent's results with reply, citations, tool trace, injection scan |
 | Model calls and costs | `public.usage_log` | the budgets of `limits.toml` are sums over it |
 | Uploaded PDFs and covers | Storage bucket `books` (private) | `{project}/{source}/book.pdf`, `cover.png`; max 50 MB |
 | Schema version | `private.alembic_version` | `uv run alembic current` |
@@ -109,7 +112,9 @@ npx @modelcontextprotocol/inspector                    # Transport "Streamable H
 claude mcp add --transport http book-knowledge http://127.0.0.1:8000/mcp   # use the books from Claude Code
 ```
 
-Local use only: no authentication; only localhost Host/Origin headers are accepted.
+Every request needs `Authorization: Bearer …`: a personal API key (`mk_…`, made in the app's keys panel) or the
+app's access token (`core/mcp_auth.py`). The tools serve the caller's own library; only localhost Host/Origin
+headers are accepted.
 
 ## MCP server: mcp-guardrails
 
@@ -124,16 +129,30 @@ in `app/core/guard.py` (pure functions, no model calls), so the API can call it 
 
 The injection check is rule-based (override phrases, role changes, prompt leaks, fake role markers, exfiltration
 links, hidden characters): it catches common attacks, not every one. It flags none of the current book chunks.
+The same sign-in as the book server is needed.
+
+The app's endpoints call `guard.py` directly, including two checks that are not MCP tools: `scan_third_party`
+(other people's text from Reddit, Facebook and pasted discussions: flagged, not blocked) and `check_output` (the
+agent's drafted replies: injection phrases that got through, links not from the book; Facebook posting refuses
+a text with a likely injection).
 
 ## Tests
 
 ```sh
-uv run pytest        # from server/; about 3 seconds
+uv run pytest        # from server/; 565 tests, about 15 seconds
 ```
 
-`tests/` holds unit tests of the logic that needs no model or API key: the guardrails (`test_guard.py`), the
-platform check (`test_platforms.py`), citation handling, the prompt format of passages and chapter detection
-(`test_rag_helpers.py`), structured retrieval filters (`test_filters.py`), plus API tests showing that bad requests are rejected before any model call, including
-the rate limit (`test_api_guardrails.py`). The quality of the model's answers is measured separately with RAGAs
-(`../eval/`).
+`tests/` needs no model, no API key and no network: the chat model, the vector search, Tavily and the Facebook Graph
+API are faked, and Storage is an in-memory store. Among them:
+
+- guardrails, the injection scan of third-party text and the output guard (`test_guard*.py`), the platform check,
+  citations, chapter detection, structured retrieval filters, the prompt files and their loader (`test_prompt_files.py`)
+- the Discussion Relevance Agent (graph routing, tool limits, schemas, API), the Reddit scan, the Facebook client and
+  endpoints (`test_discussion_*.py`, `test_api_discussions.py`, `test_*facebook.py`)
+- sign-in on every route, ownership (another user's data answers 404), limits and budgets, API keys and MCP sign-in,
+  uploads (types, duplicates, the 50 MB limit), deleting a book with what belongs only to it, the database layer
+- API tests showing that bad requests are rejected before any model call (`test_api_guardrails.py`)
+
+The quality of the model's answers is measured separately (`../eval/`): RAGAs for "Ask your book" and an agent eval
+for the Discussion Relevance Agent.
 

@@ -17,7 +17,7 @@ Details: [AGENT.md](AGENT.md) (the agent) · [FEATURES.md](../FEATURES.md) (the 
 | **User interface** | ✅ | Next.js app, Market Intelligence → Discussions (Paste / Scan Reddit / My Facebook Page). Phase 4 is clearly marked as planned. |
 | **Tools and libraries** | ✅ | LangGraph, LangChain (`bind_tools`, structured output), LangSmith, OpenRouter, Tavily, pgvector, FastAPI, Supabase. |
 | **Error handling** | ✅ | Tool errors returned to the model, loop limits, retries and timeouts, schema validation, budgets, clear HTTP errors. [AGENT.md §7](AGENT.md#7-error-handling-and-edge-cases) |
-| **Real-world usage** | ✅ | Sign-in, one library per user, per-user budgets and rate limits, data in Supabase, 564 server tests, eval on 12 labelled cases. |
+| **Real-world usage** | ✅ | Sign-in, one library per user, per-user budgets and rate limits, data in Supabase, 565 server tests, eval on 12 labelled cases. |
 | **Documentation: how to use** | ✅ | [README](../README.md) "See it in action", [AGENT.md §2](AGENT.md#2-how-to-use-it) |
 | **Documentation: use cases** | ✅ | [AGENT.md §3](AGENT.md#3-common-use-cases): 7 cases from the eval set |
 | **Documentation: technical decisions** | ✅ | [AGENT.md §6](AGENT.md#6-technical-decisions) |
@@ -101,7 +101,7 @@ again, until it is done. A chain or pipeline has fixed steps instead.
 ### Code organisation
 `server/app/`: `agents/` (graph, tools, scan) · `rag/` (ingestion, retrieval, QA, generation) · `api/` (FastAPI
 routes, one file per area) · `core/` (LLM, guard, limits, auth, prompts, usage) · `db/` (SQLAlchemy tables,
-records) · `social/` (Facebook) · `market/` (MCP servers and client). Alembic migrations, `tests/` (564), `eval/`
+records) · `social/` (Facebook) · `market/` (MCP servers and client). Alembic migrations, `tests/` (565), `eval/`
 as a separate project.
 
 ### Security

@@ -70,6 +70,9 @@ You can also call both MCP servers inside the app, in the **Market Intelligence*
 
 1. **Knowledge Hub**: upload a PDF book (e.g. `Garden-Cities-of-To-Morrow_Ebenezer-Howard.pdf` in the repo root)
    and press **Process**. Wait until it shows `ready`. Uploaded books are stored in Supabase and survive restarts.
+   A book can be at most **50 MB** (the largest file Supabase Storage accepts on the free plan). For a larger PDF,
+   compress it (it is usually the images; the app only reads the text) or split it into parts and upload each part as
+   its own book.
 2. Make the **book summary** and try **Ask your book** (the chat).
 3. **Content Studio**: in **Single asset**, write a blurb, post, newsletter, ... from the book with citations; in
    **Campaign kit**, check the brief and press **Generate campaign (zero-shot)** for personas, posts and a blurb.

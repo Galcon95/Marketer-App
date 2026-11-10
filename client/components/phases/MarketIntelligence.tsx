@@ -2,9 +2,9 @@
 
 /**
  * Phase 3, Market Intelligence: finding where the author's books fit into conversations, in two tabs:
- *   Discussions   the Discussion Relevance Agent: paste a discussion from Reddit, LinkedIn, YouTube or a forum, pick
- *                 a book, and get a recommendation (contribute, more context, skip) with a grounded draft reply
- *                 (DiscussionAgent.tsx)
+ *   Discussions   the Discussion Relevance Agent: paste a discussion from Reddit, LinkedIn, YouTube or a forum (or
+ *                 find one with Scan Reddit, or take a comment from the author's Facebook Page), pick a book, and get
+ *                 a recommendation (contribute, more context, skip) with a grounded draft reply (DiscussionAgent.tsx)
  *   MCP servers   our MCP servers with their live status and the tool console (McpServers.tsx)
  */
 

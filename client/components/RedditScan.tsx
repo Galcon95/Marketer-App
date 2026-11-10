@@ -7,7 +7,8 @@
  *
  * The search (Tavily) gives titles and snippets, and for some threads the post with its top comments ("Full text").
  * It gives no votes, comment counts or dates. For a thread with only a snippet the author opens it on Reddit and
- * copies the discussion into the form.
+ * copies the discussion into the form. A thread whose text looks like a prompt injection gets a warning badge
+ * (InjectionBadge.tsx); it can still be analysed, as quoted data.
  */
 
 import { useState, type SubmitEvent } from "react";

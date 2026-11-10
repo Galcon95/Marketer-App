@@ -114,7 +114,7 @@ class Source(BaseModel):
     project_id: str  # project the source belongs to
     filename: str  # sanitized original file name (see storage.safe_filename)
     kind: SourceKind  # content kind derived from the file extension
-    size_bytes: int  # file size on disk
+    size_bytes: int  # size of the uploaded file
     status: SourceStatus  # current ingestion step
     progress: int = Field(ge=0, le=100)  # progress of the current step in percent (0-100)
     chunk_count: int  # number of chunks produced from this source so far
@@ -339,7 +339,7 @@ class ChatTurn(AskResponse):
 
 
 class Conversation(BaseModel):
-    """A chat with the books ("Ask your book"): its turns, oldest first. Saved in assets/conversations/."""
+    """A chat with the books ("Ask your book"): its turns, oldest first. Saved in the database (table conversations)."""
 
     id: str  # unique id, e.g. "cnv_1a2b3c4d"
     project_id: str
@@ -696,7 +696,7 @@ class ChapterSummary(BaseModel):
 class BookSummary(BaseModel):
     """Summary of a whole book, made by map-reduce over its chapters (see summary.py).
 
-    Saved next to the book (.summary.json) and loaded on startup, so it is created only once; kept
+    Saved in the database (table summaries) and loaded on startup, so it is created only once; kept
     when the book is re-indexed (same content), removed when the book is deleted.
     """
 

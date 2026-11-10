@@ -39,8 +39,15 @@ setting (DiscussionRequest.humanize, 0-100) works as in the generator: style gui
 prompt (style.style_guidance), the draft's temperature (style.temperature_for) and the rewrite step.
 
 The pasted discussion is someone else's text: it reaches the model only inside a <post> block (guard.quote_untrusted)
-under guard.UNTRUSTED_RULE; the passages come as <passage> blocks. Checking the discussion with the guard and saving the
-result is up to the caller (api/discussions.py). Runs are traced in LangSmith as "analyze_discussion" when tracing is on.
+under guard.UNTRUSTED_RULE; the passages come as <passage> blocks. analyze_discussion also scans it for prompt
+injection (guard.scan_third_party): it is flagged, never blocked; at high risk every prompt gets the app's security
+note right after the <post> block (guard.injection_note), and the risk and findings are saved with the analysis. The
+check node runs the output guard on the draft (guard.check_output: injection phrases, links not in the passages).
+Cleaning and length-checking the discussion and saving the result are up to the caller (api/discussions.py). Runs are
+traced in LangSmith as "analyze_discussion" when tracing is on.
+
+The prompts are Markdown files: prompts/discussion_research.md, discussion_assess.md, discussion_draft.md, and the
+tables discussion_reply_rules.md, discussion_situation.md and discussion_role.md (core/prompt_files.py).
 
 The API-facing models (DiscussionRequest, DiscussionAnalysis, ...) are in core/schemas.py. Assessment and DraftReply
 below are what the chat model fills in with structured output; their Field descriptions are part of the prompt.

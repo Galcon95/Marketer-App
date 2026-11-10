@@ -5,8 +5,10 @@
  * YouTube or a forum, and the agent searches the book chosen under "Working on", recommends whether to contribute
  * (contribute, more context, skip) and drafts a reply grounded in the book's passages (POST /discussions).
  * The saved analyses are listed below the form, newest first, for the author to edit, copy and post themselves.
- * With the author's Facebook Page connected (admin only) a third tab lists the comments on the Page: one goes into the
- * form, and the agent answers it as the author ("own Page" mode); the reply can then be posted as the Page.
+ * "Scan Reddit" (RedditScan.tsx) finds threads to analyse. With the author's Facebook Page connected (admin only) a
+ * third tab lists the comments on the Page (FacebookComments.tsx): one goes into the form, and the agent answers it as
+ * the author ("own Page" mode); the reply can then be posted as the Page.
+ * Other people's text is scanned for prompt injection on the server and flagged, not blocked (InjectionBadge.tsx).
  */
 
 import { useState, type SubmitEvent } from "react";

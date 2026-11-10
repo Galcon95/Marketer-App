@@ -1,8 +1,9 @@
-"""In-memory stores of the app, keyed by id (formerly dummy_data.py; imported as `db`).
+"""In-memory working copy of the app's data, keyed by id (imported as `db`).
 
-The module-level dicts (projects, sources, chunks, summaries, assets, conversations) are the working copy
-the API reads from. Sources, chunks, summaries, assets and conversations are persisted on disk by storage.py and loaded into these dicts on
-startup; projects are saved in the database (app/db/records.py, loaded on startup).
+The module-level dicts (projects, sources, chunks, summaries, assets, conversations) are what the API reads from.
+Everything is saved in the database (Supabase PostgreSQL, app/db/records.py) and loaded into these dicts on startup;
+every change is written to the database as well. The book files and covers are in Supabase Storage (core/files.py).
+Discussion analyses and the usage log are read from the database directly (records.py), not kept here.
 """
 
 from datetime import datetime, timezone
@@ -34,7 +35,7 @@ def new_id(prefix: str) -> str:
 
 # Projects by id. A project is a client (shown as "Current client" in the GUI): its books, chats, campaigns and
 # assets. Each signed-in user owns one (accounts.py). The default project holds the data from before sign-in
-# existed (the id "demo-campaign" stays because data in the database and on disk is stored under it); it has no owner
+# existed (the id "demo-campaign" stays because its data in the database and in Storage is stored under it); it has no owner
 # until DEFAULT_CLIENT_OWNER signs in. The saved projects (records.load_projects) replace these on startup.
 projects: dict[str, Project] = {
     DEFAULT_PROJECT_ID: Project(

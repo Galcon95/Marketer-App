@@ -2,7 +2,8 @@
 
 /**
  * Phase 1, Knowledge Hub (RAG over the client's books):
- *   UploadPanel / SourcesCard   upload PDFs, follow ingestion progress, process, re-index, delete
+ *   UploadPanel / SourcesCard   upload PDFs (at most 50 MB, Supabase Storage's file limit), follow ingestion progress,
+ *                               process, re-index, delete
  *   BookShelf / BookPicker      the library with covers; choose one book or all books to work on
  *   SourceChunksDrawer          browse a book's chunks; SummaryDrawer: create and read the book summary
  *   AskBook                     "Ask your book": chat with history, citations and tool calls
@@ -42,6 +43,18 @@ function formatBytes(n: number) {
 }
 
 /**
+ * Why a file is too large and what to do: the limit is Supabase Storage's file limit (free plan), which the server
+ * enforces too (limits.toml max_upload_mb), so a larger book cannot be stored at all.
+ * @param size The file's size in bytes.
+ */
+function tooLarge(size: number): string {
+  return `The file is ${formatBytes(size)}, but a book can be at most ${formatBytes(MAX_UPLOAD_BYTES)}: that is the `
+    + "largest file the app's storage (Supabase) accepts. Large PDFs are mostly images (scans, illustrations), and the "
+    + "app only reads the text: compress the PDF (e.g. \"Reduce file size\" in a PDF tool), or split it into parts "
+    + `of under ${formatBytes(MAX_UPLOAD_BYTES)} and upload each part as its own book.`;
+}
+
+/**
  * Client-side check before sending; the server validates again.
  * Checks extension (UPLOAD_EXTENSIONS), maximum size and that the file is not empty.
  * @param file File picked by the user.
@@ -50,7 +63,7 @@ function formatBytes(n: number) {
 function validateFile(file: File): string | null {
   const ext = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
   if (!UPLOAD_EXTENSIONS.includes(ext)) return `Unsupported file type. Allowed: ${UPLOAD_EXTENSIONS.join(", ")}`;
-  if (file.size > MAX_UPLOAD_BYTES) return `File is larger than ${formatBytes(MAX_UPLOAD_BYTES)}`;
+  if (file.size > MAX_UPLOAD_BYTES) return tooLarge(file.size);
   if (file.size === 0) return "File is empty";
   return null;
 }
@@ -119,7 +132,7 @@ function UploadPanel({ sources, sourcesLoading, onChange }: { sources: Source[];
       source.status === "ready" ? `${source.chunk_count} chunks` : source.status === "failed" ? "processing failed" : "processing…"];
   } else {
     title = "Upload a book";
-    meta = [`${UPLOAD_EXTENSIONS.join(" · ").toUpperCase()} · max ${formatBytes(MAX_UPLOAD_BYTES)}`];
+    meta = [`${UPLOAD_EXTENSIONS.join(" · ").toUpperCase()} · max ${formatBytes(MAX_UPLOAD_BYTES)} per book (storage limit)`];
   }
 
   return (

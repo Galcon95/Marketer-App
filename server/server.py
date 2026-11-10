@@ -1,15 +1,20 @@
 """Marketer App API: entry point. Run with `uv run fastapi dev server.py` (from server/).
 
-Creates the FastAPI app, plugs in the routers of app/api/ and, on startup, restores the saved data. The code
-lives in the app package (see README.md, "Project layout"):
+Creates the FastAPI app, plugs in the routers of app/api/ and, on startup, loads the saved data from the database.
+The code lives in the app package (see README.md, "Project layout"):
 
-    app/core      configuration, chat model, schemas, in-memory state, disk storage, usage log, writing style
+    app/core      configuration, chat model, schemas, in-memory state, sign-in and limits, guardrails, usage log,
+                  writing style, prompt loading and versions
+    app/db        the database (Supabase PostgreSQL with pgvector; SQLAlchemy tables and records)
     app/rag       Phase 1 Knowledge Hub: ingestion, vector store, retrieval, summaries, Q&A, generation
-    app/campaign  Phase 2 Campaign Builder: zero-shot campaign kit
+    app/campaign  Phase 2 Content Studio: zero-shot campaign kit
+    app/agents    Phase 3 Market Intelligence: the Discussion Relevance Agent (LangGraph), its tools, the Reddit scan
+    app/social    the author's Facebook Page (Graph API)
     app/market    Phase 3 Market Intelligence: MCP servers (mcp-book-knowledge at /mcp, mcp-guardrails at /guardrails/mcp)
                   and the app's MCP client for the console (client.py)
-    app/agents    Phase 4 Agent Workspace (still empty)
     app/api       FastAPI routers, one per area
+
+The prompts are Markdown files in prompts/ (core/prompt_files.py), the limits are in limits.toml.
 """
 
 import logging

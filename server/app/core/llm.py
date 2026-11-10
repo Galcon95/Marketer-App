@@ -1,4 +1,5 @@
-"""The chat model shared by all LangGraph graphs (generation, Q&A, summaries, campaign kit).
+"""The chat model shared by all LangGraph graphs (generation, Q&A, summaries, campaign kit, the Discussion Relevance
+Agent and the Reddit scan).
 
 ChatOpenAI talks to OpenRouter or OpenAI (see config.py); usage.handler logs every call with its
 tokens and costs. GenerationError is the common error of all model-backed features, carrying the

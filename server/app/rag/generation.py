@@ -19,7 +19,9 @@ temperature slightly, so higher values read less like typical AI marketing copy.
 
 The book summaries (summary.py) of the excerpts' sources are added as background. Only the excerpts
 the model actually cites become the asset's citations, renumbered [1], [2], ... in order (the GUI
-copies the text without the markers). Runs are traced in LangSmith when LANGSMITH_TRACING=true and
+copies the text without the markers). The prompts are Markdown files: prompts/generation_grounded.md,
+generation_zero_shot.md, generation_plan_query.md, and the tables generation_asset_types.md and
+generation_format_examples.md (core/prompt_files.py). Runs are traced in LangSmith when LANGSMITH_TRACING=true and
 LANGSMITH_API_KEY are set (LangChain/LangGraph pick these up automatically).
 Retrieval, prompt context and citations live in retrieval.py; the model and its configuration in
 core/llm.py and core/config.py.

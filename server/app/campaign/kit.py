@@ -14,7 +14,8 @@
 posts and blurb run in parallel, both after personas, so the whole kit targets the same readers.
 Zero-shot: the model sees only the brief, never excerpts from the book, so nothing is cited. The
 Knowledge Hub's grounded generator is the counterpart that writes from the book's text. Runs are
-traced in LangSmith as "generate_campaign" when tracing is on.
+traced in LangSmith as "generate_campaign" when tracing is on. The prompts are Markdown files:
+prompts/campaign_personas.md, campaign_audience.md, campaign_posts.md and campaign_blurb.md.
 """
 
 import logging
