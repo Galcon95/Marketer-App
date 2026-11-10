@@ -5,16 +5,19 @@
  * YouTube or a forum, and the agent searches the book chosen under "Working on", recommends whether to contribute
  * (contribute, more context, skip) and drafts a reply grounded in the book's passages (POST /discussions).
  * The saved analyses are listed below the form, newest first, for the author to edit, copy and post themselves.
+ * With the author's Facebook Page connected (admin only) a third tab lists the comments on the Page: one goes into the
+ * form, and the agent answers it as the author ("own Page" mode); the reply can then be posted as the Page.
  */
 
 import { useState, type SubmitEvent } from "react";
-import { Bot, ChevronDown, ClipboardPaste, MessagesSquare, Radar } from "lucide-react";
+import { Bot, ChevronDown, ClipboardPaste, MessageCircle, MessagesSquare, Radar, X } from "lucide-react";
 import {
   api, bookTitle, DISCUSSION_PLATFORMS, errorMessage, humanizeLabel, platformFromUrl, TONES, type DiscussionPlatform,
-  type ScannedThread, type Source, type Tone,
+  type FacebookComment, type FacebookThread, type ScannedThread, type Source, type Tone,
 } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import DiscussionCard from "./DiscussionCard";
+import FacebookComments, { commentAsDiscussion } from "./FacebookComments";
 import RedditScan, { threadAsDiscussion } from "./RedditScan";
 import { Button, Card, ErrorNote, Field, Placeholder, RangeField, SectionHeading } from "./ui";
 
@@ -38,8 +41,12 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
   const [platform, setPlatform] = useState<DiscussionPlatform>("reddit");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<"scan" | "paste">("scan");
+  const [mode, setMode] = useState<"scan" | "facebook" | "paste">("scan");
   const [fromScan, setFromScan] = useState<ScannedThread | null>(null); // the scanned thread loaded into the form
+  const [fromPage, setFromPage] = useState<FacebookComment | null>(null); // the Page comment loaded into the form
+  // The author's Facebook Page (403 for anyone but the admin: no Facebook tab).
+  const facebook = useApi("facebook-status", api.facebookStatus);
+  const pageConnected = facebook.data?.connected === true;
 
   const book = books.find((b) => b.id === bookId) ?? (books.length === 1 ? books[0] : undefined);
   const titles = new Map(books.map((b) => [b.id, bookTitle(b.filename)]));
@@ -59,6 +66,17 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
     setUrl(t.url);
     setPlatform("reddit");
     setFromScan(t);
+    setFromPage(null);
+    setMode("paste");
+  }
+
+  /** A comment picked on the Facebook Page: the post, the comment and its replies go into the form. */
+  function analyseComment(thread: FacebookThread, comment: FacebookComment) {
+    setDiscussion(commentAsDiscussion(thread, comment));
+    setUrl(comment.permalink_url ?? thread.post.permalink_url ?? "");
+    setPlatform("facebook");
+    setFromPage(comment);
+    setFromScan(null);
     setMode("paste");
   }
 
@@ -73,7 +91,10 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
     setPending(true);
     setError(null);
     try {
-      await api.analyzeDiscussion({ source_id: book.id, discussion: discussion.trim(), url: url.trim(), platform, angle, humanize, tone });
+      await api.analyzeDiscussion({
+        source_id: book.id, discussion: discussion.trim(), url: url.trim(), platform, angle, humanize, tone,
+        ...(fromPage ? { facebook_comment_id: fromPage.id } : {}),
+      });
       onChange();
     } catch (err) {
       setError(errorMessage(err));
@@ -89,14 +110,31 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
         <div className="bc-row" role="group" aria-label="How to find a discussion" style={{ gap: 8, marginBottom: 16 }}>
           <Button size="sm" icon={Radar} variant={mode === "scan" ? "secondary" : "ghost"} aria-pressed={mode === "scan"}
             onClick={() => setMode("scan")}>Scan Reddit</Button>
+          {pageConnected && (
+            <Button size="sm" icon={MessageCircle} variant={mode === "facebook" ? "secondary" : "ghost"}
+              aria-pressed={mode === "facebook"} onClick={() => setMode("facebook")}>My Facebook Page</Button>
+          )}
           <Button size="sm" icon={ClipboardPaste} variant={mode === "paste" ? "secondary" : "ghost"} aria-pressed={mode === "paste"}
             onClick={() => setMode("paste")}>Paste a discussion</Button>
         </div>
         <div hidden={mode !== "scan"}>
           <RedditScan bookId={book?.id} bookTitle={book ? bookTitle(book.filename) : undefined} onAnalyse={analyseThread} />
         </div>
+        {mode === "facebook" && pageConnected && (
+          <FacebookComments pageName={facebook.data?.page?.name ?? "your Page"} onAnalyse={analyseComment} />
+        )}
         {mode === "paste" && (
         <form className="bc-stack" onSubmit={submit}>
+          {fromPage && (
+            <span className="bc-hint" style={{ color: "var(--accent-text)", display: "flex", gap: 8, alignItems: "baseline" }}>
+              <span style={{ flex: 1 }}>
+                A comment on your Facebook Page by <strong>{fromPage.author ?? "a reader"}</strong>. The agent answers
+                it as you, the author; after checking the reply you can post it as your Page.
+              </span>
+              <Button size="sm" variant="ghost" icon={X} onClick={() => setFromPage(null)}
+                title="Analyse the text as an ordinary discussion instead">Not a Page comment</Button>
+            </span>
+          )}
           {fromScan && (
             <span className="bc-hint" style={{ color: "var(--accent-text)" }}>
               Loaded from the scan: <strong>{fromScan.title}</strong>.{" "}

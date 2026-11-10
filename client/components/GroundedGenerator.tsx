@@ -2,7 +2,7 @@
 
 /**
  * The grounded asset generator (Content Studio, "Single asset"): writes a blurb, post, reply, video script,
- * newsletter, ad copy, lead magnet or persona from the books, with citations (POST /generate), and lists the
+ * newsletter, ad copy, lead magnet, persona or question for the readers of the author's Facebook Page from the books, with citations (POST /generate), and lists the
  * generated assets of the selected type below the form.
  */
 
@@ -27,6 +27,7 @@ const BRIEF_EXAMPLES: Record<AssetType, string> = {
   ad_copy: "e.g. Ads for people frustrated with expensive city rents",
   lead_magnet: "e.g. A free guide with 5 ideas from the book for better neighbourhoods",
   persona: "e.g. The ideal reader of this book among today's professionals",
+  reader_question: "e.g. Who is accountable when an AI makes a decision for a city? Ask readers what they think",
 };
 
 /**
@@ -45,11 +46,14 @@ export default function GroundedGenerator({ refresh, bookId, onChange }: {
   refresh: number; bookId: string | null; onChange: () => void;
 }) {
   const assets = useApi(`assets:${refresh}`, api.listAssets);
+  // The author's Facebook Page, for the Publish button on Facebook posts (403 for anyone but the admin: no button).
+  const facebook = useApi("facebook-status", api.facebookStatus);
   const [assetType, setAssetType] = useState<AssetType>("blurb"); // decides which fields are shown
   const [allTypes, setAllTypes] = useState(false); // list assets of every type, not only the selected one
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isReply = assetType === "social_reply";
+  const isReaderQuestion = assetType === "reader_question"; // always for Facebook: no platform, no length
 
   /** Form submit: request a grounded asset with the chosen type, options and brief (or post + angle). */
   async function submit(e: SubmitEvent<HTMLFormElement>) {
@@ -67,7 +71,8 @@ export default function GroundedGenerator({ refresh, bookId, onChange }: {
         audience: get("audience"),
         humanize: Number(get("humanize") || 60),
         ...(bookId ? { source_ids: [bookId] } : {}),
-        ...(usesPlatform(assetType) ? { platform: get("platform") as Platform } : { length: get("length") as Length }),
+        ...(usesPlatform(assetType) ? { platform: get("platform") as Platform }
+          : isReaderQuestion ? {} : { length: get("length") as Length }),
         ...(isReply ? { reply_to: get("reply_to") } : {}),
       });
       onChange();
@@ -104,7 +109,10 @@ export default function GroundedGenerator({ refresh, bookId, onChange }: {
             <div style={{ flex: 1, minWidth: 140 }}>
               {usesPlatform(assetType)
                 ? <Field name="platform" as="select" label="Platform" options={PLATFORMS} />
-                : <Field name="length" as="select" label="Length" options={LENGTHS} defaultValue="standard" />}
+                : isReaderQuestion
+                  ? <div className="bc-field"><span className="bc-label">Platform</span>
+                      <span className="bc-hint" style={{ margin: 0 }}>Your Facebook Page: 40-100 words, ends with the question.</span></div>
+                  : <Field name="length" as="select" label="Length" options={LENGTHS} defaultValue="standard" />}
             </div>
             <div style={{ flex: 1, minWidth: 140 }}>
               <Field name="tone" as="select" label="Tone" options={TONES} />
@@ -129,7 +137,7 @@ export default function GroundedGenerator({ refresh, bookId, onChange }: {
       {assets.error ? (
         <ErrorNote>{assets.error}</ErrorNote>
       ) : shown.length ? (
-        shown.map((a) => <AssetCard key={a.id} asset={a} onChange={onChange} />)
+        shown.map((a) => <AssetCard key={a.id} asset={a} onChange={onChange} facebook={facebook.data} />)
       ) : (
         <Placeholder icon={Sparkles}>
           {assets.loading ? "Loading…"

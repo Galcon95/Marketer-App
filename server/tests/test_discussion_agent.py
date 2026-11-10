@@ -342,3 +342,19 @@ def test_a_failing_model_call_becomes_a_502(model, monkeypatch):
     with pytest.raises(GenerationError) as error:
         agent.analyze_discussion(PROJECT, DiscussionRequest(source_id=BOOK, discussion=DISCUSSION))
     assert error.value.status_code == 502 and "provider down" in str(error.value)
+
+
+# ---------- "own Page" mode (a reader's comment on the author's Facebook Page) ----------
+@pytest.mark.parametrize("own_page", [False, True])
+def test_own_page_mode_changes_the_situation_and_the_role(model, outputs, own_page):
+    queued, calls = outputs
+    model(*FULL_RESEARCH)
+    _contribute_with("In chapter 3 I argue that people decide [1].", queued)
+    _run(own_page=own_page, platform="facebook")
+    assess, draft = calls[0][1], calls[1][1]
+    mode = "own_page" if own_page else "discussion"
+    assert assess["situation"] == agent.SITUATION[mode] and draft["role"] == agent.ROLE[mode]
+    if own_page:
+        assert "OWN Facebook Page" in assess["situation"] and "first person" in draft["role"]
+    else:
+        assert assess["situation"] == "" and "Do not name the book" in draft["role"]

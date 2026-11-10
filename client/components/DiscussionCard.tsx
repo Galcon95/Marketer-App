@@ -8,7 +8,7 @@
 
 import { useState, type ReactNode } from "react";
 import {
-  AlertTriangle, BookMarked, Check, CircleSlash, Copy, ExternalLink, MessageSquarePlus, Pencil,
+  AlertTriangle, BookMarked, Check, CircleSlash, Copy, ExternalLink, MessageCircle, MessageSquarePlus, Pencil, Send,
   ThumbsUp, Trash2, UserCheck, X,
 } from "lucide-react";
 import {
@@ -37,7 +37,8 @@ function Boxed({ label, children }: { label: string; children: ReactNode }) {
 
 /**
  * One analysis with its actions: Copy (the reply without citation markers), Edit (save the author's version),
- * Open discussion (the pasted link, in a new tab) and Delete.
+ * Open discussion (the pasted link, in a new tab) and Delete. For a comment on the author's Facebook Page also
+ * "Reply as Page" (once; then a link to the posted reply).
  * @param analysis The saved analysis.
  * @param book Readable title of its book, shown when the list is not limited to one book.
  * @param onChange Called after the reply was saved or the analysis deleted, to reload the list.
@@ -48,6 +49,7 @@ export default function DiscussionCard({ analysis: a, book, onChange }: {
   const [draft, setDraft] = useState<string | null>(null); // reply being edited; null = not editing
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [replying, setReplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const rec = RECOMMENDATIONS[a.recommendation];
@@ -92,6 +94,21 @@ export default function DiscussionCard({ analysis: a, book, onChange }: {
     }
   }
 
+  /** After a confirmation showing the exact text, post the reply as the Page under the comment. */
+  async function replyAsPage() {
+    if (!window.confirm(`Post this reply as your Facebook Page now? Everyone can see it.\n\n${publishable}`)) return;
+    setReplying(true);
+    setError(null);
+    try {
+      await api.replyOnFacebook(a.id);
+      onChange();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setReplying(false);
+    }
+  }
+
   /** Delete the analysis after confirmation and reload the list. */
   async function remove() {
     if (!window.confirm("Delete this discussion analysis?")) return;
@@ -108,7 +125,8 @@ export default function DiscussionCard({ analysis: a, book, onChange }: {
       <div className="bc-out-h" style={{ flexWrap: "wrap" }}>
         <strong>{book ?? "Discussion analysis"}</strong>
         <Badge tone={rec.tone} icon={rec.icon}>{rec.label}</Badge>
-        {platform && <Badge>{platform.label}</Badge>}
+        {a.facebook_comment_id ? <Badge tone="accent" icon={MessageCircle}>Your Facebook Page</Badge> : platform && <Badge>{platform.label}</Badge>}
+        {a.replied_url && <Badge tone="success" icon={Send}>replied</Badge>}
         {a.tone && a.tone !== "neutral" && <Badge>{TONES.find((t) => t.value === a.tone)?.label ?? a.tone}</Badge>}
         {a.edited && <Badge tone="warning" icon={Pencil}>edited</Badge>}
         {hasReply && (
@@ -150,11 +168,22 @@ export default function DiscussionCard({ analysis: a, book, onChange }: {
                   title="Copy the reply without the [n] citation markers, ready to paste">
                   {copied ? "Copied" : "Copy for posting"}
                 </Button>
+                {a.facebook_comment_id && !a.replied_url && (
+                  <Button size="sm" icon={Send} loading={replying} onClick={replyAsPage} disabled={overLimit}
+                    title="Post the reply (without citation markers) under the comment, as your Page">Reply as Page</Button>
+                )}
                 {openLink}
                 <Button variant="ghost" size="sm" icon={Pencil} onClick={() => setDraft(a.reply)}>Edit</Button>
               </>
             )}
           </div>
+          {a.replied_url && draft === null && (
+            <span className="bc-hint">
+              Posted as your Page{a.replied_at ? ` on ${new Date(a.replied_at).toLocaleString()}` : ""}:{" "}
+              <a href={a.replied_url} target="_blank" rel="noopener noreferrer">open the reply <ExternalLink size={12} aria-hidden /></a>
+              {" "}Later edits here do not change it on Facebook.
+            </span>
+          )}
           {draft === null ? (
             <TextWithMarkers text={a.reply} />
           ) : (

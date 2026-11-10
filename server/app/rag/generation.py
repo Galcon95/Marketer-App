@@ -79,6 +79,14 @@ ASSET_INSTRUCTIONS: dict[AssetType, str] = {
     "ad_copy": "three short ad variants. Each has a headline (max 8 words) and a body of {size} words.",
     "lead_magnet": "a lead magnet outline: a compelling title, a one-sentence promise, "
                    "and {size} bullet points of what the reader will get.",
+    "reader_question": "a post for the book's own Facebook Page that asks its readers ONE open question drawn from "
+                       "the book: start with 2-4 short sentences that present an idea, claim or scene from the "
+                       "excerpts (cited), then ask one clear question people can answer from their own view or "
+                       "experience, without having read the book. 40-100 words, conversational. Write as the "
+                       "book's author in the first person, talking to their readers (e.g. \"In my book I argue "
+                       "...\", \"While writing chapter 3 I kept asking myself ...\"); never refer to the book in the "
+                       "third person (not \"the book discusses\", \"the text states\", \"the author argues\"). End "
+                       "with the question. No sales pitch, no \"link in bio\", at most one hashtag.",
     "persona": "an audience persona for this book of {size} words: name and short description, demographics, "
                "goals, pain points, where to reach them, and why this book appeals to them.",
 }
@@ -233,7 +241,8 @@ def create_asset(project_id: str, req: GenerateRequest) -> Asset:
         tone=req.tone,
         length=req.length,
         audience=req.audience,
-        platform=req.platform if req.asset_type in ("social_post", "social_reply", "video_script") else None,
+        platform=("facebook" if req.asset_type == "reader_question"
+                  else req.platform if req.asset_type in ("social_post", "social_reply", "video_script") else None),
         source_ids=req.source_ids or [],
         reply_to=req.reply_to,
         search_query=result.get("query", ""),
@@ -298,6 +307,8 @@ def build_instructions(req: GenerateRequest) -> str:
         text = template.format(platform=PLATFORM_REPLY[req.platform])
     elif req.asset_type == "video_script":
         text = template.format(platform=PLATFORM_VIDEO[req.platform])
+    elif req.asset_type == "reader_question":
+        text = template
     else:
         text = template.format(size=SIZES[req.asset_type][LENGTH_INDEX[req.length]])
     if TONES[req.tone]:

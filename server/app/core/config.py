@@ -20,6 +20,12 @@ Read once on import from environment variables (and server/.env, if present), fi
                           see tracing.py). Default off; keep it off for customers and in production
     TAVILY_API_KEY      → optional, key of the Tavily search API ("tvly-..."): the Reddit scan finds threads with it
                           (agents/discussion_scan.py); without it the scan answers 503, everything else works
+    FACEBOOK_PAGE_ID, FACEBOOK_PAGE_TOKEN → optional, the author's own Facebook Page and its Page access token
+                          (Graph API, see social/facebook.py): read its posts and comments, publish a post, reply to a
+                          comment; without them the Facebook features answer 503
+    FACEBOOK_APP_SECRET → optional, secret of the Meta app the token belongs to: every Graph request then carries an
+                          appsecret_proof (Meta's protection against a stolen token being used elsewhere)
+    FACEBOOK_GRAPH_VERSION → optional, the Graph API version (default "v27.0")
     LANGSMITH_PROJECT   → optional, the LangSmith project the traces go to (default "marketer-app")
     SUPABASE_URL        → URL of the Supabase project whose users may sign in (auth.py checks their access tokens
                           with its public signing keys); without it every API request except /health gets 503
@@ -61,6 +67,11 @@ MIN_RELEVANCE = float(os.getenv("MIN_RELEVANCE", "0.3"))
 RETRIEVAL_MODE = "hybrid" if os.getenv("RETRIEVAL_MODE", "dense").strip().lower() == "hybrid" else "dense"
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
+
+FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID", "").strip()
+FACEBOOK_PAGE_TOKEN = os.getenv("FACEBOOK_PAGE_TOKEN", "").strip()
+FACEBOOK_APP_SECRET = os.getenv("FACEBOOK_APP_SECRET", "").strip()
+FACEBOOK_GRAPH_VERSION = os.getenv("FACEBOOK_GRAPH_VERSION", "v27.0").strip() or "v27.0"
 
 LOG_FORMAT = "text" if os.getenv("LOG_FORMAT", "json").strip().lower() == "text" else "json"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()

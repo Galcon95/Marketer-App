@@ -2,13 +2,13 @@
 
 A tool for book marketing. A Next.js frontend (`client/`) talks to a FastAPI backend (`server/`). The AI parts use LangChain, LangGraph and LangSmith, with models reached through OpenRouter.
 
-Status as of 2026-11-10: commit `7800d0c` plus the Facebook Page work in progress (not committed yet).
+Status as of 2026-11-10 (Facebook Page included).
 
 | Phase | Name | Status |
 |---|---|---|
 | 1 | Knowledge Hub (RAG) | ✅ Built |
 | 2 | Content Studio (grounded single assets + zero-shot campaign kits) | ✅ Built |
-| 3 | Market Intelligence: Discussion Relevance Agent, Reddit scan, 2 MCP servers + tool console | ✅ Built; Facebook Page 🟡 in progress |
+| 3 | Market Intelligence: Discussion Relevance Agent, Reddit scan, 2 MCP servers + tool console | ✅ Built, incl. the author's own Facebook Page |
 | 4 | Agent Workspace (multi-agent campaign: Strategist → Copywriter → Auditor) | ⬜ Placeholder UI only |
 | – | Sign-in, one library per user, limits and budgets, all data in Supabase | ✅ Built |
 
@@ -87,7 +87,7 @@ Status as of 2026-11-10: commit `7800d0c` plus the Facebook Page work in progres
 ### Asset library
 - Every generated asset is saved. You can edit it, delete it, or copy it without the citation markers.
 - **Verify**: checks each sentence of an asset against the books by similarity and marks it as verified or not found.
-- 🟡 *In progress:* **Publish on Facebook**: a generated post can be published on the author's Facebook Page with one
+- **Publish on Facebook**: a generated post can be published on the author's Facebook Page with one
   click (admin only, once per asset; the post's id, link and time are saved with the asset). See Phase 3.
 
 ---
@@ -199,7 +199,7 @@ search (Tavily, one per subreddit, at most 5) ─► keep threads, clean page te
 - Fixed steps in code, so a pipeline, not an agent: the agent's decision comes later, per thread. Thread text is
   third-party data (cleaned, quoted). Nothing is saved. `POST /projects/{id}/discussions/scan`; `TAVILY_API_KEY`.
 
-### 🟡 Facebook Page (in progress, not committed yet)
+### Facebook Page
 
 The author's own Facebook Page through Meta's Graph API (`server/app/social/facebook.py`, plain `httpx`), admin
 only, because the Page in `server/.env` belongs to the app's administrator:
@@ -345,7 +345,7 @@ Three layers, all in code and on every request (never left to the model):
 - HTML report with history of all agent runs, plus JSON and CSV.
 
 ### Tests
-- Backend: about 320 pytest tests in `server/tests/`, among them: relevance floor and not-covered answer, chunk headers, BM25 and hybrid fusion, temperatures per task, format examples and section check, guardrails, timeouts and retries of model calls, request ids and log format, prompt versions, quoting of untrusted text, structured-output schemas and retries, platform check, citations, chapter detection, structured retrieval filters, uploads (wrong types, duplicates), deleting a book with what belongs only to it, sign-in on every route, ownership (another user's data → 404), limits and budgets, API keys and MCP sign-in, the database layer, the Discussion agent (graph routing, tool limits, schemas, API), the Reddit scan (Tavily and model faked) and the Facebook client and endpoints (Graph API faked). Run `uv run pytest` in `server/`.
+- Backend: 537 pytest tests in `server/tests/`, among them: relevance floor and not-covered answer, chunk headers, BM25 and hybrid fusion, temperatures per task, format examples and section check, guardrails, timeouts and retries of model calls, request ids and log format, prompt versions, quoting of untrusted text, structured-output schemas and retries, platform check, citations, chapter detection, structured retrieval filters, uploads (wrong types, duplicates), deleting a book with what belongs only to it, sign-in on every route, ownership (another user's data → 404), limits and budgets, API keys and MCP sign-in, the database layer, the Discussion agent (graph routing, tool limits, schemas, API), the Reddit scan (Tavily and model faked) and the Facebook client and endpoints (Graph API faked). Run `uv run pytest` in `server/`.
 - Frontend: 21 Vitest tests in `client/tests/` (helpers in `lib/api.ts` and the API client's error handling with a stubbed `fetch`). Run `npm test` in `client/`.
 - No model calls, no API key needed; answer quality is measured separately with RAGAs (`eval/`).
 

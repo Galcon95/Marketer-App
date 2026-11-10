@@ -20,11 +20,11 @@ export const PROCESSING_STATUSES: SourceStatus[] = ["queued", "transcribing", "c
 
 /** Mirrors server/app/core/storage.py. The server enforces these too; checking here gives instant feedback. */
 export const UPLOAD_EXTENSIONS = [".pdf"];
-export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // server/limits.toml max_upload_mb (Supabase Storage free plan)
 /** Kinds of marketing content the generator can produce. */
 export type AssetType =
   | "blurb" | "social_post" | "social_reply" | "video_script" | "youtube_video"
-  | "newsletter" | "ad_copy" | "lead_magnet" | "persona";
+  | "newsletter" | "ad_copy" | "lead_magnet" | "persona" | "reader_question";
 /** Writing style options for generated assets (mirror server/app/core/schemas.py). */
 export type Tone = "neutral" | "inspiring" | "friendly" | "professional" | "punchy" | "literary";
 export type Length = "short" | "standard" | "long"; // not used for social posts and replies (the platform decides)
@@ -120,7 +120,29 @@ export interface Asset {
   angle: string; // campaign posts: hook, teaser, question, behind the scenes or call to action
   model?: string | null; // chat model that wrote it; missing for older assets
   prompt_version?: string | null; // prompts that wrote it, e.g. "generation@d229d08e"; missing for older assets
+  published_id?: string; // id of the post on the author's Facebook Page; "" = not published
+  published_url?: string; // link to that post
+  published_at?: string | null; // when it was published (ISO 8601, UTC)
 }
+/** The author's own Facebook Page (server/.env FACEBOOK_PAGE_*). */
+export interface FacebookPage { id: string; name: string; followers: number | null; link: string | null }
+/** A post on the author's Facebook Page. */
+export interface FacebookPost {
+  id: string; message: string; created_time: string; permalink_url: string | null; picture: string | null;
+  comment_count: number;
+}
+/** A comment on a Page post (parent_id set = a reply to a comment). Someone else's text, except from_page ones. */
+export interface FacebookComment {
+  id: string; post_id: string; message: string; created_time: string;
+  author: string | null; // null when Facebook does not return the name
+  from_page: boolean; // written by the Page (your own replies)
+  parent_id: string | null; reply_count: number; permalink_url: string | null;
+  answered: boolean; // the Page has replied to it
+}
+/** A post with its comments, newest first (GET /facebook/comments). */
+export interface FacebookThread { post: FacebookPost; comments: FacebookComment[] }
+/** Response of GET /facebook/status (admin only): is the Page connected; `error` says why not when it is set up. */
+export interface FacebookStatus { connected: boolean; page: FacebookPage | null; error: string }
 /** Body of POST /generate. `k` = number of chunks to retrieve as context (server default 5). */
 /**
  * Body of POST /generate. For "social_reply", reply_to (the post) is required and brief is an optional
@@ -202,6 +224,7 @@ export interface DiscussionRequest {
   angle?: string; // optional: what the author would like to bring in
   humanize?: number; // how human the reply should sound, 0-100 (server default 80); AI clichés are rewritten from 60
   tone?: Tone; // the reply's tone (default neutral)
+  facebook_comment_id?: string; // a comment on the author's own Facebook Page: answered as the author ("own Page")
 }
 /** How far back a Reddit scan looks. */
 export type ScanTime = "day" | "week" | "month" | "year";
@@ -260,6 +283,10 @@ export interface DiscussionAnalysis {
   platform_issues: string[]; // problems of the draft for the platform (length, AI clichés left after the rewrite)
   humanize: number; // the "how human" setting the reply was written with
   tone: Tone;
+  facebook_comment_id?: string; // the comment on the author's Facebook Page it answers; "" = a discussion elsewhere
+  replied_id?: string; // the reply posted as the Page from the app; "" = not posted
+  replied_url?: string;
+  replied_at?: string | null;
   model: string | null;
   prompt_version: string | null;
   tokens: number;
@@ -381,6 +408,7 @@ export const ASSET_TYPES: { value: AssetType; label: string }[] = [
   { value: "ad_copy", label: "Ad copy" },
   { value: "lead_magnet", label: "Lead magnet" },
   { value: "persona", label: "Audience persona" },
+  { value: "reader_question", label: "Question for my readers (Facebook Page)" },
 ];
 /** Planned formats, shown disabled after ASSET_TYPES ("coming soon"); the server cannot generate them yet. */
 export const PLANNED_ASSET_TYPES: { value: string; label: string; disabled: true }[] = [
@@ -476,6 +504,11 @@ export function humanizeLabel(value: number) {
   if (value < 50) return "Balanced";
   if (value < 75) return "Natural, human";
   return "Very human, casual";
+}
+
+/** True for assets that can be published on the author's Facebook Page: reader questions, Facebook posts. */
+export function isFacebookPost(asset: Pick<Asset, "asset_type" | "platform">) {
+  return asset.platform === "facebook" && (asset.asset_type === "reader_question" || asset.asset_type === "social_post");
 }
 
 /** Display label of an asset type, e.g. "social_post" → "Social post" (the type itself if unknown). */
@@ -712,6 +745,11 @@ export const api = {
   /** PATCH /assets/{assetId}: replace an asset's text with the user's edited version. */
   updateAsset: (assetId: string, text: string) =>
     request<Asset>(`/assets/${assetId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }),
+  /** GET /facebook/status (admin only): whether the author's Facebook Page is connected, with its name. */
+  facebookStatus: () => request<FacebookStatus>("/facebook/status"),
+  /** POST /assets/{assetId}/publish/facebook (admin only): publish the asset on the Facebook Page, once. */
+  publishToFacebook: (assetId: string) =>
+    request<Asset>(`/assets/${assetId}/publish/facebook`, { method: "POST" }),
   /** DELETE /assets/{assetId}: delete a generated asset. */
   deleteAsset: (assetId: string) => request<void>(`/assets/${assetId}`, { method: "DELETE" }),
 
@@ -746,6 +784,11 @@ export const api = {
   /** PATCH /discussions/{id}: save the author's edited reply (the agent's suggestion is kept). */
   updateDiscussion: (discussionId: string, reply: string) =>
     request<DiscussionAnalysis>(`/discussions/${discussionId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reply }) }),
+  /** GET /facebook/comments (admin only): the latest Page posts that have comments, with them. */
+  facebookComments: (posts = 10) => request<FacebookThread[]>(`/facebook/comments?posts=${posts}`),
+  /** POST /discussions/{id}/reply/facebook (admin only): post the analysis's reply as the Page, once. */
+  replyOnFacebook: (discussionId: string) =>
+    request<DiscussionAnalysis>(`/discussions/${discussionId}/reply/facebook`, { method: "POST" }),
   /** DELETE /discussions/{id}: delete a saved analysis. */
   deleteDiscussion: (discussionId: string) => request<void>(`/discussions/${discussionId}`, { method: "DELETE" }),
 

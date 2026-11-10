@@ -125,6 +125,9 @@ class AssetRow(Base):
     prompt_version: Mapped[str | None] = mapped_column(Text)
     persona: Mapped[str] = mapped_column(Text)
     angle: Mapped[str] = mapped_column(Text)
+    published_id: Mapped[str] = mapped_column(Text, default="")  # Facebook post id; "" = not published
+    published_url: Mapped[str] = mapped_column(Text, default="")
+    published_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
 
 
 class ConversationRow(Base):
@@ -168,6 +171,10 @@ class DiscussionRow(Base):
     platform_issues: Mapped[list] = mapped_column(Json)  # list of strings
     humanize: Mapped[int] = mapped_column(Integer, server_default="70")  # 0-100 (since migration 0009)
     tone: Mapped[str] = mapped_column(Text, server_default="neutral")  # schemas.Tone (since migration 0010)
+    facebook_comment_id: Mapped[str] = mapped_column(Text, server_default="")  # since migration 0012
+    replied_id: Mapped[str] = mapped_column(Text, server_default="")
+    replied_url: Mapped[str] = mapped_column(Text, server_default="")
+    replied_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
     model: Mapped[str | None] = mapped_column(Text)
     prompt_version: Mapped[str | None] = mapped_column(Text)
     tokens: Mapped[int] = mapped_column(Integer)

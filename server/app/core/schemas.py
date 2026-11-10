@@ -19,7 +19,7 @@ SourceKind = Literal["document", "video", "audio", "text"]
 SourceStatus = Literal["uploaded", "queued", "transcribing", "chunking", "embedding", "ready", "failed"]
 # Kinds of marketing content the generator can produce.
 AssetType = Literal["blurb", "social_post", "social_reply", "video_script", "youtube_video", "newsletter",
-                    "ad_copy", "lead_magnet", "persona"]
+                    "ad_copy", "lead_magnet", "persona", "reader_question"]
 # Writing style options for generated assets (see generation.py for what each one means).
 Tone = Literal["neutral", "inspiring", "friendly", "professional", "punchy", "literary"]
 Length = Literal["short", "standard", "long"]  # ignored for social posts and replies (the platform decides)
@@ -257,6 +257,9 @@ class Asset(BaseModel):
     prompt_version: str | None = None  # prompts that wrote it, e.g. "generation@3f9a1c2e" (core/prompts.py); None = older
     persona: str = ""  # campaign posts: name of the persona the post is written for
     angle: str = ""  # campaign posts: "hook", "teaser", "question", "behind the scenes" or "call to action"
+    published_id: str = ""  # id of the post it was published as on the author's Facebook Page; "" = not published
+    published_url: str = ""  # link to that post
+    published_at: datetime | None = None
 
 
 class CampaignRequest(BaseModel):
@@ -380,13 +383,19 @@ class DiscussionRequest(BaseModel):
     # in the draft are rewritten once. Default 80: a person in a discussion, not marketing copy.
     humanize: int = Field(default=80, ge=0, le=100)
     tone: Tone = "neutral"  # the reply's tone, as in the generator (core/style.TONES)
+    # A comment on the author's own Facebook Page (social/facebook.py): the agent answers it as the author ("own Page"
+    # mode: naming the book is fine) and the reply can be posted under it as the Page. "" = a discussion elsewhere.
+    facebook_comment_id: str = Field(default="", pattern=r"^(\d+(_\d+)?)?$")
 
     @model_validator(mode="after")
     def _check_url(self) -> "DiscussionRequest":
-        """Accept an empty URL or a web address (http or https), nothing else (no javascript: links in the GUI)."""
+        """Accept an empty URL or a web address (http or https), nothing else (no javascript: links in the GUI).
+        A comment on the author's Facebook Page is always on Facebook."""
         self.url = self.url.strip()
         if self.url and not self.url.lower().startswith(("http://", "https://")):
             raise ValueError("The URL must start with http:// or https://.")
+        if self.facebook_comment_id:
+            self.platform = "facebook"
         return self
 
 
@@ -420,6 +429,10 @@ class DiscussionAnalysis(BaseModel):
     platform_issues: list[str] = []  # problems of the draft for the platform (length, AI clichés left after the rewrite)
     humanize: int = 70  # the "how human" setting the reply was written with (analyses before it was a setting: 70)
     tone: Tone = "neutral"  # the tone the reply was written in
+    facebook_comment_id: str = ""  # the comment on the author's Facebook Page it answers ("own Page" mode); "" = none
+    replied_id: str = ""  # the reply posted as the Page under that comment; "" = not posted from the app
+    replied_url: str = ""
+    replied_at: datetime | None = None
     model: str | None = None  # chat model that ran the agent
     prompt_version: str | None = None  # e.g. "discussion@3f9a1c2e" (core/prompts.py)
     tokens: int = 0  # LLM tokens used by the whole run
@@ -489,6 +502,78 @@ class ScanResult(BaseModel):
     tokens: int = 0
     model: str | None = None
     prompt_version: str | None = None
+
+
+# ---------- Facebook Page (social/facebook.py) ----------
+class FacebookPage(BaseModel):
+    """The author's own Facebook Page."""
+
+    id: str
+    name: str
+    followers: int | None = None
+    link: str | None = None
+
+
+class FacebookPost(BaseModel):
+    """A post on the author's Page (by the Page or a visitor), newest first in lists."""
+
+    id: str  # "<page id>_<post id>"
+    message: str = ""  # "" for a photo or video without text
+    created_time: datetime
+    permalink_url: str | None = None
+    picture: str | None = None  # the post's image, if any
+    comment_count: int = 0
+
+
+class FacebookComment(BaseModel):
+    """A comment on a Page post, or a reply to one (parent_id set). Someone else's text: untrusted."""
+
+    id: str
+    post_id: str
+    message: str = ""
+    created_time: datetime
+    author: str | None = None  # the commenter's name; None when Facebook does not return it
+    from_page: bool = False  # written by the Page itself (the author's own replies)
+    parent_id: str | None = None  # the comment this one replies to
+    reply_count: int = 0
+    permalink_url: str | None = None
+    answered: bool = False  # the Page has replied to it (set by recent_threads)
+
+
+class FacebookPosts(BaseModel):
+    """One page of a Page's posts; `after` fetches the next page (None = no more)."""
+
+    items: list[FacebookPost] = []
+    after: str | None = None
+
+
+class FacebookComments(BaseModel):
+    """One page of a post's comments; `after` fetches the next page (None = no more)."""
+
+    items: list[FacebookComment] = []
+    after: str | None = None
+
+
+class FacebookThread(BaseModel):
+    """A post on the author's Page with its comments (GET /facebook/comments)."""
+
+    post: FacebookPost
+    comments: list[FacebookComment] = []  # newest first, the Page's own replies included (from_page)
+
+
+class FacebookStatus(BaseModel):
+    """Response of GET /facebook/status: whether the author's Page is connected (FACEBOOK_PAGE_* in server/.env)."""
+
+    connected: bool
+    page: FacebookPage | None = None
+    error: str = ""  # why the configured Page could not be reached (e.g. token expired)
+
+
+class FacebookPublished(BaseModel):
+    """What publish_post / reply_to_comment created."""
+
+    id: str
+    url: str
 
 
 # ---------- MCP console (Market Intelligence) ----------

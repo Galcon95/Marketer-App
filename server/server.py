@@ -23,7 +23,7 @@ from app.core import logs
 logs.setup()  # first, so the imports below already log through it (JSON lines with the request id)
 
 from app.api import (  # noqa: E402
-    assets, campaigns, discussions, health, keys, knowledge, mcp_console, projects, sources,
+    assets, campaigns, discussions, facebook, health, keys, knowledge, mcp_console, projects, sources,
 )
 from app.core import api_keys, auth, state, storage, usage  # noqa: E402
 from app.db import records  # noqa: E402
@@ -84,7 +84,7 @@ app.add_middleware(logs.RequestIdMiddleware)
 
 # Include the API routers. /health is open; every other endpoint needs a signed-in user (auth.py → 401 otherwise).
 app.include_router(health.router)
-for module in (projects, sources, knowledge, assets, campaigns, discussions, mcp_console, keys):
+for module in (projects, sources, knowledge, assets, campaigns, discussions, facebook, mcp_console, keys):
     app.include_router(module.router, dependencies=[Depends(auth.current_user)])
 
 # Last, so the API routes match first. /guardrails before the catch-all "/", which only serves POST/GET /mcp.

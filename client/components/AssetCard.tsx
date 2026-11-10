@@ -7,8 +7,11 @@
  */
 
 import { useState } from "react";
-import { AlertTriangle, Check, Copy, Pencil, ShieldCheck, Sparkles, Trash2, UserCheck, Users, X } from "lucide-react";
-import { api, assetTypeLabel, cleanText, errorMessage, hasCharLimit, humanizeLabel, locationLabel, PLATFORMS, type Asset, type Citation, type VerifyItem } from "@/lib/api";
+import { AlertTriangle, Check, Copy, ExternalLink, Pencil, Send, ShieldCheck, Sparkles, Trash2, UserCheck, Users, X } from "lucide-react";
+import {
+  api, assetTypeLabel, cleanText, errorMessage, hasCharLimit, humanizeLabel, isFacebookPost, locationLabel, PLATFORMS,
+  type Asset, type Citation, type FacebookStatus, type VerifyItem,
+} from "@/lib/api";
 import { PageLink } from "./BookCover";
 import { Badge, Button, ErrorNote, Score } from "./ui";
 
@@ -62,16 +65,21 @@ export function TextWithMarkers({ text }: { text: string }) {
  * word and character counts (against the platform limit
  * for social posts and replies), and actions: Copy (publishable text without markers), Edit (save
  * a changed text), Verify (check each sentence against the project's sources, POST /verify) and
- * Delete.
+ * Delete. Reader questions and Facebook posts also get "Publish to my Facebook Page" when the Page is connected
+ * (admin only); once published, the card links to the post instead.
  * @param asset The asset to display.
- * @param onChange Called after the asset was edited or deleted, to reload the asset list.
+ * @param onChange Called after the asset was edited, deleted or published, to reload the asset list.
+ * @param facebook The Facebook Page status (undefined = not available to this user: no Publish button).
  */
-export default function AssetCard({ asset, onChange }: { asset: Asset; onChange: () => void }) {
+export default function AssetCard({ asset, onChange, facebook }: {
+  asset: Asset; onChange: () => void; facebook?: FacebookStatus;
+}) {
   const [checks, setChecks] = useState<VerifyItem[] | null>(null); // null until Verify was pressed
   const [verifying, setVerifying] = useState(false);
   const [draft, setDraft] = useState<string | null>(null); // text being edited; null = not editing
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const publishable = cleanText(asset.text);
@@ -121,6 +129,22 @@ export default function AssetCard({ asset, onChange }: { asset: Asset; onChange:
     }
   }
 
+  /** After a confirmation showing the exact text, publish it on the Facebook Page (POST /assets/{id}/publish/facebook). */
+  async function publish() {
+    const page = facebook?.page?.name ?? "your Facebook Page";
+    if (!window.confirm(`Publish this post on ${page} now? Everyone can see it.\n\n${publishable}`)) return;
+    setPublishing(true);
+    setError(null);
+    try {
+      await api.publishToFacebook(asset.id);
+      onChange();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setPublishing(false);
+    }
+  }
+
   /** Delete the asset after confirmation and reload the list. */
   async function remove() {
     if (!window.confirm(`Delete this ${assetTypeLabel(asset.asset_type).toLowerCase()}?`)) return;
@@ -145,6 +169,7 @@ export default function AssetCard({ asset, onChange }: { asset: Asset; onChange:
         {asset.tone !== "neutral" && <Badge>{asset.tone}</Badge>}
         {!platform && asset.length !== "standard" && <Badge>{asset.length}</Badge>}
         {asset.edited && <Badge tone="warning" icon={Pencil}>edited</Badge>}
+        {asset.published_url && <Badge tone="success" icon={Send}>published</Badge>}
         <span title={`Generated with "how human" ${asset.humanize} (${humanizeLabel(asset.humanize)}). ${asset.ai_tells.length ? "AI-typical wording left: " + asset.ai_tells.join(", ") : "No AI-typical wording found."}`}>
           <Badge tone={asset.ai_tells.length ? "warning" : "success"} icon={UserCheck}>human {asset.humanize}</Badge>
         </span>
@@ -202,6 +227,27 @@ export default function AssetCard({ asset, onChange }: { asset: Asset; onChange:
         </div>
       )}
       {error && <ErrorNote>{error}</ErrorNote>}
+
+      {isFacebookPost(asset) && (asset.published_url ? (
+        <span className="bc-hint">
+          Published on your Facebook Page{asset.published_at ? ` on ${new Date(asset.published_at).toLocaleString()}` : ""}:{" "}
+          <a href={asset.published_url} target="_blank" rel="noopener noreferrer">open the post <ExternalLink size={12} aria-hidden /></a>
+        </span>
+      ) : facebook && (
+        <div className="bc-row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <Button size="sm" icon={Send} loading={publishing} onClick={publish}
+            disabled={!facebook.connected || draft !== null || overLimit}
+            title={facebook.connected ? `Post the text without citation markers on ${facebook.page?.name}` : undefined}>
+            Publish to my Facebook Page
+          </Button>
+          <span className="bc-hint" style={{ margin: 0 }}>
+            {!facebook.connected
+              ? (facebook.error || "Facebook is not connected: set FACEBOOK_PAGE_ID and FACEBOOK_PAGE_TOKEN in server/.env.")
+              : draft !== null ? "Save or cancel the edit first."
+              : `Posts on ${facebook.page?.name} right away, after you confirm. Check the text first.`}
+          </span>
+        </div>
+      ))}
 
       <div className="bc-out-f" style={{ flexWrap: "wrap" }}>
         <span>{words} words</span>

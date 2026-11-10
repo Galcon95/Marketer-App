@@ -30,6 +30,10 @@ the author to contribute from one book, and if so, a reply grounded in that book
     finalize        the [n] markers of the reason and the reply become one list of citations, numbered in order of
                     first use across both texts (retrieval.keep_cited)
 
+"Own Page" mode (DiscussionRequest.facebook_comment_id set: a reader's comment on the author's Facebook Page): the same
+graph, but the assess prompt knows that answering readers there is welcome (SITUATION) and the draft is written as the
+author in the first person, where naming the book is natural (ROLE).
+
 The tone (DiscussionRequest.tone, style.TONES) is added to the reply rules of the draft prompt. The "how human"
 setting (DiscussionRequest.humanize, 0-100) works as in the generator: style guidance in the draft
 prompt (style.style_guidance), the draft's temperature (style.temperature_for) and the rewrite step.
@@ -101,10 +105,28 @@ RESEARCH_PROMPT = ChatPromptTemplate.from_messages([
     ("human", "Platform: {platform}\nWhat the author would like to bring in: {angle}\n\nThe discussion:\n{discussion}"),
 ])
 
+# Where the discussion is: elsewhere (the author joins as a knowledgeable person) or on the author's own Facebook Page
+# (a reader's comment, answered as the author). Filled into the assess and draft prompts.
+SITUATION = {
+    "discussion": "",
+    "own_page": "This discussion is a reader's comment on the author's OWN Facebook Page, under a post about the book. "
+                "Answering readers there is welcome: choose contribute whenever the passages can answer or enrich "
+                "the comment, more_context only if the comment cannot be understood, and skip for spam, abuse or "
+                "comments that need no answer (e.g. a single emoji).\n",
+}
+ROLE = {
+    "discussion": "The author takes part as a knowledgeable person, not as a seller. Do not name the book or the "
+                  "author in the reply; whether to mention the book is a separate choice the author makes from your "
+                  "advice.",
+    "own_page": "The reply is posted as the author's own Facebook Page under a reader's comment: write as the author "
+                "in the first person, warm and personal, talking to this reader (e.g. \"In chapter 3 I argue ...\"). "
+                "Mentioning \"my book\" or a chapter is natural here; never push a sale or add links.",
+}
+
 ASSESS_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
-     "You advise an author whether to join an online discussion with material from their own book. Decide from the "
-     "discussion, the book and the numbered passages found in it:\n"
+     "You advise an author whether to join an online discussion with material from their own book. {situation}"
+     "Decide from the discussion, the book and the numbered passages found in it:\n"
      "• contribute: the passages let the author add something substantive to what is actually being asked or "
      "claimed (an idea, an example, an argument), not just a loosely related topic.\n"
      "• more_context: the pasted text is too short or fragmentary to tell what is being discussed (e.g. replies "
@@ -120,13 +142,11 @@ ASSESS_PROMPT = ChatPromptTemplate.from_messages([
 
 DRAFT_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
-     "You write a reply for an author to post in an online discussion, {rules}. The author takes part as a "
-     "knowledgeable person, not as a seller.\n"
+     "You write a reply for an author to post in an online discussion, {rules}. {role}\n"
      "Respond to what the discussion actually asks or claims first, then add what the book contributes: its idea, "
      "argument or example. Use ONLY facts and ideas from the numbered passages, and cite each passage you use as [n] "
      "right after the statement; the markers are removed before posting. Never invent facts, names, numbers or "
-     "quotes. Do not name the book or the author in the reply; whether to mention the book is a separate choice the "
-     "author makes from your advice. Write in the discussion's language, plain text without Markdown.\n"
+     "quotes. Write in the discussion's language, plain text without Markdown.\n"
      "The discussion comes in a <post> block, the passages in <passage n=\"...\"> blocks. " + UNTRUSTED_RULE +
      "\n\n{style}"),
     ("human", "Book: {book}\nWhat the author would like to bring in: {angle}\nWhy this is a good opportunity: {reason}"
@@ -182,6 +202,7 @@ class DiscussionState(TypedDict, total=False):
     angle: str  # what the author would like to bring in; "" = nothing particular
     humanize: int  # how human the reply should sound (0-100)
     tone: str  # the reply's tone (schemas.Tone)
+    own_page: bool  # a reader's comment on the author's own Facebook Page: answered as the author
     research: Research  # the book and every passage found, numbered for citations
     messages: list[BaseMessage]  # the research prompt, the model's tool calls and their results
     tool_calls: list[ToolCallRecord]  # every tool call of the run, for the GUI
@@ -201,7 +222,7 @@ class DiscussionState(TypedDict, total=False):
 
 # Version of this feature's prompts, schemas, tool descriptions and settings (core/prompts.py).
 PROMPT_VERSION = prompts.register(
-    "discussion", RESEARCH_PROMPT, ASSESS_PROMPT, DRAFT_PROMPT, Assessment, DraftReply, REPLY_RULES,
+    "discussion", RESEARCH_PROMPT, ASSESS_PROMPT, DRAFT_PROMPT, Assessment, DraftReply, REPLY_RULES, SITUATION, ROLE,
     [t.description for t in make_tools(Research(project_id="", source_id=""))],
     REWRITE_PROMPT, {"temperatures": {k: TEMPERATURES[k] for k in ("research", "assess")}, "rewrite_from": REWRITE_FROM,
      "max_rounds": MAX_ROUNDS, "max_tool_calls": MAX_TOOL_CALLS, "search_k": SEARCH_K, "max_passages": MAX_PASSAGES})
@@ -229,11 +250,13 @@ def analyze_discussion(project_id: str, req: DiscussionRequest) -> DiscussionAna
         with tracing.scope():
             state = _graph().invoke(
                 {"project_id": project_id, "discussion": req.discussion, "platform": req.platform, "angle": req.angle,
-                 "humanize": req.humanize, "tone": req.tone, "research": research},
+                 "humanize": req.humanize, "tone": req.tone, "own_page": bool(req.facebook_comment_id),
+                 "research": research},
                 config={"run_name": "analyze_discussion", "tags": ["discussion", "agent"],
                         "metadata": {"request_id": current_request_id(), "prompt_version": PROMPT_VERSION,
                                      "project_id": project_id, "source_id": req.source_id, "llm_model": LLM_MODEL,
-                                     "platform": req.platform, "humanize": req.humanize, "tone": req.tone}},
+                                     "platform": req.platform, "humanize": req.humanize, "tone": req.tone,
+                                     "own_page": bool(req.facebook_comment_id)}},
             )
     except GenerationError:
         raise
@@ -251,7 +274,8 @@ def analyze_discussion(project_id: str, req: DiscussionRequest) -> DiscussionAna
         reply=state.get("suggested_reply", ""),
         book_mention=BookMention(suggest=draft.mention_book, reason=draft.mention_reason) if draft else None,
         citations=state["citations"], search_queries=list(research.queries), tool_calls=state.get("tool_calls", []),
-        platform_issues=state.get("platform_issues", []), humanize=req.humanize, tone=req.tone, model=LLM_MODEL, prompt_version=PROMPT_VERSION,
+        platform_issues=state.get("platform_issues", []), humanize=req.humanize, tone=req.tone,
+        facebook_comment_id=req.facebook_comment_id, model=LLM_MODEL, prompt_version=PROMPT_VERSION,
         tokens=state.get("tokens", 0), created_at=now, updated_at=now)
 
 
@@ -322,7 +346,7 @@ def _assess(state: DiscussionState) -> DiscussionState:
     research = state["research"]
     assessment, used = structured(ASSESS_PROMPT, {
         "book": _book(research), "platform": state.get("platform", "forum"), "angle": _angle(state),
-        "discussion": _quoted_discussion(state),
+        "situation": SITUATION[_mode(state)], "discussion": _quoted_discussion(state),
         "notes": quote_untrusted(state.get("notes") or "(none)", "background"),
         "context": format_context(research.passages) or "(none: no passage of the book is relevant enough)",
     }, Assessment, "assessment", TEMPERATURES["assess"])
@@ -344,7 +368,8 @@ def _draft(state: DiscussionState) -> DiscussionState:
     research = state["research"]
     platform = state.get("platform", "forum")
     draft, used = structured(DRAFT_PROMPT, {
-        "rules": _rules(state), "style": style_guidance(_humanize(state)), "book": _book(research),
+        "rules": _rules(state), "role": ROLE[_mode(state)], "style": style_guidance(_humanize(state)),
+        "book": _book(research),
         "angle": _angle(state), "reason": state["assessment"].reason, "discussion": _quoted_discussion(state),
         "context": format_context(research.passages),
     }, DraftReply, "reply draft", temperature_for(_humanize(state)))
@@ -412,6 +437,11 @@ def _rules(state: DiscussionState) -> str:
 def _humanize(state: DiscussionState) -> int:
     """The run's "how human" setting (the request's default when the state has none, e.g. in tests)."""
     return state.get("humanize", DiscussionRequest.model_fields["humanize"].default)
+
+
+def _mode(state: DiscussionState) -> str:
+    """The prompt mode: "own_page" for a reader's comment on the author's Facebook Page, else "discussion"."""
+    return "own_page" if state.get("own_page") else "discussion"
 
 
 def _angle(state: DiscussionState) -> str:

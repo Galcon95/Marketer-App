@@ -74,7 +74,7 @@ click.
 2. **Scan.** The threads come back ranked **high / medium / low** for the book, each with a one-line reason.
 3. **Analyse** on a thread loads it into the paste form. If only a snippet was found, open the thread and copy it.
 
-### Answer readers on your own Facebook Page (in progress, admin only)
+### Answer readers on your own Facebook Page (admin only)
 **My Facebook Page** lists the latest posts with their comments. **Analyse** hands a comment to the agent in
 *own Page mode*, where answering readers is welcome and the reply is written as the author in the first person.
 **Reply on Facebook** posts the edited reply under the comment.
