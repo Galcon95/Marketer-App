@@ -1,7 +1,8 @@
 # Marketer App
 
 A tool for book marketing: a Next.js frontend (`client/`) talks to a FastAPI backend (`server/`), which also
-hosts two MCP servers. What is built so far: [FEATURES.md](FEATURES.md).
+hosts two MCP servers. What is built so far: [FEATURES.md](FEATURES.md). The app's agent, the **Discussion
+Relevance Agent** (purpose, use cases, how it works, technical decisions): [docs/AGENT.md](docs/AGENT.md).
 
 ## Run it locally, step by step
 
@@ -19,6 +20,10 @@ You need **3 terminals**: server, client, and (optionally) the MCP Inspector.
   the app starts, but nothing can be generated.
 - Create the tables and the Storage bucket: `cd server`, then `uv run alembic upgrade head` (again after every
   update that brings a new migration).
+- Optional: a [Tavily](https://tavily.com) API key (free plan) for the **Reddit scan**: `TAVILY_API_KEY=tvly-...` in
+  `server/.env`. Without it the scan answers 503; pasting a discussion still works.
+- Optional: your own **Facebook Page** (`FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_TOKEN`, `FACEBOOK_APP_SECRET`), for
+  answering readers' comments and publishing posts. Setup steps are in the comments in `server/.env.example`.
 - Optional: LangSmith tracing, see the comments in `server/.env.example`.
 
 ### 1. Start the server (terminal 1)
@@ -68,8 +73,17 @@ You can also call both MCP servers inside the app, in the **Market Intelligence*
 2. Make the **book summary** and try **Ask your book** (the chat).
 3. **Content Studio**: in **Single asset**, write a blurb, post, newsletter, ... from the book with citations; in
    **Campaign kit**, check the brief and press **Generate campaign (zero-shot)** for personas, posts and a blurb.
-4. **Market Intelligence**: the MCP tool console (both MCP servers, status, tools, call log).
-5. Costs so far: the usage panel in the app, or http://127.0.0.1:8000/usage.
+4. **Market Intelligence → Discussions** (the agent):
+   - **Paste a discussion**: pick the book, paste a post (e.g. from Reddit, plus some replies), choose the platform
+     and press **Analyse**. The agent answers *contribute* (with a reply grounded in the book, citations and advice
+     on naming the book), *more context needed* or *skip*, with its reason. Open the **tool trace** to see which
+     searches it made. Edit the reply and press **Copy for posting**.
+   - **Scan Reddit** (needs `TAVILY_API_KEY`): enter a topic and optionally subreddits; the threads come back ranked
+     high / medium / low for the book. **Analyse** loads one into the agent.
+   - Try a trap: a thread that only shares a keyword with the book (e.g. "garden" in a gardening question) should be
+     *skip*.
+5. **Market Intelligence → MCP servers**: the MCP tool console (both MCP servers, status, tools, call log; admin only).
+6. Costs so far: the usage panel in the app, or http://127.0.0.1:8000/usage.
 
 ### Stop
 
@@ -79,9 +93,12 @@ Press `Ctrl+C` in each terminal.
 
 - **Use the books from Claude Code:** `claude mcp add --transport http book-knowledge http://127.0.0.1:8000/mcp`
 - **RAG evaluation (RAGAs)**, with the server running: `cd eval`, then `uv run python run_eval.py --limit 3`. See [eval/README.md](eval/README.md).
+- **Agent evaluation**, with the server running: `cd eval`, then `uv run python run_agent_eval.py` (12 labelled
+  discussions; `--no-judge` for decisions and checks only). See [eval/README.md](eval/README.md).
 - **Different server URL** for the client: set `NEXT_PUBLIC_API_URL` (default `http://127.0.0.1:8000`).
 
-More details: [server/README.md](server/README.md) (layout, MCP tools) and [eval/README.md](eval/README.md).
+More details: [docs/AGENT.md](docs/AGENT.md) (the agent), [server/README.md](server/README.md) (layout, MCP tools)
+and [eval/README.md](eval/README.md).
 
 ## Quick start (summary)
 
@@ -94,7 +111,8 @@ More details: [server/README.md](server/README.md) (layout, MCP tools) and [eval
    - Upload the Garden Cities PDF from the repo root and press **Process**.
    - Make the summary and try the chat.
    - In the Content Studio, generate an asset (Single asset) and a campaign (Campaign kit).
-   - Call the MCP tools in the Market Intelligence tab.
+   - In Market Intelligence → Discussions, paste a discussion (or scan Reddit) and let the agent analyse it.
+   - Call the MCP tools in Market Intelligence → MCP servers.
    - Look at the costs.
 5. **Stop:** `Ctrl+C` in each terminal.
 

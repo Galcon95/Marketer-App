@@ -8,7 +8,7 @@
 
 import { useCallback, useState, useSyncExternalStore, type JSX } from "react";
 import {
-  Bot, Brain, Cpu, Database, FileText, KeyRound, LogOut, Menu, Moon, Network, Server, Settings,
+  Bot, Brain, Cpu, Database, FileText, Info, KeyRound, LogOut, Menu, Moon, Network, Server, Settings,
   Sparkles, Sun, SunMoon, Target, Terminal, Users, UserCheck,
 } from "lucide-react";
 import { api, API_URL } from "@/lib/api";
@@ -54,7 +54,7 @@ const TABS: TabItem<PhaseId>[] = [
   { id: "p1", kicker: "PHASE 1", label: "Knowledge Hub", icon: Database },
   { id: "p2", kicker: "PHASE 2", label: "Content Studio", icon: Sparkles },
   { id: "p3", kicker: "PHASE 3", label: "Market Intelligence", icon: Network },
-  { id: "p4", kicker: "PHASE 4", label: "Agent Workspace", icon: Cpu },
+  { id: "p4", kicker: "PHASE 4 · PLANNED", label: "Agent Workspace", icon: Cpu },
 ];
 
 /** Page title and breadcrumb subtitle shown in the top bar for each phase. */
@@ -62,7 +62,7 @@ const TITLES: Record<PhaseId, [title: string, crumb: string]> = {
   p1: ["Knowledge hub", "Retrieval-augmented generation over your content"],
   p2: ["Content studio", "Grounded assets from your books · zero-shot campaign kits"],
   p3: ["Market intelligence", "Discussions worth joining · live tool calls via Model Context Protocol"],
-  p4: ["Agent workspace", "Strategist → Copywriter → Auditor → You"],
+  p4: ["Agent workspace", "Planned · Strategist → Copywriter → Auditor → You"],
 };
 
 /** Display label and icon for each service name reported by GET /health. */
@@ -82,16 +82,29 @@ const AGENTS = [
   { name: "Human checkpoint", icon: UserCheck },
 ];
 
-/** Phase 4 placeholder: agent cards, console and review area. No API calls yet. */
+/**
+ * Phase 4 placeholder: agent cards, console and review area, under a banner that says it is planned and where the
+ * working agent is (Market Intelligence → Discussions). No API calls.
+ */
 function AgentWorkspace() {
   return (
     <>
+      <Card title="Planned: not built yet" icon={Info} meta={<Badge tone="warning">planned</Badge>}>
+        <p style={{ margin: 0 }}>
+          A multi-agent campaign workflow: a Strategist plans, a Copywriter drafts, an Auditor checks, and you approve.
+          This page only shows the planned layout.
+        </p>
+        <p className="bc-hint" style={{ margin: "8px 0 0" }}>
+          The app&apos;s working agent is the <strong>Discussion Relevance Agent</strong> in{" "}
+          <strong>Market Intelligence → Discussions</strong>.
+        </p>
+      </Card>
       <div>
-        <SectionHeading icon={Network} title="Agent workflow" />
+        <SectionHeading icon={Network} title="Agent workflow (planned)" />
         <div className="bc-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
           {AGENTS.map(({ name, icon }) => (
-            <Card key={name} title={name} icon={icon} meta={<Badge mono>idle</Badge>}>
-              <span className="bc-hint">Agent placeholder</span>
+            <Card key={name} title={name} icon={icon} meta={<Badge mono>planned</Badge>}>
+              <span className="bc-hint">Not built yet</span>
             </Card>
           ))}
         </div>
