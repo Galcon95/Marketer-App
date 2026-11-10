@@ -13,7 +13,7 @@ nothing is dropped (and reported), never turned into an empty search. Used by th
 import logging
 import re
 
-from langchain_core.prompts import ChatPromptTemplate
+from app.core import prompt_files
 from pydantic import BaseModel, Field
 
 from app.core import state as db
@@ -29,13 +29,7 @@ _HINTS = re.compile(r"\b(chapters?|chap\.|ch\.|pages?|pp?\.|parts?|sections?|boo
                     r"postscript|foreword)\b", re.IGNORECASE)
 _ROMAN = {"i": 1, "v": 5, "x": 10, "l": 50, "c": 100, "d": 500, "m": 1000}
 
-FILTER_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "Read the user's question about a library of books and extract the metadata filters it states explicitly, "
-     "for a search in the books. Only extract what the question says; leave a field empty when it is not "
-     "mentioned. Never guess a book or chapter from the topic alone.\n\nBooks in the library:\n{books}"),
-    ("human", "{question}"),
-])
+FILTER_PROMPT = prompt_files.chat_prompt("qa_filters")  # prompts/qa_filters.md
 
 
 class QueryFilters(BaseModel):

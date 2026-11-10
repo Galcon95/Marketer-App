@@ -17,15 +17,15 @@ from datetime import datetime, timezone
 from functools import cache
 from typing import Annotated, TypedDict
 
-from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 from pydantic import BaseModel, Field, model_validator
 
+from app.core import prompt_files
 from app.core import state as db
 from app.core import prompts, tracing
 from app.core.config import LLM_MODEL
-from app.core.guard import UNTRUSTED_RULE, quote_untrusted
+from app.core.guard import quote_untrusted
 from app.core.logs import current_request_id
 from app.core.llm import TEMPERATURES, GenerationError, is_configured, model_failure, structured
 from app.core.schemas import BookSummary, ChapterSummary, Chunk, Source
@@ -38,23 +38,9 @@ MAX_SECTION_CHARS = 120_000  # about 30k tokens; longer chapters are cut to keep
 MAX_PARALLEL_CALLS = 8  # chapter summaries requested at the same time
 SECTION_CHUNKS = 12  # books without any chapters are summarized in parts of this many chunks (about 6,000 tokens)
 
-CHAPTER_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You summarize one section of a book for a book marketer: what this section argues or tells, with its key "
-     "ideas, names and memorable points. Use only the given text, which comes in a <passage> block.\n"
-     "Decide first whether the section is part of the book's actual content; a table of contents, list of "
-     "illustrations, index, footnotes, license, transcriber's note, publisher or e-book information is not. "
-     + UNTRUSTED_RULE),
-    ("human", "Book: {book}\nSection: {chapter} ({pages})\n\n{text}"),
-])
+CHAPTER_PROMPT = prompt_files.chat_prompt("summary_chapter")  # prompts/summary_chapter.md
 
-BOOK_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You help a book marketer understand a book. From the chapter summaries, which come in <passage> blocks in "
-     "reading order, write an overview of the whole book. Use only the chapter summaries; never invent facts, "
-     "names or numbers. " + UNTRUSTED_RULE),
-    ("human", "Book: {book}\n\nChapter summaries in reading order:\n\n{summaries}"),
-])
+BOOK_PROMPT = prompt_files.chat_prompt("summary_book")  # prompts/summary_book.md
 
 
 class ChapterDigest(BaseModel):

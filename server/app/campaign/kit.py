@@ -23,10 +23,10 @@ from functools import cache
 from typing import Annotated, Literal, TypedDict
 
 from langchain_core.messages import AIMessage
-from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field, model_validator
 
+from app.core import prompt_files
 from app.core import prompts, style, tracing
 from app.core.config import LLM_MODEL
 from app.core.logs import current_request_id
@@ -39,38 +39,11 @@ logger = logging.getLogger(__name__)
 # The five post angles, one post each, in this order.
 ANGLES = ["hook", "teaser", "question", "behind the scenes", "call to action"]
 
-PERSONAS_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You are an expert book marketer. From the book brief, define three distinct reader personas who would "
-     "buy this book: different motivations, reading habits and places to reach them. Base them on the brief "
-     "only; do not invent facts about the book.{audience}"),
-    ("human", "{brief}"),
-])
+PERSONAS_PROMPT = prompt_files.chat_prompt("campaign_personas")  # prompts/campaign_personas.md
 
-POSTS_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You are an expert book marketer. Write five social media posts for the book in the brief, one per "
-     "angle, in this order: hook (a strong opening idea from the premise), teaser (sets the mood or raises "
-     "a question the book answers; never invent quotes from the book), question (asks readers something "
-     "that starts a conversation), behind the scenes (the author's view: why this book, how it came "
-     "about, said as an author would, without inventing specific events), call to action (why to read it "
-     "now, where to get it). Spread the posts over the three personas so each gets at least one, and put "
-     "each post on a platform where its persona is reached. Follow the rules of the post's platform:\n"
-     "{platform_rules}\n\n"
-     "Use only what the brief says about the book. Write plain text without Markdown.\n\n{style}"),
-    ("human", "{brief}\n\nReader personas:\n{personas}"),
-])
+POSTS_PROMPT = prompt_files.chat_prompt("campaign_posts")  # prompts/campaign_posts.md
 
-BLURB_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You are an expert book marketer. Write a back-cover blurb / store description of 120-180 words for "
-     "the book in the brief: a hook in the first sentence, what the book is about and why it matters, and a "
-     "closing line that makes people want to read it. Write it for the readers described by the personas, "
-     "but never name or list them, and do not address readers with an invitation to discuss: it is copy for "
-     "a book cover or store page. Use only what the brief says; never invent names, events, quotes, awards or "
-     "reviews. Reply with the blurb only, in plain text without Markdown.\n\n{style}"),
-    ("human", "{brief}\n\nReader personas:\n{personas}"),
-])
+BLURB_PROMPT = prompt_files.chat_prompt("campaign_blurb")  # prompts/campaign_blurb.md
 
 
 class Persona(BaseModel):
@@ -213,7 +186,8 @@ def _graph():
 def _personas(state: CampaignState) -> CampaignState:
     """Personas node: the brief → three reader personas (structured output)."""
     req = state["req"]
-    audience = f" Focus the personas on this audience: {req.audience.strip()}." if req.audience.strip() else ""
+    audience = (" " + prompt_files.text("campaign_audience").format(audience=req.audience.strip())  # prompts/campaign_audience.md
+                if req.audience.strip() else "")
     parsed, tokens = structured(PERSONAS_PROMPT, {"brief": format_brief(req), "audience": audience}, PersonaSet,
                                 "reader personas")
     return {"personas": parsed.personas, "persona_tokens": tokens, "tokens": tokens}

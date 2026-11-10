@@ -31,14 +31,14 @@ from functools import cache
 from typing import TypedDict
 
 from langchain_core.messages import AIMessage
-from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
+from app.core import prompt_files
 from app.core import prompts, style, tracing
 from app.core import state as db
 from app.core.config import LLM_MODEL
-from app.core.guard import UNTRUSTED_RULE, quote_untrusted
+from app.core.guard import quote_untrusted
 from app.core.logs import current_request_id
 from app.core.llm import (
     TEMPERATURES, GenerationError, chat_model, is_configured, model_failure, structured, tokens_used,
@@ -56,66 +56,11 @@ logger = logging.getLogger(__name__)
 
 # What to write, per asset type; {size} is filled from SIZES by the chosen length, {platform} from
 # PLATFORM_POST / PLATFORM_REPLY (inserted into the system prompt).
-ASSET_INSTRUCTIONS: dict[AssetType, str] = {
-    "blurb": "a back-cover blurb / product description of {size} words: a hook in the first sentence, "
-             "what the book is about and why it matters, and a closing line that makes people want to read it.",
-    "social_post": "one social media post {platform}.",
-    "social_reply": "a reply to the social media post given below, {platform}. Respond to the post's actual point "
-                    "first, then add the book's perspective; sound like a person taking part in the conversation, "
-                    "not like an advertisement. Mention the book (title and author) naturally at most once. "
-                    "Use hashtags only if they are usual for this platform's replies.",
-    "video_script": "a script for a short vertical video {platform}, 30-60 seconds long, about the book. "
-                    "Structure it as: HOOK (first 3 seconds, spoken), then 3-5 numbered SCENES, each with "
-                    "\"Visual:\" (what is shown), \"Voice-over:\" (what is said) and \"On-screen text:\" (a few words), "
-                    "then a CTA (call to action), then a caption with fitting hashtags. Use plain labels (HOOK, "
-                    "SCENE 1, ..., CTA, CAPTION) without emojis; keep the on-screen text calm, without exclamation marks.",
-    "youtube_video": "the YouTube page for a video about the book, in exactly these four sections with these "
-                     "headings: \"Title options:\" with 3 numbered titles (each under 70 characters, curiosity without "
-                     "clickbait); \"Description:\" of {size} words whose first two lines work as the preview; "
-                     "\"Chapters:\" with 3-6 timestamps (e.g. \"0:00 Intro\") for a 6-10 minute video; "
-                     "\"Tags:\" with 10-15 comma-separated tags.",
-    "newsletter": "a newsletter section of {size} words: a subject line on the first line "
-                  "(\"Subject: ...\"), then an engaging introduction to the book and a call to action.",
-    "ad_copy": "three short ad variants. Each has a headline (max 8 words) and a body of {size} words.",
-    "lead_magnet": "a lead magnet outline: a compelling title, a one-sentence promise, "
-                   "and {size} bullet points of what the reader will get.",
-    "reader_question": "a post for the book's own Facebook Page that asks its readers ONE open question drawn from "
-                       "the book: start with 2-4 short sentences that present an idea, claim or scene from the "
-                       "excerpts (cited), then ask one clear question people can answer from their own view or "
-                       "experience, without having read the book. 40-100 words, conversational. Write as the "
-                       "book's author in the first person, talking to their readers (e.g. \"In my book I argue "
-                       "...\", \"While writing chapter 3 I kept asking myself ...\"); never refer to the book in the "
-                       "third person (not \"the book discusses\", \"the text states\", \"the author argues\"). End "
-                       "with the question. No sales pitch, no \"link in bio\", at most one hashtag.",
-    "persona": "an audience persona for this book of {size} words: name and short description, demographics, "
-               "goals, pain points, where to reach them, and why this book appeals to them.",
-}
+ASSET_INSTRUCTIONS: dict[AssetType, str] = prompt_files.table("generation_asset_types")
 
 # One worked example per complex format, appended to the instructions: one example shows the layout better than a
 # paragraph of rules. A made-up book, so the model takes the structure from it, not the content.
-FORMAT_EXAMPLES: dict[AssetType, str] = {
-    "video_script": (
-        "HOOK: \"Most of us have never grown anything we didn't buy as a seedling.\"\n\n"
-        "SCENE 1\nVisual: Hands press a seed into a cracked clay pot on a city windowsill.\n"
-        "Voice-over: \"The author starts with one seed and a fourth-floor flat.\"\nOn-screen text: One seed. One window.\n\n"
-        "SCENE 2\nVisual: Time-lapse of the first leaf opening.\n"
-        "Voice-over: \"What follows is a year of small failures and one stubborn tomato.\"\n"
-        "On-screen text: A year on the windowsill\n\n"
-        "SCENE 3\nVisual: The book on a table next to the now full-grown plant.\n"
-        "Voice-over: \"It's a book about patience, and about soil.\"\nOn-screen text: The Windowsill Year\n\n"
-        "CTA: \"If you've ever wanted to grow something, start with chapter one.\"\n\n"
-        "CAPTION: A small memoir about patience and soil. #gardening #memoir #booktok"
-    ),
-    "youtube_video": (
-        "Title options:\n1. I Grew Food on a Windowsill for a Year\n2. What a Tomato Taught Me About Patience\n"
-        "3. The Windowsill Year: A Small Book Review\n\n"
-        "Description:\nOne seed, one city flat, one year. This memoir turns a windowsill into a garden.\n"
-        "In this video I talk about what the book gets right about patience, and what surprised me.\n\n"
-        "Chapters:\n0:00 Intro\n1:15 The first seed\n3:40 Failures that helped\n6:05 What I'd grow next\n\n"
-        "Tags:\nwindowsill garden, urban gardening, gardening memoir, book review, indoor plants, grow tomatoes, "
-        "small space garden, patience, nature writing, booktube"
-    ),
-}
+FORMAT_EXAMPLES: dict[AssetType, str] = prompt_files.table("generation_format_examples")
 
 # Headings the complex formats must contain (checked after generation; a draft without them is written once more).
 REQUIRED_SECTIONS: dict[AssetType, list[str]] = {
@@ -134,40 +79,12 @@ SIZES: dict[str, tuple[str, str, str]] = {
 }
 LENGTH_INDEX: dict[Length, int] = {"short": 0, "standard": 1, "long": 2}
 
-GROUNDED_SYSTEM = (
-    "You are an expert book marketer. Write {instructions}\n\n"
-    "Use ONLY facts from the numbered source excerpts. Cite every excerpt you use with its number in "
-    "square brackets, e.g. [2], right after the sentence that uses it; always add these markers, also in "
-    "short texts: they are removed before publishing and do not count toward any length limit. Quote memorable lines verbatim "
-    "in quotation marks when they help. Never invent facts, names, numbers, quotes or titles; refer to "
-    "a book only by the source name in the excerpt headers (or the brief). If the excerpts do not cover "
-    "something, leave it out. The book background (a summary of the whole book, if given) helps you "
-    "understand what the book is about overall; specific facts and quotes must come from the excerpts "
-    "and be cited. Reply with the asset text only. Write plain text that can be pasted anywhere: "
-    "no Markdown (no ** or #).\n"
-    "The excerpts come as <passage n=\"...\"> blocks; cite passage n as [n]. " + UNTRUSTED_RULE + "\n\n{style}"
-)
-ZERO_SHOT_SYSTEM = (
-    "You are an expert book marketer. Write {instructions}\n\n"
-    "Base it on the request only. Reply with the asset text only. Write plain text that can be pasted "
-    "anywhere: no Markdown (no ** or #). " + UNTRUSTED_RULE + "\n\n{style}"
-)
 
-GROUNDED_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", GROUNDED_SYSTEM),
-    ("human", "{request}\n\nBook background:\n{background}\n\nSource excerpts:\n\n{context}"),
-])
-ZERO_SHOT_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", ZERO_SHOT_SYSTEM),
-    ("human", "{request}"),
-])
-PLAN_QUERY_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You help find passages in a book that are useful for replying to a social media post. Read the post and "
-     "the user's angle, then write ONE search query of at most 25 words that names the topics, claims or "
-     "questions the reply should address. " + UNTRUSTED_RULE),
-    ("human", "{request}"),
-])
+
+
+GROUNDED_PROMPT = prompt_files.chat_prompt("generation_grounded")  # prompts/generation_grounded.md
+ZERO_SHOT_PROMPT = prompt_files.chat_prompt("generation_zero_shot")  # prompts/generation_zero_shot.md
+PLAN_QUERY_PROMPT = prompt_files.chat_prompt("generation_plan_query")  # prompts/generation_plan_query.md
 
 
 class GeneratedText(BaseModel):

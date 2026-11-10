@@ -27,12 +27,15 @@ server/
 │   ├── core/           shared basics
 │   │   ├── config.py   paths, provider, API key, model names, LangSmith tracing (reads .env)
 │   │   ├── llm.py      chat model (ChatOpenAI via OpenRouter), GenerationError, token counts
+│   │   ├── prompt_files.py  loads the prompts from prompts/*.md
+│   │   ├── prompts.py  prompt versions (a hash of the loaded prompt text)
+│   │   ├── guard.py    input checks, prompt-injection scan, quoting as data, output guard
 │   │   ├── schemas.py  Pydantic request/response models
 │   │   ├── state.py    in-memory stores (projects, sources, chunks, summaries, assets)
 │   │   ├── storage.py  upload checks (type, size, checksum), PDF author
 │   │   ├── files.py    the books and covers in Supabase Storage (private bucket "books")
 │   │   ├── usage.py    tokens and costs of every model call
-│   │   └── style.py    platform rules, tones, "how human" levels, AI-cliché check and rewrite
+│   │   └── style.py    "how human" levels, AI-cliché check and rewrite (texts in prompts/)
 │   ├── db/             the database (PostgreSQL at Supabase; SQLAlchemy)
 │   │   ├── database.py     connection (DATABASE_URL), sessions, DatabaseError
 │   │   ├── tables.py       tables: projects, sources, summaries, chunks, assets, conversations, usage_log; api_keys
@@ -49,8 +52,10 @@ server/
 │   ├── market/         Phase 3 Market Intelligence (MCP)
 │   │   ├── book_server.py  mcp-book-knowledge: the books as MCP tools (mounted at /mcp)
 │   │   └── guard_server.py mcp-guardrails: input validation and prompt-injection checks (/guardrails/mcp)
-│   ├── agents/         Phase 4 Agent Workspace, not built yet
+│   ├── agents/         Discussion Relevance Agent (LangGraph), its tools, the Reddit scan
+│   ├── social/         the author's Facebook Page (Graph API)
 │   └── api/            FastAPI routers: health, projects, sources, knowledge, assets, campaigns (+ deps.py)
+├── prompts/            every prompt as a Markdown file (see prompts/README.md)
 ├── migrations/         Alembic migrations of the database (alembic.ini next to server.py)
 └── assets/books/       sample books for trying the app (not committed)
 ```

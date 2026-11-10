@@ -51,15 +51,15 @@ from functools import cache
 from typing import TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field, model_validator
 
+from app.core import prompt_files
 from app.agents.discussion_tools import MAX_PASSAGES, SEARCH_K, Research, make_tools, start_research
 from app.core import prompts, tracing
 from app.core import state as db
 from app.core.config import LLM_MODEL
-from app.core.guard import UNTRUSTED_RULE, check_output, injection_note, quote_untrusted, scan_third_party
+from app.core.guard import check_output, injection_note, quote_untrusted, scan_third_party
 from app.core.llm import TEMPERATURES, GenerationError, chat_model, is_configured, model_failure, structured, tokens_used
 from app.core.logs import current_request_id
 from app.core.platforms import PLATFORM_RULES, _publishable
@@ -80,84 +80,19 @@ MAX_TOOL_CALLS = 6  # tool calls in the whole research
 MAX_RESULT_CHARS = 12000  # a tool result is cut to this length for the model (4 passages of ~500 tokens fit)
 
 # How to write the reply, per platform. The social platforms use the generator's reply rules (style.PLATFORM_REPLY).
-REPLY_RULES: dict[DiscussionPlatform, str] = {
-    **PLATFORM_REPLY,
-    "reddit": "as a Reddit comment of 60-200 words: conversational and specific, no hashtags, no marketing tone; "
-              "Redditors dislike self-promotion",
-    "forum": "as a forum reply of 60-200 words: helpful and specific, no hashtags",
-    "other": "as a reply of 40-150 words that fits the discussion's tone, no hashtags",
-}
+REPLY_RULES: dict[DiscussionPlatform, str] = {**PLATFORM_REPLY, **prompt_files.table("discussion_reply_rules")}
 
-
-RESEARCH_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You help an author decide whether to join an online discussion with material from their own book. Your job "
-     "now is research only: find out what the book says about the points of the discussion. Do not write a reply.\n"
-     "Work like this:\n"
-     "1. Call get_book_profile to see what the book covers.\n"
-     "2. Find the 1-3 main questions or claims of the discussion that the book might speak to.\n"
-     "3. Search the book once for each with search_book_material, in the words the book would use. If a search finds "
-     "nothing relevant, try once more with other words, then move on.\n"
-     "4. Stop calling tools when you have passages for the main points, or when the book clearly does not cover "
-     "them. You have at most {max_tool_calls} tool calls in total.\n"
-     "Then answer with short research notes in plain text: each main point of the discussion, with the numbers of "
-     "the passages that relate to it as [n], or 'not covered'. Use only what the tools returned.\n"
-     "The discussion comes in a <post> block. " + UNTRUSTED_RULE),
-    ("human", "Platform: {platform}\nWhat the author would like to bring in: {angle}\n\nThe discussion:\n{discussion}"),
-])
-
+RESEARCH_PROMPT = prompt_files.chat_prompt("discussion_research")  # prompts/discussion_research.md
 
 # Where the discussion is: elsewhere (the author joins as a knowledgeable person) or on the author's own Facebook Page
 # (a reader's comment, answered as the author). Filled into the assess and draft prompts.
-SITUATION = {
-    "discussion": "",
-    "own_page": "This discussion is a reader's comment on the author's OWN Facebook Page, under a post about the book. "
-                "Answering readers there is welcome: choose contribute whenever the passages can answer or enrich "
-                "the comment, more_context only if the comment cannot be understood, and skip for spam, abuse or "
-                "comments that need no answer (e.g. a single emoji).\n",
-}
-ROLE = {
-    "discussion": "The author takes part as a knowledgeable person, not as a seller. Do not name the book or the "
-                  "author in the reply; whether to mention the book is a separate choice the author makes from your "
-                  "advice.",
-    "own_page": "The reply is posted as the author's own Facebook Page under a reader's comment: write as the author "
-                "in the first person, warm and personal, talking to this reader (e.g. \"In chapter 3 I argue ...\"). "
-                "Mentioning \"my book\" or a chapter is natural here; never push a sale or add links.",
-}
+# (prompts/discussion_situation.md; a non-empty situation ends with a line break before "Decide ...")
+SITUATION = {mode: text + "\n" if text else "" for mode, text in prompt_files.table("discussion_situation").items()}
+ROLE = prompt_files.table("discussion_role")  # prompts/discussion_role.md
 
+ASSESS_PROMPT = prompt_files.chat_prompt("discussion_assess")  # prompts/discussion_assess.md
 
-ASSESS_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You advise an author whether to join an online discussion with material from their own book. {situation}"
-     "Decide from the discussion, the book and the numbered passages found in it:\n"
-     "• contribute: the passages let the author add something substantive to what is actually being asked or "
-     "claimed (an idea, an example, an argument), not just a loosely related topic.\n"
-     "• more_context: the pasted text is too short or fragmentary to tell what is being discussed (e.g. replies "
-     "without the post they answer). Say what the author should copy in addition.\n"
-     "• skip: the book has nothing useful to add, or a reply would only be advertising.\n"
-     "Without any passages, never choose contribute. Be honest: skipping is a good outcome when the book does not "
-     "fit. Cite the passages your reason relies on as [n]. Write for the author, in plain text.\n"
-     "The discussion comes in a <post> block, the passages in <passage n=\"...\"> blocks, the research notes in a "
-     "<background> block. " + UNTRUSTED_RULE),
-    ("human", "Book: {book}\nPlatform: {platform}\nWhat the author would like to bring in: {angle}\n\n"
-              "The discussion:\n{discussion}\n\nResearch notes:\n{notes}\n\nPassages from the book:\n\n{context}"),
-])
-
-
-DRAFT_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You write a reply for an author to post in an online discussion, {rules}. {role}\n"
-     "Respond to what the discussion actually asks or claims first, then add what the book contributes: its idea, "
-     "argument or example. Use ONLY facts and ideas from the numbered passages, and cite each passage you use as [n] "
-     "right after the statement; the markers are removed before posting. Never invent facts, names, numbers or "
-     "quotes. Write in the discussion's language, plain text without Markdown.\n"
-     "The discussion comes in a <post> block, the passages in <passage n=\"...\"> blocks. " + UNTRUSTED_RULE +
-     "\n\n{style}"),
-    ("human", "Book: {book}\nWhat the author would like to bring in: {angle}\nWhy this is a good opportunity: {reason}"
-              "\n\nThe discussion:\n{discussion}\n\nPassages from the book:\n\n{context}"),
-])
-
-
+DRAFT_PROMPT = prompt_files.chat_prompt("discussion_draft")  # prompts/discussion_draft.md
 
 
 class Assessment(BaseModel):

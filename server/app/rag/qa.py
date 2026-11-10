@@ -37,13 +37,12 @@ from functools import cache
 from typing import TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
+from app.core import prompt_files
 from app.core import prompts, tracing
 from app.core.config import LLM_MODEL, MIN_RELEVANCE, RETRIEVAL_MODE
-from app.core.guard import UNTRUSTED_RULE
 from app.core.logs import current_request_id
 from app.core.llm import (
     STRUCTURED_ATTEMPTS, TEMPERATURES, GenerationError, chat_model, is_configured, model_failure, structured, tokens_used,
@@ -62,40 +61,13 @@ logger = logging.getLogger(__name__)
 HISTORY_TURNS = 4  # how many earlier turns the model sees (older ones are left out to keep prompts small)
 HISTORY_ANSWER_CHARS = 1200  # earlier answers are shortened to this length in the prompt
 
-QA_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You are a knowledgeable research assistant who answers questions about the user's books.\n"
-     "Answer using ONLY the numbered source passages; the book background only helps you understand the "
-     "overall context. Cite every passage you use with its number in square brackets, e.g. [2], right after "
-     "the statement it supports. Start with a direct answer, then explain in short paragraphs; quote the book "
-     "briefly when it helps. Write plain text without Markdown (no **, no #); for lists, start lines with '• '.\n"
-     "Earlier turns of the conversation may come before the question: use them to understand what the user "
-     "refers to, but they are not a source; cite only the numbered passages given with the current question.\n"
-     "If the passages do not answer the question, say so honestly and mention what they do cover instead. "
-     "Never guess and never use outside knowledge.\n"
-     "The passages come as <passage n=\"...\"> blocks; cite passage n as [n]. " + UNTRUSTED_RULE + "{tools_note}"),
-    MessagesPlaceholder("history"),
-    ("human", "Question: {question}\n\nBook background:\n{background}\n\nSource passages:\n\n{context}"),
-])
+QA_PROMPT = prompt_files.chat_prompt("qa_answer")  # prompts/qa_answer.md
 
 # Added to the system prompt when the model gets the chat tools.
-TOOLS_NOTE = (
-    "\nYou can also call tools, but only when the question needs them: list_books for questions about the "
-    "library itself (which books, authors, themes); always call it for those, because the passages and background "
-    "show only the books that matched the search. check_platform_fit to check a post for a social platform, and "
-    "draft_social_post when the user asks you to write a post. Questions about what the books say are answered "
-    "from the passages, without tools. You may use facts from tool results too; do not put [n] markers on them. "
-    "When you present a drafted post, show it in full and mention that it was saved to the asset library."
-)
+# Added to the system prompt when the model gets the chat tools (prompts/qa_tools_note.md).
+TOOLS_NOTE = "\n" + prompt_files.text("qa_tools_note")
 
-CONDENSE_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You turn the user's latest message in a conversation about books into a standalone search question. "
-     "Use the conversation only to resolve what the message refers to (pronouns, 'that chapter', 'the second "
-     "point', 'and what about ...'). Keep the user's language and intent; do not answer it and add nothing new. "
-     "If the message is already standalone, return it unchanged."),
-    ("human", "Conversation so far:\n{history}\n\nLatest message: {question}"),
-])
+CONDENSE_PROMPT = prompt_files.chat_prompt("qa_condense")  # prompts/qa_condense.md
 
 
 class StandaloneQuestion(BaseModel):

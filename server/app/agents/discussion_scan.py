@@ -21,14 +21,14 @@ import logging
 import re
 from typing import Any
 
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_tavily import TavilySearch
 from pydantic import BaseModel, Field
 
+from app.core import prompt_files
 from app.agents.discussion_tools import BookNotReady, ready_books
 from app.core import config, prompts, tracing
 from app.core import state as db
-from app.core.guard import UNTRUSTED_RULE, clean_text, quote_untrusted, scan_third_party
+from app.core.guard import clean_text, quote_untrusted, scan_third_party
 from app.core.llm import TEMPERATURES, GenerationError, is_configured, model_failure, structured
 from app.core.schemas import Fit, ScannedThread, ScanRequest, ScanResult
 from app.rag.retrieval import source_name
@@ -41,22 +41,7 @@ EXCERPT_CHARS = 600  # characters of each thread the triage sees
 HEADER_LINES = 20  # lines at the top of a page searched for the title (where the post begins)
 FIT_ORDER: dict[Fit, int] = {"high": 0, "medium": 1, "low": 2}
 
-TRIAGE_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You help an author find online discussions where material from their own book would genuinely help. For each "
-     "numbered Reddit thread, judge how well the book could add something substantive to what the thread asks or "
-     "discusses:\n"
-     "• high: the thread asks or argues about something the book covers directly; a reply from the book would help.\n"
-     "• medium: related; the book could add an example or a point, but it is not the thread's core question.\n"
-     "• low: off topic, a different kind of request (e.g. hardware, fiction recommendations, memes, news without "
-     "discussion), or a reply would only be advertising.\n"
-     "Judge from the excerpt only; it may be cut short. Rate every thread exactly once. For each, write one sentence "
-     "for the author: how the book connects, or why it does not.\n"
-     "The threads come in <post n=\"...\"> blocks. " + UNTRUSTED_RULE),
-    ("human", "Book: {book}\nThe author's topic: {topic}\n\nThreads:\n\n{threads}"),
-])
-
-
+TRIAGE_PROMPT = prompt_files.chat_prompt("discussion_scan_triage")  # prompts/discussion_scan_triage.md
 
 
 class ThreadFit(BaseModel):
