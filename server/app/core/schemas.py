@@ -362,6 +362,8 @@ class ConversationInfo(BaseModel):
 # ---------- Discussions (Market Intelligence: Discussion Relevance Agent) ----------
 # Where a discussion was found. The social platforms match Platform, so the draft reply can be checked against
 # their rules (core/platforms.py); "reddit", "forum" and "other" have no fixed rules.
+# Prompt-injection risk of someone else's text (core/guard.scan_third_party; the same values as guard.InjectionRisk).
+InjectionRisk = Literal["none", "low", "high"]
 DiscussionPlatform = Literal["reddit", "linkedin", "youtube", "x", "facebook", "instagram", "tiktok", "forum", "other"]
 # What the agent recommends: write a reply, ask the author for more of the discussion, or leave it.
 Recommendation = Literal["contribute", "more_context", "skip"]
@@ -427,6 +429,11 @@ class DiscussionAnalysis(BaseModel):
     search_queries: list[str] = []  # what the agent searched in the book, in order
     tool_calls: list[ToolCallRecord] = []  # the agent's tool calls, for the trace in the GUI
     platform_issues: list[str] = []  # problems of the draft for the platform (length, AI clichés left after the rewrite)
+    # Prompt-injection scan of the discussion (guard.scan_third_party): flagged, not blocked; "rule: excerpt" lines.
+    injection_risk: InjectionRisk = "none"
+    injection_findings: list[str] = []
+    # Output guard of the drafted reply (guard.check_output): an injection that got through, foreign links.
+    output_issues: list[str] = []
     humanize: int = 70  # the "how human" setting the reply was written with (analyses before it was a setting: 70)
     tone: Tone = "neutral"  # the tone the reply was written in
     facebook_comment_id: str = ""  # the comment on the author's Facebook Page it answers ("own Page" mode); "" = none
@@ -488,6 +495,8 @@ class ScannedThread(BaseModel):
     score: float = 0.0  # the search engine's relevance to the topic (0-1)
     fit: Fit
     why: str  # one sentence: how the book connects, or why it does not
+    injection_risk: InjectionRisk = "none"  # prompt-injection scan of title and text (guard.scan_third_party)
+    injection_findings: list[str] = []
 
 
 class ScanResult(BaseModel):
@@ -538,6 +547,8 @@ class FacebookComment(BaseModel):
     reply_count: int = 0
     permalink_url: str | None = None
     answered: bool = False  # the Page has replied to it (set by recent_threads)
+    injection_risk: InjectionRisk = "none"  # prompt-injection scan of the message (set by GET /facebook/comments)
+    injection_findings: list[str] = []
 
 
 class FacebookPosts(BaseModel):

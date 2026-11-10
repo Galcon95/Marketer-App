@@ -9,12 +9,13 @@
 import { useState, type ReactNode } from "react";
 import {
   AlertTriangle, BookMarked, Check, CircleSlash, Copy, ExternalLink, MessageCircle, MessageSquarePlus, Pencil, Send,
-  ThumbsUp, Trash2, UserCheck, X,
+  ShieldAlert, ThumbsUp, Trash2, UserCheck, X,
 } from "lucide-react";
 import {
   api, cleanText, DISCUSSION_PLATFORMS, errorMessage, humanizeLabel, TONES, type DiscussionAnalysis, type Recommendation,
 } from "@/lib/api";
 import { CitationList, TextWithMarkers } from "./AssetCard";
+import InjectionBadge, { findingRules } from "./InjectionBadge";
 import ToolCallCard from "./ToolCallCard";
 import { Badge, Button, ErrorNote } from "./ui";
 
@@ -129,6 +130,7 @@ export default function DiscussionCard({ analysis: a, book, onChange }: {
         {a.replied_url && <Badge tone="success" icon={Send}>replied</Badge>}
         {a.tone && a.tone !== "neutral" && <Badge>{TONES.find((t) => t.value === a.tone)?.label ?? a.tone}</Badge>}
         {a.edited && <Badge tone="warning" icon={Pencil}>edited</Badge>}
+        <InjectionBadge risk={a.injection_risk} findings={a.injection_findings} />
         {hasReply && (
           <span title={`Written with "how human" ${a.humanize} (${humanizeLabel(a.humanize)}). ${aiTells ? aiTells : "No AI-typical wording found."}`}>
             <Badge tone={aiTells ? "warning" : "success"} icon={UserCheck}>human {a.humanize}</Badge>
@@ -137,6 +139,14 @@ export default function DiscussionCard({ analysis: a, book, onChange }: {
         <Badge mono>{when}</Badge>
         <Button variant="ghost" size="sm" icon={Trash2} onClick={remove} title="Delete this analysis">Delete</Button>
       </div>
+
+      {a.injection_risk === "high" && (
+        <span className="bc-hint" role="alert" style={{ color: "var(--danger-text)", display: "flex", gap: 6 }}>
+          <ShieldAlert size={14} className="bc-ico" aria-hidden style={{ flex: "none", marginTop: 2 }} />
+          The discussion contains text that looks like instructions to an AI ({findingRules(a.injection_findings)}).
+          The agent only read it as quoted data and was told not to follow it. Check the reply before you post it.
+        </span>
+      )}
 
       <details>
         <summary className="bc-hint" style={{ cursor: "pointer" }}>
@@ -199,6 +209,12 @@ export default function DiscussionCard({ analysis: a, book, onChange }: {
                 )}
               </div>
             </>
+          )}
+          {(a.output_issues ?? []).length > 0 && draft === null && (
+            <span className="bc-hint" role="alert" style={{ color: "var(--danger-text)", display: "flex", gap: 6 }}>
+              <ShieldAlert size={14} className="bc-ico" aria-hidden style={{ flex: "none", marginTop: 2 }} />
+              {a.output_issues.join(" ")}
+            </span>
           )}
           {!a.edited && a.platform_issues.length > 0 && draft === null && (
             <span className="bc-hint" style={{ color: "var(--warning-text)", display: "flex", gap: 6 }}>

@@ -9,13 +9,18 @@ Admin only: the Page in server/.env belongs to the app's administrator (DEFAULT_
 publish to it. An asset is published once, a reply posted once; the id, link and time are saved with it.
 """
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import admin_only, owned_asset, owned_discussion
 from app.core import state as db
+from app.core.guard import output_blocked, scan_third_party
 from app.core.schemas import Asset, DiscussionAnalysis, FacebookStatus, FacebookThread
 from app.db import records
 from app.social import facebook
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(admin_only)])
 
@@ -51,15 +56,18 @@ def publish(asset: Asset = Depends(owned_asset)):
         HTTPException: 403 for anyone but the administrator; 404 when no asset of the user has this id; 409 if it
             was published already; 422 if it is not a Facebook post or its text is empty or too long; 503 if
             Facebook is not connected or the token is invalid; 429, 502 or 504 if Facebook fails; 500 if it was
-            published but the record could not be saved.
+            published but the record could not be saved; 422 also if the text looks like a prompt injection got
+            into it (output guard).
     """
     if asset.asset_type not in PUBLISHABLE or asset.platform != "facebook":
         raise HTTPException(422, "Only reader questions and social posts written for Facebook can be published to "
                                  "the Page.")
     if asset.published_id:
         raise HTTPException(409, f"Already published: {asset.published_url}")
+    text = facebook.publishable_text(asset.text)
+    _refuse_injection(text, "post")
     try:
-        post = facebook.publish_post(facebook.publishable_text(asset.text))
+        post = facebook.publish_post(text)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     except facebook.FacebookError as e:
@@ -87,9 +95,31 @@ def comments(posts: int = Query(default=10, ge=1, le=25)):
             invalid; 429, 502 or 504 if Facebook fails.
     """
     try:
-        return facebook.recent_threads(posts)
+        threads = facebook.recent_threads(posts)
     except facebook.FacebookError as e:
         raise HTTPException(e.status_code, str(e)) from e
+    return [_scanned(thread) for thread in threads]
+
+
+def _scanned(thread: FacebookThread) -> FacebookThread:
+    """The thread with every reader's comment checked for prompt injection (flagged for the GUI, not removed; the
+    Page's own replies are the author's and are not scanned)."""
+    comments = []
+    for c in thread.comments:
+        if not c.from_page and c.message:
+            risk, findings = scan_third_party(c.message)
+            c = c.model_copy(update={"injection_risk": risk, "injection_findings": findings})
+        comments.append(c)
+    return thread.model_copy(update={"comments": comments})
+
+
+def _refuse_injection(text: str, what: str) -> None:
+    """Output guard before anything is posted: refuse a text in which a prompt injection seems to have got through
+    (guard.output_blocked), e.g. a reply that repeats a planted "ignore your instructions" line."""
+    if output_blocked(text):
+        logger.warning("Refused to post a %s on Facebook: it looks like a prompt injection", what)
+        raise HTTPException(422, f"Not posted: the {what} contains text that looks like instructions to an AI "
+                                 "(possibly copied from someone else's comment). Edit it and try again.")
 
 
 @router.post("/discussions/{discussion_id}/reply/facebook", response_model=DiscussionAnalysis)
@@ -107,7 +137,8 @@ def reply(analysis: DiscussionAnalysis = Depends(owned_discussion)):
         HTTPException: 403 for anyone but the administrator; 404 when no analysis of the user has this id; 409 if the
             reply was posted already; 422 if the analysis is not about a comment on the Page or has no reply; 503 if
             Facebook is not connected or the token is invalid; 404, 429, 502 or 504 if Facebook fails (404: the
-            comment was deleted); 500 if it was posted but the record could not be saved.
+            comment was deleted); 500 if it was posted but the record could not be saved; 422 also if the reply
+            looks like a prompt injection got into it (output guard).
     """
     if not analysis.facebook_comment_id:
         raise HTTPException(422, "This analysis is not about a comment on your Facebook Page.")
@@ -116,6 +147,7 @@ def reply(analysis: DiscussionAnalysis = Depends(owned_discussion)):
     text = facebook.publishable_text(analysis.reply)
     if not text:
         raise HTTPException(422, "There is no reply to post.")
+    _refuse_injection(text, "reply")
     try:
         posted = facebook.reply_to_comment(analysis.facebook_comment_id, text)
     except ValueError as e:

@@ -11,6 +11,7 @@ import { useState } from "react";
 import { Bot, CheckCheck, ExternalLink, MessagesSquare, RefreshCw } from "lucide-react";
 import { api, type FacebookComment, type FacebookThread } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
+import InjectionBadge from "./InjectionBadge";
 import { Badge, Button, ErrorNote, Placeholder } from "./ui";
 
 /** The comment as text for the agent: the Page post, the comment, then the replies under it (yours as "Me"). */
@@ -78,6 +79,7 @@ export default function FacebookComments({ pageName, onAnalyse }: {
                     <strong style={{ fontSize: 13 }}>{c.author ?? "A reader"}</strong>
                     <span className="bc-hint" style={{ margin: 0 }}>{when(c.created_time)}</span>
                     {c.answered && <Badge tone="success" icon={CheckCheck}>answered</Badge>}
+                    <InjectionBadge risk={c.injection_risk} findings={c.injection_findings} />
                     {replies > 0 && <Badge>{replies} repl{replies > 1 ? "ies" : "y"}</Badge>}
                   </div>
                   <p style={{ margin: "4px 0 8px", whiteSpace: "pre-wrap" }}>{c.message || "(no text: a sticker or picture)"}</p>

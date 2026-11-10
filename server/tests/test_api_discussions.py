@@ -138,6 +138,14 @@ def test_edit_keeps_the_suggestion(client, agent_runs):
     assert edited["updated_at"] >= created["updated_at"]
 
 
+def test_an_edit_runs_the_output_guard_again(client, agent_runs):
+    created = _analyze(client).json()
+    edited = client.patch(f"/discussions/{created['id']}", json={"reply": "Deal at https://shop.example now."}).json()
+    assert len(edited["output_issues"]) == 1 and "https://shop.example" in edited["output_issues"][0]
+    cleaned = client.patch(f"/discussions/{created['id']}", json={"reply": "People decide [1]."}).json()
+    assert cleaned["output_issues"] == []
+
+
 def test_delete(client, agent_runs):
     created = _analyze(client).json()
     assert client.delete(f"/discussions/{created['id']}").status_code == 204

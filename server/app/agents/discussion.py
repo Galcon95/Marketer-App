@@ -59,7 +59,7 @@ from app.agents.discussion_tools import MAX_PASSAGES, SEARCH_K, Research, make_t
 from app.core import prompts, tracing
 from app.core import state as db
 from app.core.config import LLM_MODEL
-from app.core.guard import UNTRUSTED_RULE, quote_untrusted
+from app.core.guard import UNTRUSTED_RULE, check_output, injection_note, quote_untrusted, scan_third_party
 from app.core.llm import TEMPERATURES, GenerationError, chat_model, is_configured, model_failure, structured, tokens_used
 from app.core.logs import current_request_id
 from app.core.platforms import PLATFORM_RULES, _publishable
@@ -88,6 +88,7 @@ REPLY_RULES: dict[DiscussionPlatform, str] = {
     "other": "as a reply of 40-150 words that fits the discussion's tone, no hashtags",
 }
 
+
 RESEARCH_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
      "You help an author decide whether to join an online discussion with material from their own book. Your job "
@@ -104,6 +105,7 @@ RESEARCH_PROMPT = ChatPromptTemplate.from_messages([
      "The discussion comes in a <post> block. " + UNTRUSTED_RULE),
     ("human", "Platform: {platform}\nWhat the author would like to bring in: {angle}\n\nThe discussion:\n{discussion}"),
 ])
+
 
 # Where the discussion is: elsewhere (the author joins as a knowledgeable person) or on the author's own Facebook Page
 # (a reader's comment, answered as the author). Filled into the assess and draft prompts.
@@ -123,6 +125,7 @@ ROLE = {
                 "Mentioning \"my book\" or a chapter is natural here; never push a sale or add links.",
 }
 
+
 ASSESS_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
      "You advise an author whether to join an online discussion with material from their own book. {situation}"
@@ -140,6 +143,7 @@ ASSESS_PROMPT = ChatPromptTemplate.from_messages([
               "The discussion:\n{discussion}\n\nResearch notes:\n{notes}\n\nPassages from the book:\n\n{context}"),
 ])
 
+
 DRAFT_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
      "You write a reply for an author to post in an online discussion, {rules}. {role}\n"
@@ -152,6 +156,8 @@ DRAFT_PROMPT = ChatPromptTemplate.from_messages([
     ("human", "Book: {book}\nWhat the author would like to bring in: {angle}\nWhy this is a good opportunity: {reason}"
               "\n\nThe discussion:\n{discussion}\n\nPassages from the book:\n\n{context}"),
 ])
+
+
 
 
 class Assessment(BaseModel):
@@ -212,6 +218,8 @@ class DiscussionState(TypedDict, total=False):
     assessment: Assessment
     draft: DraftReply  # only for contribute
     platform_issues: list[str]  # problems of the draft for the platform
+    injection_findings: list[str]  # high-risk findings of the discussion's injection scan (for the prompt note)
+    output_issues: list[str]  # what the output guard found in the draft
     ai_tells: list[str]  # AI clichés found in the draft by the last check
     rewritten: bool  # the rewrite step ran (it runs at most once)
     reason: str  # final texts, with [n] renumbered to match citations
@@ -246,12 +254,16 @@ def analyze_discussion(project_id: str, req: DiscussionRequest) -> DiscussionAna
     if not is_configured():
         raise GenerationError(503, "No API key set. Add OPENROUTER_API_KEY (or OPENAI_API_KEY) and restart the server.")
     research = start_research(project_id, req.source_id)
+    risk, findings = scan_third_party(req.discussion)
+    if risk == "high":
+        logger.warning("Discussion with a likely prompt injection (%s); analysed as quoted data with a security note",
+                       ", ".join(f.split(":", 1)[0] for f in findings))
     try:
         with tracing.scope():
             state = _graph().invoke(
                 {"project_id": project_id, "discussion": req.discussion, "platform": req.platform, "angle": req.angle,
                  "humanize": req.humanize, "tone": req.tone, "own_page": bool(req.facebook_comment_id),
-                 "research": research},
+                 "research": research, "injection_findings": findings if risk == "high" else []},
                 config={"run_name": "analyze_discussion", "tags": ["discussion", "agent"],
                         "metadata": {"request_id": current_request_id(), "prompt_version": PROMPT_VERSION,
                                      "project_id": project_id, "source_id": req.source_id, "llm_model": LLM_MODEL,
@@ -274,7 +286,8 @@ def analyze_discussion(project_id: str, req: DiscussionRequest) -> DiscussionAna
         reply=state.get("suggested_reply", ""),
         book_mention=BookMention(suggest=draft.mention_book, reason=draft.mention_reason) if draft else None,
         citations=state["citations"], search_queries=list(research.queries), tool_calls=state.get("tool_calls", []),
-        platform_issues=state.get("platform_issues", []), humanize=req.humanize, tone=req.tone,
+        platform_issues=state.get("platform_issues", []), injection_risk=risk, injection_findings=findings,
+        output_issues=state.get("output_issues", []), humanize=req.humanize, tone=req.tone,
         facebook_comment_id=req.facebook_comment_id, model=LLM_MODEL, prompt_version=PROMPT_VERSION,
         tokens=state.get("tokens", 0), created_at=now, updated_at=now)
 
@@ -377,7 +390,8 @@ def _draft(state: DiscussionState) -> DiscussionState:
 
 
 def _check(state: DiscussionState) -> DiscussionState:
-    """Check node: the draft against the platform's hard character limit, and AI clichés. No model call."""
+    """Check node: the draft against the platform's hard character limit, AI clichés and the output guard
+    (guard.check_output: injection patterns, links not found in the passages). No model call."""
     platform = state.get("platform", "forum")
     text = _publishable(state["draft"].reply)
     issues = []
@@ -385,7 +399,10 @@ def _check(state: DiscussionState) -> DiscussionState:
         issues.append(f"Too long for {rules.label}: {len(text)} characters, the limit is {rules.max_chars}.")
     if tells := find_ai_tells(text, emojis_expected=platform in ("instagram", "tiktok")):
         issues.append("Sounds AI-written: " + ", ".join(tells) + ".")
-    return {"platform_issues": issues, "ai_tells": tells}
+    # Output guard: an injection in the discussion that got through, or a link the book's passages don't contain.
+    research = state.get("research")
+    passages = "\n".join(chunk.text for chunk, _ in research.passages) if research else ""
+    return {"platform_issues": issues, "ai_tells": tells, "output_issues": check_output(text, allowed=passages)}
 
 
 def _after_check(state: DiscussionState) -> str:
@@ -423,8 +440,10 @@ def _finalize(state: DiscussionState) -> DiscussionState:
 
 # ---------- Helpers ----------
 def _quoted_discussion(state: DiscussionState) -> str:
-    """The discussion as data for a prompt: a <post platform="..."> block."""
-    return quote_untrusted(state["discussion"], "post", platform=state.get("platform", "forum"))
+    """The discussion as data for a prompt: a <post platform="..."> block, followed by the app's security note when
+    the injection scan found a likely injection in it (guard.injection_note)."""
+    return (quote_untrusted(state["discussion"], "post", platform=state.get("platform", "forum"))
+            + injection_note(state.get("injection_findings", [])))
 
 
 def _rules(state: DiscussionState) -> str:

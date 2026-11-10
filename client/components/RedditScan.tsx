@@ -13,6 +13,7 @@
 import { useState, type SubmitEvent } from "react";
 import { Bot, ChevronDown, ExternalLink, FileText, Radar, SearchX, TextQuote } from "lucide-react";
 import { api, errorMessage, type Fit, type ScanResult, type ScanTime, type ScannedThread } from "@/lib/api";
+import InjectionBadge from "./InjectionBadge";
 import { Badge, Button, ErrorNote, Placeholder } from "./ui";
 
 const FIT: Record<Fit, { label: string; tone: "success" | "warning" | "neutral" }> = {
@@ -170,6 +171,7 @@ function ThreadRow({ thread: t, onAnalyse }: { thread: ScannedThread; onAnalyse:
         {t.full_text
           ? <Badge icon={FileText}>Full text</Badge>
           : <span title="The search had only a short excerpt. Open the thread and copy the discussion."><Badge icon={TextQuote}>Snippet only</Badge></span>}
+        <InjectionBadge risk={t.injection_risk} findings={t.injection_findings} />
       </div>
       <div style={{ fontWeight: 600, margin: "8px 0 4px" }}>{t.title}</div>
       {excerpt && (

@@ -21,7 +21,8 @@ from app.db.tables import (ApiKeyRow, AssetRow, Base, ChunkRow, ConversationRow,
 # Fields saved in a JSON column (nested models, lists): written in JSON mode, so datetimes inside become strings.
 ASSET_JSON_FIELDS = {"citations", "source_ids", "ai_tells"}
 CONVERSATION_JSON_FIELDS = {"turns"}
-DISCUSSION_JSON_FIELDS = {"book_mention", "citations", "search_queries", "tool_calls", "platform_issues"}
+DISCUSSION_JSON_FIELDS = {"book_mention", "citations", "search_queries", "tool_calls", "platform_issues",
+                          "injection_findings", "output_issues"}
 SUMMARY_JSON_FIELDS = {"themes", "chapters"}
 
 

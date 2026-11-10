@@ -14,6 +14,7 @@ from app.agents import discussion, discussion_scan
 from app.agents.discussion_tools import BookNotReady
 from app.api.deps import check_sources, checked_optional, checked_text, llm_limits, owned_discussion, owned_project
 from app.core import state as db
+from app.core.guard import check_output
 from app.core.llm import GenerationError
 from app.core.schemas import DiscussionAnalysis, DiscussionRequest, DiscussionUpdate, ScanRequest, ScanResult
 from app.db import records
@@ -123,12 +124,20 @@ def update_discussion(body: DiscussionUpdate, analysis: DiscussionAnalysis = Dep
             cannot be saved.
     """
     reply = checked_text(body.reply, "asset_text", "reply", check_injection=False)  # the author's own text, not a prompt
-    analysis = analysis.model_copy(update={"reply": reply, "edited": True, "updated_at": db.now()})
+    # The output guard again, so its warnings match the edited text (links from the cited passages are fine).
+    output_issues = check_output(reply, allowed=cited_text(analysis))
+    analysis = analysis.model_copy(update={"reply": reply, "edited": True, "output_issues": output_issues,
+                                           "updated_at": db.now()})
     try:
         records.save_discussion(analysis)
     except OSError as e:  # DatabaseError
         raise HTTPException(500, "The edited reply could not be saved.") from e
     return analysis
+
+
+def cited_text(analysis: DiscussionAnalysis) -> str:
+    """The full text of the passages an analysis cites (where links in a reply may come from)."""
+    return "\n".join(chunk.text if (chunk := db.chunks.get(c.chunk_id)) else c.quote for c in analysis.citations)
 
 
 @router.delete("/discussions/{discussion_id}", status_code=204)

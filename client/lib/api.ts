@@ -132,12 +132,17 @@ export interface FacebookPost {
   comment_count: number;
 }
 /** A comment on a Page post (parent_id set = a reply to a comment). Someone else's text, except from_page ones. */
+/** Prompt-injection risk of someone else's text (server guard.scan_third_party). */
+export type InjectionRisk = "none" | "low" | "high";
+
 export interface FacebookComment {
   id: string; post_id: string; message: string; created_time: string;
   author: string | null; // null when Facebook does not return the name
   from_page: boolean; // written by the Page (your own replies)
   parent_id: string | null; reply_count: number; permalink_url: string | null;
   answered: boolean; // the Page has replied to it
+  injection_risk: InjectionRisk; // prompt-injection scan of the message (readers' comments only)
+  injection_findings: string[]; // "rule: excerpt" lines
 }
 /** A post with its comments, newest first (GET /facebook/comments). */
 export interface FacebookThread { post: FacebookPost; comments: FacebookComment[] }
@@ -248,6 +253,8 @@ export interface ScannedThread {
   score: number; // the search engine's relevance to the topic (0-1)
   fit: Fit;
   why: string;
+  injection_risk: InjectionRisk; // prompt-injection scan of title and text
+  injection_findings: string[];
 }
 /** Result of a Reddit scan (not saved): the threads, best fit first. */
 export interface ScanResult {
@@ -281,6 +288,9 @@ export interface DiscussionAnalysis {
   search_queries: string[]; // what the agent searched, in order
   tool_calls: ToolCallRecord[]; // the agent's trace
   platform_issues: string[]; // problems of the draft for the platform (length, AI clichés left after the rewrite)
+  injection_risk: InjectionRisk; // prompt-injection scan of the discussion: flagged, not blocked
+  injection_findings: string[]; // "rule: excerpt" lines
+  output_issues: string[]; // output guard of the reply: an injection that got through, links not from the book
   humanize: number; // the "how human" setting the reply was written with
   tone: Tone;
   facebook_comment_id?: string; // the comment on the author's Facebook Page it answers; "" = a discussion elsewhere

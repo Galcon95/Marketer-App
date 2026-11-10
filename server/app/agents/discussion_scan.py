@@ -13,7 +13,8 @@ no votes, comment counts or dates, and cannot fetch a thread on demand (Reddit b
 without full text the author opens the thread and copies the discussion.
 
 Everything Tavily returns is third-party text: cleaned by the guard and given to the model only as quoted <post>
-blocks under guard.UNTRUSTED_RULE. Nothing is saved. Runs are traced in LangSmith as "scan_discussions".
+blocks under guard.UNTRUSTED_RULE; each thread is also scanned for prompt injection (guard.scan_third_party) and
+flagged in the result, so the author sees the risk before picking it. Nothing is saved. Runs are traced in LangSmith as "scan_discussions".
 """
 
 import logging
@@ -27,7 +28,7 @@ from pydantic import BaseModel, Field
 from app.agents.discussion_tools import BookNotReady, ready_books
 from app.core import config, prompts, tracing
 from app.core import state as db
-from app.core.guard import UNTRUSTED_RULE, clean_text, quote_untrusted
+from app.core.guard import UNTRUSTED_RULE, clean_text, quote_untrusted, scan_third_party
 from app.core.llm import TEMPERATURES, GenerationError, is_configured, model_failure, structured
 from app.core.schemas import Fit, ScannedThread, ScanRequest, ScanResult
 from app.rag.retrieval import source_name
@@ -54,6 +55,8 @@ TRIAGE_PROMPT = ChatPromptTemplate.from_messages([
      "The threads come in <post n=\"...\"> blocks. " + UNTRUSTED_RULE),
     ("human", "Book: {book}\nThe author's topic: {topic}\n\nThreads:\n\n{threads}"),
 ])
+
+
 
 
 class ThreadFit(BaseModel):
@@ -181,9 +184,13 @@ def _triage(req: ScanRequest, threads: list[dict[str, Any]]) -> tuple[list[Scann
     rated = []
     for i, t in enumerate(threads, 1):
         f = fits.get(i)
+        # Flagged for the author, not removed: the thread only reaches the agent after the author picks it (and the
+        # agent scans it again). Title, page text and snippet are all scanned.
+        risk, findings = scan_third_party("\n".join((t["title"], t["full_text"], t["snippet"])))
         rated.append(ScannedThread(
             url=t["url"], subreddit=t["subreddit"], title=t["title"], snippet=t["snippet"], full_text=t["full_text"],
-            score=t["score"], fit=f.fit if f else "low", why=f.why if f else "Not rated."))
+            score=t["score"], fit=f.fit if f else "low", why=f.why if f else "Not rated.", injection_risk=risk,
+            injection_findings=findings))
     return rated, tokens
 
 

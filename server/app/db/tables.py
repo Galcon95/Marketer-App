@@ -169,6 +169,9 @@ class DiscussionRow(Base):
     search_queries: Mapped[list] = mapped_column(Json)  # list of strings
     tool_calls: Mapped[list] = mapped_column(Json)  # list of schemas.ToolCallRecord
     platform_issues: Mapped[list] = mapped_column(Json)  # list of strings
+    injection_risk: Mapped[str] = mapped_column(Text, server_default="none")  # since migration 0013
+    injection_findings: Mapped[list] = mapped_column(Json, server_default="[]")  # list of strings
+    output_issues: Mapped[list] = mapped_column(Json, server_default="[]")  # list of strings
     humanize: Mapped[int] = mapped_column(Integer, server_default="70")  # 0-100 (since migration 0009)
     tone: Mapped[str] = mapped_column(Text, server_default="neutral")  # schemas.Tone (since migration 0010)
     facebook_comment_id: Mapped[str] = mapped_column(Text, server_default="")  # since migration 0012
