@@ -253,13 +253,50 @@ uv run python run_agent_eval.py              # all 12, with the judge
 uv run python run_agent_eval.py --no-judge   # decisions and checks only
 ```
 
-Results of the latest run: *to be added after the next run.*
+### Latest run (2026-11-10, commit `35a4b67`, prompt `discussion@83318870`, app and judge model `gpt-4o-mini`)
+
+| Measure | Result |
+|---|---|
+| Right decision (incl. acceptable alternatives) | **11 / 12 (0.92)**; exactly as expected 10 / 12 (0.83) |
+| Keyword traps and hype skipped | 3 / 3 |
+| Cites the book · fits the platform · no AI clichés | 1.00 · 1.00 · 1.00 (all 8 drafted replies) |
+| Ignores the planted injection | 1.00 (no discount code in reply or reason) |
+| Faithfulness (RAGAs) | 0.83 average; 6 of 8 scored replies ≥ 0.80 |
+| Relevance · tone (judge) | 1.00 · 0.88 |
+| Cost per discussion | 3.7 tool calls, ~14,000 tokens, 14.5 s on average |
+| Book-mention advice | 0 / 1 (see below) |
+
+Confusion matrix (rows: expected, columns: what the agent chose):
+
+| | contribute | more_context | skip |
+|---|---|---|---|
+| **contribute** (7) | 7 | 0 | 0 |
+| **more_context** (2) | 1 | 0 | 1 |
+| **skip** (3) | 0 | 0 | 3 |
+
+**What the run shows:**
+- **Strong:** it never drafted a reply for a poor fit (no false *contribute* on the traps), every reply was cited,
+  in the platform's limits and free of AI clichés, and the prompt injection had no effect.
+- **Weak spot 1: the agent never chose `more_context`.** For a lone reply without its post
+  (*"This. Exactly why the whole thing falls apart at scale…"*) it chose *contribute* and read "cities" into the
+  fragment (the only wrong decision). For the LinkedIn comment about a video that wasn't pasted it chose *skip*,
+  which is acceptable but not the best answer. The model prefers deciding over asking.
+- **Weak spot 2: faithfulness on the borderline case.** The YouTube jobs discussion scored 0.44: the reply added
+  claims about national politics that the passages don't contain. The other replies scored 0.79–1.00.
+- **Weak spot 3: book-mention advice is too cautious.** For *"recommend classic sci-fi with real science"*, naming
+  *Twenty Thousand Leagues* **is** the answer, but the agent advised against naming it. The rule "don't advertise"
+  outweighs the case where the reader asks for a book.
+- Possible fixes: a code rule (like "no passage → skip") that a very short text without a question gets
+  `more_context`; a few-shot example for a recommendation request; a stricter draft rule for borderline topics.
+  With 12 cases, each would need more test cases before trusting a change.
 
 ---
 
 ## 9. Known limitations
 
 - **Small test set.** 12 discussions: one changed decision moves the decision rate by 8 points.
+- **Rarely asks for more context.** In the eval it never chose `more_context`; it guesses from fragments instead.
+- **Too cautious about naming the book**, even when someone asks for a book recommendation.
 - **LLM as judge.** Relevance and tone are scored by a model, which is itself not always right.
 - **Reddit coverage.** Tavily finds threads only as a web search does; no votes, comment counts or dates, and for
   some threads only a snippet, so the author copies the thread by hand.

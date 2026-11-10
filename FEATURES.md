@@ -343,6 +343,11 @@ Three layers, all in code and on every request (never left to the model):
   injection, book-mention advice (all in code); faithfulness of the reply to its cited passages (RAGAs); relevance
   and tone (LLM judge, 1-5 rubric); tool calls, tokens and seconds per discussion.
 - HTML report with history of all agent runs, plus JSON and CSV.
+- First run (2026-11-10, `gpt-4o-mini`): right decision 11/12 (all 3 traps skipped, no false *contribute*),
+  every reply cited, within the platform's limits and free of AI clichés, injection ignored; faithfulness 0.83,
+  relevance 1.00, tone 0.88; on average 3.7 tool calls, ~14k tokens and 14.5 s per discussion. Weak spots: it never
+  chose *more_context* (one fragment got *contribute*), one borderline reply scored faithfulness 0.44, and it advised
+  against naming the book even when a reader asked for a recommendation. Details in `docs/AGENT.md`.
 
 ### Tests
 - Backend: 537 pytest tests in `server/tests/`, among them: relevance floor and not-covered answer, chunk headers, BM25 and hybrid fusion, temperatures per task, format examples and section check, guardrails, timeouts and retries of model calls, request ids and log format, prompt versions, quoting of untrusted text, structured-output schemas and retries, platform check, citations, chapter detection, structured retrieval filters, uploads (wrong types, duplicates), deleting a book with what belongs only to it, sign-in on every route, ownership (another user's data → 404), limits and budgets, API keys and MCP sign-in, the database layer, the Discussion agent (graph routing, tool limits, schemas, API), the Reddit scan (Tavily and model faked) and the Facebook client and endpoints (Graph API faked). Run `uv run pytest` in `server/`.
