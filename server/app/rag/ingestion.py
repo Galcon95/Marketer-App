@@ -18,7 +18,7 @@ import re
 import tempfile
 import threading
 from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from functools import cache
 from pathlib import Path
 
@@ -276,11 +276,15 @@ class BookLoader(BaseLoader):
       - paragraphs: wrapped lines are joined; a short line ending in punctuation ends a paragraph,
         and paragraphs are separated by a blank line (the splitter's preferred cut point);
       - words hyphenated at a line end are rejoined;
-      - short lines repeated on many pages (running headers/footers, page numbers) are dropped;
-      - chapters from the PDF's table of contents: a chapter starts at the line matching its
-        heading, or at the top of its page if no line matches. PDFs without a table of contents
-        (e.g. many Project Gutenberg files) get their chapters from heading lines in the text
-        instead ("CHAPTER IV." / "PART TWO", see _text_chapter_starts);
+      - short lines repeated on many pages (running headers/footers, page numbers) are dropped, and so are
+        short lines repeated at the top or bottom of pages (running headers that change per chapter);
+      - chapters, from the first of these that finds at least 3 (every book is laid out differently):
+          1. the PDF's table of contents (bookmarks);
+          2. headings set in a larger font than the text (_font_chapter_starts), e.g. a PDF exported from
+             Word without bookmarks;
+          3. heading lines in the text ("CHAPTER IV." / "PART TWO", _text_chapter_starts), e.g. many
+             Project Gutenberg files, whose headings are in the text's font.
+        A chapter starts at the line matching its heading, or at the top of its page if no line matches;
       - the Project Gutenberg license after "*** END OF THE PROJECT GUTENBERG EBOOK ..." becomes a
         section of its own (LICENSE_SECTION), so it is not part of the last chapter.
 
@@ -307,7 +311,9 @@ class BookLoader(BaseLoader):
         pages = self._read_pages()
         width = _typical_line_width(pages)
         repeated = _repeated_lines(pages)
-        chapter_starts = _chapter_starts(self._read_toc()) or _text_chapter_starts(pages)
+        chapter_starts = (_chapter_starts(self._read_toc()) or _font_chapter_starts(self._read_styled_lines())
+                          or _text_chapter_starts([(n, [l for l in ls if _repeat_key(l) not in repeated])
+                                                   for n, ls in pages]))
 
         chapter: str | None = None
         lines: list[tuple[int, str]] = []  # (page, line) of the current chapter
@@ -324,14 +330,14 @@ class BookLoader(BaseLoader):
             for title in chapter_starts.get(page_no, []):
                 match = next((i for i, l in enumerate(page_lines) if i not in heading_at and _is_heading(l, title)), None)
                 if match is None:  # heading not found: chapter starts at the top of the page
-                    yield from _section(lines, chapter, width)
-                    chapter, lines = title, []
+                    lines = yield from _close_section(lines, chapter, title, width)
+                    chapter = title
                 else:
                     heading_at[match] = title
             for i, line in enumerate(page_lines):
                 if i in heading_at:
-                    yield from _section(lines, chapter, width)
-                    chapter, lines = heading_at[i], []
+                    lines = yield from _close_section(lines, chapter, heading_at[i], width)
+                    chapter = heading_at[i]
                 lines.append((page_no, line))
         yield from _section(lines, chapter, width)
 
@@ -356,6 +362,42 @@ class BookLoader(BaseLoader):
         """The PDF's table of contents as [level, title, page] entries (PyMuPDFLoader does not expose it)."""
         with pymupdf.open(self.path) as doc:
             return doc.get_toc()
+
+    def _read_styled_lines(self) -> list[tuple[int, list[tuple[float, str]]]]:
+        """Every page's lines with their font size (PyMuPDFLoader gives the text only), for _font_chapter_starts.
+        A line's size is that of most of its characters, so a large initial letter (drop cap) does not count."""
+        pages: list[tuple[int, list[tuple[float, str]]]] = []
+        with pymupdf.open(self.path) as doc:
+            for number, page in enumerate(doc, 1):
+                lines = []
+                for block in page.get_text("dict")["blocks"]:
+                    for line in block.get("lines", []):
+                        text = " ".join("".join(s["text"] for s in line["spans"]).split())
+                        chars = Counter()
+                        for span in line["spans"]:
+                            chars[round(span["size"], 1)] += len(span["text"].strip())
+                        if text and chars:
+                            lines.append((chars.most_common(1)[0][0], text))
+                pages.append((number, lines))
+        return pages
+
+
+MIN_SECTION_CHARS = 200  # a shorter section (a part's title page, "PART ONE / INTRODUCTORY CHAPTERS") joins the next
+
+
+def _close_section(lines: list[tuple[int, str]], chapter: str | None, next_chapter: str | None,
+                   width: float) -> Generator[Document, None, list[tuple[int, str]]]:
+    """End a section where the next chapter begins: yield it as a Document and start the next one empty, or, if it
+    has less than MIN_SECTION_CHARS of text, yield nothing and carry its lines into the next chapter (not into the
+    Project Gutenberg license, which stays a section of its own).
+
+    Returns:
+        The lines the next chapter starts with.
+    """
+    if next_chapter != LICENSE_SECTION and sum(len(line) for _, line in lines) < MIN_SECTION_CHARS:
+        return lines
+    yield from _section(lines, chapter, width)
+    return []
 
 
 def _section(lines: list[tuple[int, str]], chapter: str | None, width: float) -> Iterator[Document]:
@@ -418,11 +460,18 @@ def _repeat_key(line: str) -> str:
     return re.sub(r"\d+", "#", _squash(line)) if len(line) < 100 else ""
 
 
+EDGE_LINES = 2  # running headers and footers are among the first or last lines of a page
+
+
 def _repeated_lines(pages: list[tuple[int, list[str]]]) -> set[str]:
-    """Keys of short lines that appear on at least half of the pages (and at least 3): headers and footers."""
+    """Keys of headers and footers: short lines that appear on at least half of the pages (and at least 3), or
+    among the first or last EDGE_LINES lines of at least 3 pages (running headers that change per chapter, e.g.
+    "Chapter V — Industry Management" on the odd pages of chapter V only)."""
     counts = Counter(key for _, lines in pages for key in {_repeat_key(l) for l in lines} if key)
+    edges = Counter(key for _, lines in pages
+                    for key in {_repeat_key(l) for l in lines[:EDGE_LINES] + lines[-EDGE_LINES:]} if key)
     threshold = max(3, len(pages) / 2)
-    return {key for key, n in counts.items() if n >= threshold}
+    return {key for key, n in counts.items() if n >= threshold} | {key for key, n in edges.items() if n >= 3}
 
 
 def _chapter_starts(toc: list) -> dict[int, list[str]]:
@@ -459,6 +508,70 @@ _HEADING = re.compile(
     r"^(chapter|part|book|section)\s+([ivxlcdm]+|\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
     r"(?![a-z])[.:]?\s*(.*)$", re.IGNORECASE)
 _HEADING_KINDS = ("chapter", "part", "book", "section")  # preferred level first
+
+
+HEADING_SIZE_FACTOR = 1.3  # a heading's font is at least this much larger than the text's
+HEADING_MAX_LINES = 3  # a heading wraps over at most this many lines; more lines in a large font are a text block
+# A short line above a heading that names its kind, e.g. "Chapter V" above "Industry Management: ...".
+_LABEL = re.compile(r"^(chapter|part|book|section|appendix|introduction|prologue|epilogue|preface|afterword|"
+                    r"foreword|conclusion)\b", re.IGNORECASE)
+
+
+def _font_chapter_starts(pages: list[tuple[int, list[tuple[float, str]]]]) -> dict[int, list[str]]:
+    """Find chapters from headings set in a larger font than the text, for PDFs without a table of contents.
+
+    The text's size is the one most characters have. A heading is a run of up to HEADING_MAX_LINES consecutive
+    short lines in one size at least HEADING_SIZE_FACTOR times larger (lines wrapped inside it are joined). The
+    chapter level is the largest such size that has headings on at least 3 pages; pages with more than 2 headings
+    of it are skipped (a printed contents list, or a page set in a large font). A short label line just above a
+    heading is put in front of it ("Chapter V" + "Industry Management" → "Chapter V: Industry Management").
+
+    Args:
+        pages: (page number, [(font size, line), ...]) of the book, in reading order.
+
+    Returns:
+        Chapter titles by start page, like _chapter_starts; empty if no size has headings on 3 pages.
+    """
+    sizes = Counter()
+    for _, lines in pages:
+        for size, text in lines:
+            sizes[size] += len(text)
+    if not sizes:
+        return {}
+    body = sizes.most_common(1)[0][0]
+    found: dict[float, dict[int, list[str]]] = {}
+    for page_no, lines in pages:
+        i = 0
+        while i < len(lines):
+            size = lines[i][0]
+            j = i + 1
+            while j < len(lines) and lines[j][0] == size:
+                j += 1
+            run = [text for _, text in lines[i:j]]
+            if size >= body * HEADING_SIZE_FACTOR and len(run) <= HEADING_MAX_LINES and all(len(t) <= 100 for t in run):
+                title = _join_wrapped(run)
+                label = lines[i - 1][1] if i > 0 else ""
+                if label and len(label) <= 40 and _LABEL.match(label) and not _squash(title).startswith(_squash(label)):
+                    title = f"{label}: {title}"
+                if len(_squash(title)) >= 3:  # not a lone initial letter or symbol
+                    found.setdefault(size, {}).setdefault(page_no, []).append(title)
+            i = j
+    for size in sorted(found, reverse=True):
+        starts = {page: titles for page, titles in found[size].items() if len(titles) <= 2}
+        if len(starts) >= 3:
+            return starts
+    return {}
+
+
+def _join_wrapped(lines: list[str]) -> str:
+    """The lines of a wrapped heading as one line; a word hyphenated at a line end is rejoined ("Foun-" "dations")."""
+    text = ""
+    for line in lines:
+        if text.endswith("-") and line[:1].islower():
+            text = text[:-1] + line
+        else:
+            text = f"{text} {line}" if text else line
+    return text
 
 
 def _text_chapter_starts(pages: list[tuple[int, list[str]]]) -> dict[int, list[str]]:
