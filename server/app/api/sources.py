@@ -1,7 +1,8 @@
 """Sources (uploaded books): upload, processing into chunks, listing, deletion, chunks, file and cover. The files
-are in Supabase Storage (core/files.py), the records in the database."""
+are in Supabase Storage, or on the server's disk if too large for it (core/files.py), the records in the database."""
 
 import logging
+from typing import Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
@@ -23,19 +24,23 @@ router = APIRouter()
 # ---------- Sources (content upload & ingestion) ----------
 @router.post("/projects/{project_id}/sources", response_model=Source, status_code=201,
              dependencies=[Depends(owned_project), Depends(llm_limits)])
-def upload_source(project_id: str, background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+def upload_source(project_id: str, background_tasks: BackgroundTasks, file: UploadFile = File(...),
+                  store: Literal["supabase", "server"] = Query("supabase")):
     """Store an uploaded file and start processing it into chunks in the background.
 
     Sanitizes the file name, streams the file into a temporary file via storage.save_upload (which validates
     type, signature and size and computes the content checksum), rejects a file whose content is already
-    in the project (whatever its name), stores it in Supabase Storage, saves a Source with status "queued" in the
-    database (if that fails, the stored file is removed again) and schedules ingestion.ingest_source to run after
-    the response is sent. The temporary file is always deleted. Poll GET /sources/{id} to follow the progress.
+    in the project (whatever its name), stores it in Supabase Storage (or on the server's disk, store=server),
+    saves a Source with status "queued" in the database (if that fails, the stored file is removed again) and
+    schedules ingestion.ingest_source to run after the response is sent. The temporary file is always deleted. Poll
+    GET /sources/{id} to follow the progress.
 
     Args:
         project_id: Project to add the source to (path parameter). 404 if unknown.
         background_tasks: Injected by FastAPI; runs the ingestion after the response.
         file: The uploaded file (multipart/form-data field "file").
+        store: Where the file goes (query parameter): "supabase" (default, up to max_upload_mb) or "server", the
+            server's disk, for a book larger than Supabase Storage accepts (up to max_server_upload_mb).
 
     Returns:
         The new Source record (status "queued").
@@ -52,7 +57,7 @@ def upload_source(project_id: str, background_tasks: BackgroundTasks, file: Uplo
     source_id = db.new_id("src")
     filename = storage.safe_filename(file.filename or "")
     try:
-        upload, size, sha256 = storage.save_upload(file.file, filename)
+        upload, size, sha256 = storage.save_upload(file.file, filename, on_server=store == "server")
     except storage.UploadError as e:
         raise HTTPException(e.status_code, e.detail) from e
     try:
@@ -74,7 +79,8 @@ def upload_source(project_id: str, background_tasks: BackgroundTasks, file: Uplo
         if source.kind == "document":
             source.author = storage.read_pdf_author(upload)
         try:
-            files.put(files.book_path(project_id, source_id, filename), upload, _media_type(filename))
+            files.put(files.book_path(project_id, source_id, filename), upload, _media_type(filename),
+                      on_server=store == "server")
         except OSError as e:  # FileStoreError
             logger.error("Could not store the upload %s: %s", source_id, e)
             raise HTTPException(500, "The file could not be stored, please try again.") from e

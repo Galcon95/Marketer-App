@@ -4,5 +4,6 @@ __pycache__/
 .env
 
 # Sample books for trying the app (never committed: can be large or copyrighted). All user data is in Supabase
-# (database and Storage), nothing is stored here any more.
+# (database and Storage), except books too large for Supabase that the user chose to store on the server.
 assets/
+data/

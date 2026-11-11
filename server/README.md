@@ -77,6 +77,7 @@ All data lives in one Supabase project; the server keeps only configuration (`.e
 | Discussion analyses | `public.discussion_analyses` | the agent's results with reply, citations, tool trace, injection scan |
 | Model calls and costs | `public.usage_log` | the budgets of `limits.toml` are sums over it |
 | Uploaded PDFs and covers | Storage bucket `books` (private) | `{project}/{source}/book.pdf`, `cover.png`; max 50 MB |
+| Books over 50 MB (optional) | `server/data/books/` on the server's disk (`LOCAL_FILES_DIR`) | the user chooses "Store on server" when uploading; max 500 MB (`max_server_upload_mb`); not backed up by Supabase |
 | Schema version | `private.alembic_version` | `uv run alembic current` |
 
 **Security.** Only the server reaches the data: it connects as the database owner and uses the secret key for
@@ -150,7 +151,7 @@ API are faked, and Storage is an in-memory store. Among them:
 - the Discussion Relevance Agent (graph routing, tool limits, schemas, API), the Reddit scan, the Facebook client and
   endpoints (`test_discussion_*.py`, `test_api_discussions.py`, `test_*facebook.py`)
 - sign-in on every route, ownership (another user's data answers 404), limits and budgets, API keys and MCP sign-in,
-  uploads (types, duplicates, the 50 MB limit), deleting a book with what belongs only to it, the database layer
+  uploads (types, duplicates, the 50 MB limit, larger books on the server's disk), deleting a book with what belongs only to it, the database layer
 - API tests showing that bad requests are rejected before any model call (`test_api_guardrails.py`)
 
 The quality of the model's answers is measured separately (`../eval/`): RAGAs for "Ask your book" and an agent eval

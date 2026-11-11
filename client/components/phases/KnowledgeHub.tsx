@@ -2,8 +2,8 @@
 
 /**
  * Phase 1, Knowledge Hub (RAG over the client's books):
- *   UploadPanel / SourcesCard   upload PDFs (at most 50 MB, Supabase Storage's file limit), follow ingestion progress,
- *                               process, re-index, delete
+ *   UploadPanel / SourcesCard   upload PDFs (up to 50 MB into Supabase Storage; larger ones, up to 500 MB, on the
+ *                               server's disk if the user chooses so), follow ingestion progress, process, re-index, delete
  *   BookShelf / BookPicker      the library with covers; choose one book or all books to work on
  *   SourceChunksDrawer          browse a book's chunks; SummaryDrawer: create and read the book summary
  *   AskBook                     "Ask your book": chat with history, citations and tool calls
@@ -11,10 +11,10 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode, type SubmitEvent } from "react";
-import { AlertTriangle, BookOpen, Check, Database, FileText, Film, Library, MessageSquare, Play, Plus, RotateCcw, Sparkles, Target, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, BookOpen, Check, Database, FileText, Film, HardDrive, Library, MessageSquare, Play, Plus, RotateCcw, Sparkles, Target, Trash2, Upload } from "lucide-react";
 import {
-  api, bookTitle, errorMessage, locationLabel, MAX_UPLOAD_BYTES, PROCESSING_STATUSES, UPLOAD_EXTENSIONS,
-  type BookSummary, type ChatTurn, type Chunk, type ChunkPage, type Source,
+  api, bookTitle, errorMessage, locationLabel, MAX_SERVER_UPLOAD_BYTES, MAX_UPLOAD_BYTES, PROCESSING_STATUSES,
+  UPLOAD_EXTENSIONS, type BookSummary, type UploadStore, type ChatTurn, type Chunk, type ChunkPage, type Source,
 } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { CitationList } from "../AssetCard";
@@ -43,27 +43,26 @@ function formatBytes(n: number) {
 }
 
 /**
- * Why a file is too large and what to do: the limit is Supabase Storage's file limit (free plan), which the server
- * enforces too (limits.toml max_upload_mb), so a larger book cannot be stored at all.
+ * Why a file is too large even for the server's own disk (limits.toml max_server_upload_mb) and what to do.
  * @param size The file's size in bytes.
  */
 function tooLarge(size: number): string {
-  return `The file is ${formatBytes(size)}, but a book can be at most ${formatBytes(MAX_UPLOAD_BYTES)}: that is the `
-    + "largest file the app's storage (Supabase) accepts. Large PDFs are mostly images (scans, illustrations), and the "
-    + "app only reads the text: compress the PDF (e.g. \"Reduce file size\" in a PDF tool), or split it into parts "
-    + `of under ${formatBytes(MAX_UPLOAD_BYTES)} and upload each part as its own book.`;
+  return `The file is ${formatBytes(size)}, but a book can be at most ${formatBytes(MAX_SERVER_UPLOAD_BYTES)}. `
+    + "Large PDFs are mostly images (scans, illustrations), and the app only reads the text: compress the PDF "
+    + "(e.g. \"Reduce file size\" in a PDF tool), or split it into parts and upload each part as its own book.";
 }
 
 /**
  * Client-side check before sending; the server validates again.
- * Checks extension (UPLOAD_EXTENSIONS), maximum size and that the file is not empty.
+ * Checks extension (UPLOAD_EXTENSIONS), maximum size (the server's disk store; a file over Supabase's limit is
+ * offered to be stored there, see UploadPanel) and that the file is not empty.
  * @param file File picked by the user.
  * @returns An error message, or null when the file may be uploaded.
  */
 function validateFile(file: File): string | null {
   const ext = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
   if (!UPLOAD_EXTENSIONS.includes(ext)) return `Unsupported file type. Allowed: ${UPLOAD_EXTENSIONS.join(", ")}`;
-  if (file.size > MAX_UPLOAD_BYTES) return tooLarge(file.size);
+  if (file.size > MAX_SERVER_UPLOAD_BYTES) return tooLarge(file.size);
   if (file.size === 0) return "File is empty";
   return null;
 }
@@ -83,28 +82,37 @@ function UploadPanel({ sources, sourcesLoading, onChange }: { sources: Source[];
   const [uploaded, setUploaded] = useState<Source | null>(null); // upload response of the last file
   const [sending, setSending] = useState<{ name: string; size: number; percent: number } | null>(null); // upload in flight
   const [error, setError] = useState<string | null>(null);
+  // A book over Supabase's limit, waiting for the user to choose to store it on the server instead (or not).
+  const [tooBigForSupabase, setTooBigForSupabase] = useState<File | null>(null);
   // Latest state of the uploaded source. The upload response bridges the gap until the reloaded
   // list contains it; once the list is loaded without it (deleted), the panel returns to idle.
   const source = uploaded && (sources.find((s) => s.id === uploaded.id) ?? (sourcesLoading ? uploaded : null));
 
   /**
    * Validate a file locally, then upload it with progress updates.
+   * A file over Supabase's limit is not sent yet: the panel asks whether to store it on the server instead.
    * On success the new source is shown and the app refreshed (the server starts processing it
    * right away); on failure the error is shown.
    * @param file The file chosen in the file dialog.
+   * @param store Where the server keeps it; "server" only after the user chose so.
    */
-  async function upload(file: File) {
+  async function upload(file: File, store: UploadStore = "supabase") {
+    setTooBigForSupabase(null);
     const invalid = validateFile(file);
     if (invalid) {
       setError(`${file.name}: ${invalid}`);
       return;
     }
     setError(null);
+    if (store === "supabase" && file.size > MAX_UPLOAD_BYTES) {
+      setTooBigForSupabase(file);
+      return;
+    }
     setUploaded(null);
     setSending({ name: file.name, size: file.size, percent: 0 });
 
     try {
-      setUploaded(await api.uploadSource(file, (percent) => setSending((s) => s && { ...s, percent })));
+      setUploaded(await api.uploadSource(file, (percent) => setSending((s) => s && { ...s, percent }), store));
       onChange();
     } catch (e) {
       setError(`${file.name}: ${errorMessage(e)}`);
@@ -130,9 +138,14 @@ function UploadPanel({ sources, sourcesLoading, onChange }: { sources: Source[];
     progress = source.status === "failed" ? null : source.progress;
     meta = [formatBytes(source.size_bytes), source.id,
       source.status === "ready" ? `${source.chunk_count} chunks` : source.status === "failed" ? "processing failed" : "processing…"];
+  } else if (tooBigForSupabase) {
+    title = tooBigForSupabase.name;
+    badge = <Badge tone="warning">Too large for Supabase</Badge>;
+    meta = [formatBytes(tooBigForSupabase.size), `Supabase stores at most ${formatBytes(MAX_UPLOAD_BYTES)} per file`];
   } else {
     title = "Upload a book";
-    meta = [`${UPLOAD_EXTENSIONS.join(" · ").toUpperCase()} · max ${formatBytes(MAX_UPLOAD_BYTES)} per book (storage limit)`];
+    meta = [`${UPLOAD_EXTENSIONS.join(" · ").toUpperCase()} · max ${formatBytes(MAX_UPLOAD_BYTES)} per book in Supabase, `
+      + `${formatBytes(MAX_SERVER_UPLOAD_BYTES)} on the server`];
   }
 
   return (
@@ -143,6 +156,19 @@ function UploadPanel({ sources, sourcesLoading, onChange }: { sources: Source[];
         {progress !== null && <ProgressBar value={progress} />}
         <div className="bc-up-meta">{meta.map((m) => <span key={m}>{m}</span>)}</div>
         {error && <ErrorNote>{error}</ErrorNote>}
+        {tooBigForSupabase && (
+          <div className="bc-up-choice">
+            <p>
+              Store this book on the server instead? It is kept in the server&apos;s own folder, so it is only
+              available while the app runs on this machine, and Supabase does not back it up. Chunks, summary and
+              cover are saved as usual.
+            </p>
+            <div className="bc-up-choice-actions">
+              <Button size="sm" icon={HardDrive} onClick={() => upload(tooBigForSupabase, "server")}>Store on server</Button>
+              <Button size="sm" variant="ghost" onClick={() => setTooBigForSupabase(null)}>Cancel</Button>
+            </div>
+          </div>
+        )}
         {!sending && source?.error && <ErrorNote>{source.error}</ErrorNote>}
       </div>
       <input

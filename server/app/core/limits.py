@@ -30,7 +30,8 @@ class PerUser:
     cost_per_day_usd: float = 1.00
     cost_per_month_usd: float = 10.00
     max_books: int = 20
-    max_upload_mb: int = 50
+    max_upload_mb: int = 50  # stored in Supabase Storage
+    max_server_upload_mb: int = 500  # stored on the server's disk (files.py LocalFiles)
     max_api_keys: int = 10
 
 

@@ -34,7 +34,9 @@ Read once on import from environment variables (and server/.env, if present), fi
     SUPABASE_SECRET_KEY → the Supabase project's secret key ("sb_secret_..."): the server stores the uploaded books
                           and their covers with it in the private Storage bucket "books" (files.py); never sent to
                           the browser
-    DATABASE_URL        → connection string of the PostgreSQL database (Supabase), e.g.
+    LOCAL_FILES_DIR     → optional, folder on the server's disk for books larger than Supabase Storage accepts, when
+                          the user chooses "store on this server" (default server/data/books; see files.py)
+    DATABASE_URL       → connection string of the PostgreSQL database (Supabase), e.g.
                           "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres";
                           required: the server does not start without it (see app/db/database.py)
 """
@@ -82,6 +84,7 @@ LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT") or os.getenv("LANGCHAIN_PROJE
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
 SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "").strip()
 DEFAULT_CLIENT_OWNER = os.getenv("DEFAULT_CLIENT_OWNER", "").strip().lower()
+LOCAL_FILES_DIR = Path(os.getenv("LOCAL_FILES_DIR", "").strip() or SERVER_DIR / "data" / "books")
 
 
 def _sqlalchemy_url(url: str) -> str:

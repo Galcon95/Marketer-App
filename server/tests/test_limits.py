@@ -28,7 +28,7 @@ NOW = datetime.now(timezone.utc)
 def test_the_shipped_file_has_the_agreed_limits():
     assert limits.load() == Limits(
         per_user=PerUser(model_requests_per_minute=20, cost_per_day_usd=1.0, cost_per_month_usd=10.0, max_books=20,
-                         max_upload_mb=50, max_api_keys=10),
+                         max_upload_mb=50, max_server_upload_mb=500, max_api_keys=10),
         app=AppWide(cost_per_day_usd=20.0))
 
 

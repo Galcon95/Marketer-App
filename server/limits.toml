@@ -14,6 +14,7 @@ cost_per_day_usd          = 1.00  # after that, 429 "daily budget used up" until
 cost_per_month_usd        = 10.00 # calendar month, UTC
 max_books                 = 20    # books (sources) in the user's library
 max_upload_mb             = 50    # size of one uploaded file (Supabase Storage's limit on the free plan)
+max_server_upload_mb      = 500   # size of one book the user chooses to store on the server's disk instead
 max_api_keys              = 10    # personal API keys for the MCP servers (e.g. one per tool)
 
 # The whole app (all users together): protects the API key's budget even with many users.

@@ -1,5 +1,5 @@
 """Checks of uploaded files (type, size, checksum) and what can be read from them (kind, PDF author). The files
-themselves are stored in Supabase Storage (files.py), everything else in the database (app/db).
+themselves are stored in Supabase Storage, or on the server's disk if too large for it (files.py), everything else in the database (app/db).
 """
 
 import hashlib
@@ -15,13 +15,23 @@ from app.core.limits import LIMITS
 from app.core.schemas import SourceKind
 
 ALLOWED_EXTENSIONS = {".pdf"}  # widen when other formats get an ingestion path (EPUB, DOCX, video, ...)
-MAX_UPLOAD_BYTES = LIMITS.per_user.max_upload_mb * 1024 * 1024  # limits.toml
+MAX_UPLOAD_BYTES = LIMITS.per_user.max_upload_mb * 1024 * 1024  # limits.toml; stored in Supabase Storage
+MAX_SERVER_UPLOAD_BYTES = LIMITS.per_user.max_server_upload_mb * 1024 * 1024  # stored on the server's disk instead
 CHUNK_BYTES = 1024 * 1024  # write in 1 MB pieces, never the whole file in memory
-# The upload limit is Supabase Storage's file limit (free plan; the "books" bucket has the same limit), so a larger book
-# cannot be stored at all. Said with what to do instead (the client shows the same advice before uploading).
-TOO_LARGE = (f"The file is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB, the largest file the app's storage "
-             "(Supabase) accepts. Large PDFs are mostly images and the app only reads the text: compress the PDF, or "
-             f"split it into parts of under {MAX_UPLOAD_BYTES // (1024 * 1024)} MB and upload each part as its own book.")
+
+
+def too_large(on_server: bool) -> str:
+    """Why a file is rejected as too large, with what to do instead (the client shows the same advice before
+    uploading). MAX_UPLOAD_BYTES is Supabase Storage's file limit (free plan; the "books" bucket has the same limit), so
+    a larger book can only be kept on the server's disk (on_server); that has its own limit."""
+    if on_server:
+        return (f"The file is larger than {MAX_SERVER_UPLOAD_BYTES // (1024 * 1024)} MB, the largest book the server "
+                "stores. Large PDFs are mostly images and the app only reads the text: compress the PDF, or split it "
+                "into parts and upload each part as its own book.")
+    mb = MAX_UPLOAD_BYTES // (1024 * 1024)
+    return (f"The file is larger than {mb} MB, the largest file the app's storage (Supabase) accepts. Store it on the "
+            "server instead, or, as large PDFs are mostly images and the app only reads the text: compress the PDF, "
+            f"or split it into parts of under {mb} MB and upload each part as its own book.")
 
 # File signatures ("magic bytes") the content must start with, per extension.
 SIGNATURES = {".pdf": b"%PDF-"}
@@ -63,27 +73,29 @@ def safe_filename(name: str) -> str:
     return name[:150] or "upload"
 
 
-def save_upload(stream: BinaryIO, filename: str) -> tuple[Path, int, str]:
+def save_upload(stream: BinaryIO, filename: str, on_server: bool = False) -> tuple[Path, int, str]:
     """Validate an upload and stream it into a temporary file. Returns (path, size, SHA-256); the caller deletes the
-    file (it goes on to Storage). Leaves nothing behind on failure.
+    file (it goes on to Storage or the server's disk). Leaves nothing behind on failure.
 
     Checks the extension first, then copies the stream in CHUNK_BYTES pieces so large files never sit in memory as
     a whole. While copying it checks that the first bytes match the expected file signature and that the total size
-    stays under MAX_UPLOAD_BYTES, and computes the content's SHA-256 checksum in the same pass (for the duplicate
-    check). On any error (including client disconnects) the temporary file is removed before the exception is
-    re-raised.
+    stays under the limit of the store (MAX_UPLOAD_BYTES, or MAX_SERVER_UPLOAD_BYTES with on_server), and computes the
+    content's SHA-256 checksum in the same pass (for the duplicate check). On any error (including client disconnects)
+    the temporary file is removed before the exception is re-raised.
 
     Args:
         stream: Readable binary file object with the upload content (e.g. UploadFile.file).
         filename: Already sanitized file name (see safe_filename); its extension decides the type.
+        on_server: True if the file will be stored on the server's disk instead of Supabase Storage.
 
     Returns:
         Tuple of the temporary file's path, its size in bytes and its SHA-256 checksum (hex).
 
     Raises:
         UploadError: 415 for an unsupported extension or wrong content signature,
-            413 when the file exceeds MAX_UPLOAD_BYTES, 400 when the file is empty.
+            413 when the file exceeds the store's limit, 400 when the file is empty.
     """
+    max_bytes = MAX_SERVER_UPLOAD_BYTES if on_server else MAX_UPLOAD_BYTES
     ext = Path(filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
@@ -99,8 +111,8 @@ def save_upload(stream: BinaryIO, filename: str) -> tuple[Path, int, str]:
                 if size == 0 and ext in SIGNATURES and not chunk.startswith(SIGNATURES[ext]):
                     raise UploadError(415, f"The file content is not a valid {ext[1:].upper()}")
                 size += len(chunk)
-                if size > MAX_UPLOAD_BYTES:
-                    raise UploadError(413, TOO_LARGE)
+                if size > max_bytes:
+                    raise UploadError(413, too_large(on_server))
                 out.write(chunk)
                 digest.update(chunk)
         if size == 0:

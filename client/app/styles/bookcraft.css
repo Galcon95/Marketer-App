@@ -111,6 +111,10 @@ html, body { background: var(--bg); color: var(--ink); font-family: var(--font-s
 .bc-bar > i { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width .4s; }
 .bc-bar[data-done="true"] > i { background: var(--success); }
 .bc-up-meta { display: flex; gap: var(--space-3); flex-wrap: wrap; font: 400 11px/16px var(--font-mono); color: var(--ink-muted); }
+/* "Store on the server instead?" for a book over Supabase's file limit */
+.bc-up-choice { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2); font-size: 13px; color: var(--ink); }
+.bc-up-choice p { margin: 0; }
+.bc-up-choice-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 
 /* Chunk */
 .bc-chunk { display: flex; flex-direction: column; gap: 6px; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); cursor: pointer; text-align: left; width: 100%; color: var(--ink); font-family: var(--font-sans); }

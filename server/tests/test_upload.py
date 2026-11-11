@@ -27,8 +27,9 @@ def client(tmp_path, monkeypatch):
         yield test_client
 
 
-def _upload(client: TestClient, name: str, content: bytes):
-    return client.post(UPLOAD, files={"file": (name, content, "application/pdf")})
+def _upload(client: TestClient, name: str, content: bytes, store: str | None = None):
+    return client.post(UPLOAD + (f"?store={store}" if store else ""),
+                       files={"file": (name, content, "application/pdf")})
 
 
 def test_upload_records_the_content_checksum(client):
@@ -82,7 +83,7 @@ def test_a_book_that_cannot_be_stored_is_not_saved(client, monkeypatch):
     from app.core import files
     from app.db import records
 
-    def broken(path, data, content_type):
+    def broken(path, data, content_type, on_server=False):
         raise files.FileStoreError("Storage cannot be reached")
     monkeypatch.setattr(files, "put", broken)
     assert _upload(client, "first.pdf", PDF).status_code == 500
@@ -111,5 +112,44 @@ def test_a_book_over_the_storage_limit_is_rejected_with_advice(client, stored_fi
     response = _upload(client, "big.pdf", PDF)
     assert response.status_code == 413
     detail = response.json()["detail"]
-    assert "Supabase" in detail and "compress" in detail and "split it into parts" in detail
+    assert "Supabase" in detail and "on the server" in detail and "compress" in detail and "split it into parts" in detail
     assert db.sources == {}
+
+
+def test_a_book_too_large_for_supabase_can_be_stored_on_the_server(client, stored_files, monkeypatch, tmp_path):
+    from app.core import files, storage
+    monkeypatch.setattr(storage, "MAX_UPLOAD_BYTES", 16)  # stands for the 50 MB of Supabase Storage
+    response = _upload(client, "big.pdf", PDF, store="server")
+    assert response.status_code == 201
+    source_id = response.json()["id"]
+    path = f"demo-campaign/{source_id}/book.pdf"
+    assert stored_files.objects == {}  # nothing in Supabase
+    assert (tmp_path / "server-files" / path).read_bytes() == PDF
+    # Read back like a Supabase file: the browser's viewer, processing (download), Re-index (exists).
+    assert client.get(f"/sources/{source_id}/file").content == PDF
+    assert files.exists(path)
+    target = tmp_path / "copy.pdf"
+    assert files.download(path, target) and target.read_bytes() == PDF
+    # Deleting the book removes it from the disk, folders included.
+    assert client.delete(f"/sources/{source_id}").status_code == 200
+    assert not (tmp_path / "server-files" / "demo-campaign").exists()
+
+
+def test_the_server_store_has_its_own_limit(client, monkeypatch, tmp_path):
+    from app.core import storage
+    monkeypatch.setattr(storage, "MAX_SERVER_UPLOAD_BYTES", 16)
+    response = _upload(client, "huge.pdf", PDF, store="server")
+    assert response.status_code == 413 and "largest book the server stores" in response.json()["detail"]
+    assert db.sources == {} and not (tmp_path / "server-files").exists()
+
+
+def test_an_unknown_store_is_rejected(client):
+    assert _upload(client, "first.pdf", PDF, store="dropbox").status_code == 422
+
+
+def test_the_server_store_refuses_names_outside_its_folder(tmp_path):
+    from app.core import files
+    store = files.LocalFiles(tmp_path / "server-files")
+    with pytest.raises(files.FileStoreError):
+        store.put("../escaped.pdf", PDF, "application/pdf")
+    assert not (tmp_path / "escaped.pdf").exists()

@@ -69,10 +69,12 @@ class MemoryFiles:
 
 
 @pytest.fixture(autouse=True)
-def stored_files(monkeypatch) -> MemoryFiles:
-    """An empty in-memory file store instead of Supabase Storage, so no test ever reads or writes real files."""
+def stored_files(monkeypatch, tmp_path) -> MemoryFiles:
+    """An empty in-memory file store instead of Supabase Storage, and a temporary folder instead of the server's
+    disk store (LOCAL_FILES_DIR), so no test ever reads or writes real files."""
     memory = MemoryFiles()
     monkeypatch.setattr(files, "_backend", memory)
+    monkeypatch.setattr(files, "_server", files.LocalFiles(tmp_path / "server-files"))
     return memory
 
 

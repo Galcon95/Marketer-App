@@ -21,6 +21,10 @@ export const PROCESSING_STATUSES: SourceStatus[] = ["queued", "transcribing", "c
 /** Mirrors server/app/core/storage.py. The server enforces these too; checking here gives instant feedback. */
 export const UPLOAD_EXTENSIONS = [".pdf"];
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // server/limits.toml max_upload_mb (Supabase Storage free plan)
+/** A larger book can be stored on the server's disk instead, if the user chooses so: limits.toml max_server_upload_mb. */
+export const MAX_SERVER_UPLOAD_BYTES = 500 * 1024 * 1024;
+/** Where an uploaded book is kept: Supabase Storage (default) or the server's disk (books over MAX_UPLOAD_BYTES). */
+export type UploadStore = "supabase" | "server";
 /** Kinds of marketing content the generator can produce. */
 export type AssetType =
   | "blurb" | "social_post" | "social_reply" | "video_script" | "youtube_video"
@@ -662,13 +666,14 @@ export const api = {
    * Multipart upload via XMLHttpRequest, because fetch() cannot report upload progress.
    * @param file The file to upload (sent as form field "file").
    * @param onProgress Optional callback receiving the sent percentage (0-100).
+   * @param store Where the server keeps the file: "supabase" (default) or "server" (its own disk, for large books).
    * @returns The created Source (status "queued"); rejects with the server's error detail on failure.
    */
-  uploadSource: async (file: File, onProgress?: (percent: number) => void) => {
+  uploadSource: async (file: File, onProgress?: (percent: number) => void, store: UploadStore = "supabase") => {
     const [token, project] = await Promise.all([accessToken(), projectId()]);
     return new Promise<Source>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.open("POST", `${API_URL}/projects/${project}/sources`);
+      xhr.open("POST", `${API_URL}/projects/${project}/sources?store=${store}`);
       if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
       xhr.responseType = "json";
       xhr.upload.onprogress = (e) => {

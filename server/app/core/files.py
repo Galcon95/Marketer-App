@@ -3,6 +3,11 @@
     books/{project_id}/{source_id}/book.pdf    the uploaded file (its original name is in the source record)
     books/{project_id}/{source_id}/cover.png   its cover image (ingestion.make_cover)
 
+A book larger than Storage accepts (50 MB on the free plan) can be kept on the server's own disk instead, if the user
+chooses so when uploading (put(..., on_server=True)): the same names under LOCAL_FILES_DIR (default server/data/books).
+Reading looks on the disk first, then in Storage, so no record says where a file is; deleting removes it from both.
+Files on the disk are only where the server runs (not backed up by Supabase; a server in a container needs a volume).
+
 Fixed object names, because Storage accepts fewer characters in names than a file system (the original file name
 may contain any letter); the GUI shows the name from the database. The bucket is created by migration 0006 with
 the upload limit and the allowed types; it is private, and Storage's row-level security has no policy for it, so
@@ -13,6 +18,8 @@ to a temporary file (download) and deletes it afterwards. Tests replace the back
 """
 
 import logging
+import os
+import shutil
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Protocol
@@ -20,7 +27,7 @@ from urllib.parse import quote
 
 import httpx
 
-from app.core.config import SUPABASE_SECRET_KEY, SUPABASE_URL
+from app.core.config import LOCAL_FILES_DIR, SUPABASE_SECRET_KEY, SUPABASE_URL
 
 logger = logging.getLogger(__name__)
 
@@ -147,39 +154,108 @@ class SupabaseStorage:
         self._check(response, "delete files")
 
 
+class LocalFiles:
+    """A folder on the server's disk with the same object names as the bucket, for books too large for Storage."""
+
+    def __init__(self, root: Path):
+        self.root = Path(root)
+
+    def _file(self, path: str) -> Path:
+        """The file of an object name; refuses names that would lead outside the folder (e.g. "../")."""
+        root = self.root.resolve()
+        target = (root / path).resolve()
+        if not target.is_relative_to(root) or target == root:
+            raise FileStoreError(f"Invalid file name: {path}")
+        return target
+
+    def put(self, path: str, data: bytes | Path, content_type: str) -> None:
+        """Write (or replace) a file; written under a temporary name first, so a failure leaves no half file."""
+        target = self._file(path)
+        partial = target.with_name(target.name + ".part")
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(data, Path):
+                shutil.copyfile(data, partial)
+            else:
+                partial.write_bytes(data)
+            os.replace(partial, target)
+        except OSError as e:
+            partial.unlink(missing_ok=True)
+            raise FileStoreError(f"The file could not be written on the server: {e}") from e
+
+    def get(self, path: str) -> bytes | None:
+        target = self._file(path)
+        return target.read_bytes() if target.is_file() else None
+
+    def stream(self, path: str) -> Iterator[bytes] | None:
+        target = self._file(path)
+        if not target.is_file():
+            return None
+
+        def pieces() -> Iterator[bytes]:
+            with target.open("rb") as f:
+                yield from _read(f)
+        return pieces()
+
+    def names(self, folder: str) -> list[str]:
+        directory = self._file(folder)
+        if not directory.is_dir():
+            return []
+        return [p.name for p in directory.iterdir() if p.is_file() and not p.name.endswith(".part")]
+
+    def delete(self, paths: list[str]) -> None:
+        """Delete these files (missing ones are ignored) and their folders once they are empty."""
+        for path in paths:
+            target = self._file(path)
+            target.unlink(missing_ok=True)
+            for folder in (target.parent, target.parent.parent):  # {source_id}/, then {project_id}/
+                if folder.resolve() == self.root.resolve():
+                    break
+                try:
+                    folder.rmdir()  # only succeeds when empty
+                except OSError:
+                    break
+
+
 def _read(f) -> Iterator[bytes]:
     while chunk := f.read(CHUNK_BYTES):
         yield chunk
 
 
 _backend: Backend = SupabaseStorage()
+_server: Backend = LocalFiles(LOCAL_FILES_DIR)
 
 
-def use(backend: Backend) -> None:
-    """Use another backend from now on (tests: an in-memory one)."""
-    global _backend
+def use(backend: Backend, server: Backend | None = None) -> None:
+    """Use other backends from now on (tests: in-memory or a temporary folder); `server` replaces the disk store."""
+    global _backend, _server
     _backend = backend
+    if server is not None:
+        _server = server
 
 
 # ---------- Public API (all raise FileStoreError if Storage cannot be reached or refuses) ----------
-def put(path: str, data: bytes | Path, content_type: str) -> None:
-    """Store a file (bytes, or a file on disk, which is streamed), replacing one with the same name."""
-    _backend.put(path, data, content_type)
+def put(path: str, data: bytes | Path, content_type: str, on_server: bool = False) -> None:
+    """Store a file (bytes, or a file on disk, which is streamed), replacing one with the same name: in Supabase
+    Storage, or on the server's disk with on_server=True (books larger than Storage accepts)."""
+    (_server if on_server else _backend).put(path, data, content_type)
 
 
 def get(path: str) -> bytes | None:
     """A small file's content (e.g. a cover), or None if it does not exist."""
-    return _backend.get(path)
+    found = _server.get(path)
+    return found if found is not None else _backend.get(path)
 
 
 def stream(path: str) -> Iterator[bytes] | None:
     """A large file's content in pieces (e.g. a book for the browser), or None if it does not exist."""
-    return _backend.stream(path)
+    found = _server.stream(path)
+    return found if found is not None else _backend.stream(path)
 
 
 def download(path: str, target: Path) -> bool:
     """Save a file to disk (e.g. a book for PyMuPDF); False if it does not exist."""
-    pieces = _backend.stream(path)
+    pieces = stream(path)
     if pieces is None:
         return False
     with target.open("wb") as out:
@@ -191,10 +267,11 @@ def download(path: str, target: Path) -> bool:
 def exists(path: str) -> bool:
     """True if the file exists."""
     folder, _, name = path.rpartition("/")
-    return name in _backend.names(folder)
+    return name in _server.names(folder) or name in _backend.names(folder)
 
 
 def delete_source_files(project_id: str, source_id: str) -> None:
-    """Delete all stored files of a source (its book and cover)."""
+    """Delete all stored files of a source (its book and cover), on the server's disk and in Storage."""
     folder = f"{project_id}/{source_id}"
-    _backend.delete([f"{folder}/{name}" for name in _backend.names(folder)])
+    for store in (_server, _backend):
+        store.delete([f"{folder}/{name}" for name in store.names(folder)])
