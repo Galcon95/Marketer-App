@@ -208,6 +208,9 @@ only, because the Page in `server/.env` belongs to the app's administrator:
 - **My Facebook Page** tab in Discussions: the latest posts with comments, each marked answered or not. A comment can
   be handed to the agent in **own Page mode**: the assess prompt knows that answering readers there is welcome, and the
   reply is written as the author in the first person, where naming the book is natural.
+- **Write a new post** in the same tab: a post about the book or a question for the readers, written from the book
+  chosen under "Working on" (the same grounded generation as the Content Studio) and published from there, so the
+  author need not switch pages. Unpublished drafts stay listed under the form.
 - **Reply on Facebook**: posts the agent's (edited) reply under the comment as the Page; **Publish on Facebook** for
   generated posts in the asset library. Both only on the author's click, once each; ids, links and times are saved
   (migrations `0011`, `0012`).

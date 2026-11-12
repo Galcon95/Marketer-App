@@ -7,7 +7,8 @@
  * The saved analyses are listed below the form, newest first, for the author to edit, copy and post themselves.
  * "Scan Reddit" (RedditScan.tsx) finds threads to analyse. With the author's Facebook Page connected (admin only) a
  * third tab lists the comments on the Page (FacebookComments.tsx): one goes into the form, and the agent answers it as
- * the author ("own Page" mode); the reply can then be posted as the Page.
+ * the author ("own Page" mode); the reply can then be posted as the Page. Above the comments, "Write a new post"
+ * (FacebookNewPost.tsx) writes a post or reader question from the book and publishes it on the Page.
  * Other people's text is scanned for prompt injection on the server and flagged, not blocked (InjectionBadge.tsx).
  */
 
@@ -20,6 +21,7 @@ import {
 import { useApi } from "@/lib/useApi";
 import DiscussionCard from "./DiscussionCard";
 import FacebookComments, { commentAsDiscussion } from "./FacebookComments";
+import FacebookNewPost from "./FacebookNewPost";
 import RedditScan, { threadAsDiscussion } from "./RedditScan";
 import { Button, Card, ErrorNote, Field, Placeholder, RangeField, SectionHeading } from "./ui";
 
@@ -122,8 +124,11 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
         <div hidden={mode !== "scan"}>
           <RedditScan bookId={book?.id} bookTitle={book ? bookTitle(book.filename) : undefined} onAnalyse={analyseThread} />
         </div>
-        {mode === "facebook" && pageConnected && (
-          <FacebookComments pageName={facebook.data?.page?.name ?? "your Page"} onAnalyse={analyseComment} />
+        {mode === "facebook" && pageConnected && facebook.data && (
+          <div className="bc-stack" style={{ gap: 20 }}>
+            <FacebookNewPost bookId={book?.id ?? null} facebook={facebook.data} onChange={onChange} />
+            <FacebookComments pageName={facebook.data.page?.name ?? "your Page"} onAnalyse={analyseComment} />
+          </div>
         )}
         {mode === "paste" && (
         <form className="bc-stack" onSubmit={submit}>
