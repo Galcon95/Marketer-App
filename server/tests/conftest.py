@@ -95,6 +95,13 @@ def keys(test_database, monkeypatch):
     return api_keys._keys
 
 
+@pytest.fixture(autouse=True)
+def no_telegram(monkeypatch):
+    """No test reaches the real Telegram bot from server/.env: tests that need it configure a fake."""
+    monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "")
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", None)
+
+
 @pytest.fixture
 def offline(tmp_path, monkeypatch):
     """For tests that send requests to API routes: files and vectors in tmp_path (the usage log is in the empty test

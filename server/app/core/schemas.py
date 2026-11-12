@@ -532,6 +532,8 @@ class FacebookPost(BaseModel):
     permalink_url: str | None = None
     picture: str | None = None  # the post's image, if any
     comment_count: int = 0
+    author: str | None = None  # who wrote it; None when Facebook does not return it
+    from_page: bool = True  # written by the Page itself; False = a visitor's post on the Page (untrusted text)
 
 
 class FacebookComment(BaseModel):
@@ -572,6 +574,20 @@ class FacebookThread(BaseModel):
     comments: list[FacebookComment] = []  # newest first, the Page's own replies included (from_page)
 
 
+class FacebookInboxItem(BaseModel):
+    """Something on the author's Page that waits for an answer from the Page (facebook.open_items): a visitor's
+    comment the Page has not replied to, or a visitor's post on the Page it has not commented on. Untrusted text."""
+
+    kind: Literal["comment", "visitor_post"]
+    id: str  # the comment or the visitor post
+    reply_to: str  # where the Page's answer goes: the comment's thread (its top comment) or the visitor post
+    post: FacebookPost  # the post it belongs to (for a visitor post: itself)
+    message: str
+    author: str | None = None
+    created_time: datetime
+    permalink_url: str | None = None
+
+
 class FacebookStatus(BaseModel):
     """Response of GET /facebook/status: whether the author's Page is connected (FACEBOOK_PAGE_* in server/.env)."""
 
@@ -585,6 +601,33 @@ class FacebookPublished(BaseModel):
 
     id: str
     url: str
+
+
+# ---------- Telegram (social/telegram.py) ----------
+class TelegramButton(BaseModel):
+    """A button under a bot message; pressing it sends `data` back to the bot (at most 64 bytes)."""
+
+    label: str
+    data: str
+
+
+class TelegramUpdate(BaseModel):
+    """Something the author did in their chat with the bot: sent a text, or pressed a button under a bot message."""
+
+    update_id: int
+    kind: Literal["text", "button"]
+    text: str = ""  # the message text, or the pressed button's data
+    message_id: int  # the author's message, or the bot message whose button was pressed
+    reply_to_message_id: int | None = None  # the bot message the author replied to (Telegram's "Reply")
+    callback_id: str | None = None  # for a button press: answer it with telegram.answer_button
+    date: datetime
+
+
+class TelegramUpdates(BaseModel):
+    """New updates from the author's chat; pass `next_offset` to the next get_updates (they are then confirmed)."""
+
+    items: list[TelegramUpdate] = []
+    next_offset: int | None = None
 
 
 # ---------- MCP console (Market Intelligence) ----------

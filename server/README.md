@@ -53,8 +53,8 @@ server/
 │   ├── market/         Phase 3 Market Intelligence (MCP)
 │   │   ├── book_server.py  mcp-book-knowledge: the books as MCP tools (mounted at /mcp)
 │   │   └── guard_server.py mcp-guardrails: input validation and prompt-injection checks (/guardrails/mcp)
-│   ├── agents/         Discussion Relevance Agent (LangGraph), its tools, the Reddit scan
-│   ├── social/         the author's Facebook Page (Graph API)
+│   ├── agents/         Discussion Relevance Agent (LangGraph), its tools, the Reddit scan, the Page inbox agent
+│   ├── social/         the author's Facebook Page (Graph API), the Telegram bot (Bot API)
 │   └── api/            FastAPI routers: health, projects, keys, sources, knowledge, assets, campaigns,
 │                       discussions, facebook, mcp_console (+ deps.py: ownership, input checks, limits)
 ├── prompts/            every prompt as a Markdown file (see prompts/README.md)

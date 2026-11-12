@@ -1,6 +1,7 @@
 """Marketer App API: entry point. Run with `uv run fastapi dev server.py` (from server/).
 
-Creates the FastAPI app, plugs in the routers of app/api/ and, on startup, loads the saved data from the database.
+Creates the FastAPI app, plugs in the routers of app/api/ and, on startup, loads the saved data from the database
+and starts the Facebook Page inbox worker when it is configured (agents/page_inbox_worker.py, approval in Telegram).
 The code lives in the app package (see README.md, "Project layout"):
 
     app/core      configuration, chat model, schemas, in-memory state, sign-in and limits, guardrails, usage log,
@@ -31,6 +32,7 @@ from app.api import (  # noqa: E402
     assets, campaigns, discussions, facebook, health, keys, knowledge, mcp_console, projects, sources,
 )
 from app.core import api_keys, auth, state, storage, usage  # noqa: E402
+from app.agents import page_inbox_worker  # noqa: E402
 from app.db import records  # noqa: E402
 from app.core.mcp_auth import RequireMcpAuth  # noqa: E402
 from app.market.book_server import book_server  # noqa: E402
@@ -68,10 +70,14 @@ async def lifespan(_: FastAPI):
     """Restore the saved data, then run the MCP session managers while the API runs (a mounted app's own lifespan
     is not started)."""
     restore_data()
-    async with AsyncExitStack() as stack:
-        for server in (book_server, guard_server):
-            await stack.enter_async_context(server.session_manager.run())
-        yield
+    page_inbox_worker.start_if_configured()  # Facebook Page inbox with approval in Telegram (needs the data above)
+    try:
+        async with AsyncExitStack() as stack:
+            for server in (book_server, guard_server):
+                await stack.enter_async_context(server.session_manager.run())
+            yield
+    finally:
+        page_inbox_worker.stop()
 
 
 app = FastAPI(title="Marketer App API", lifespan=lifespan)

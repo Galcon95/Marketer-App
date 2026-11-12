@@ -4,15 +4,22 @@
     list_posts(limit, after)         the Page's feed (its own posts and visitors' posts), newest first
     list_comments(post_id, ...)      a post's comments and replies, newest first
     recent_threads(posts)            the latest posts that have comments, with them (answered = the Page replied)
+    open_items(posts)                what waits for an answer: visitors' unanswered comments and visitor posts
     publish_post(message, link)      a new post on the Page                      (writes)
     reply_to_comment(id, message)    a reply as the Page under a comment         (writes)
+    comment_on_post(id, message)     a comment as the Page under a (visitor's) post (writes)
 
 Only the Page in FACEBOOK_PAGE_ID, with its Page access token FACEBOOK_PAGE_TOKEN (server/.env; a Page token made from a
 long-lived user token does not expire). The token goes in the Authorization header, never in a URL, and is never
-logged; with FACEBOOK_APP_SECRET set every request also carries an appsecret_proof. The two writing functions only run
-when the author clicks a button in the app: nothing here posts by itself.
+logged; with FACEBOOK_APP_SECRET set every request also carries an appsecret_proof. The writing functions only run on
+the author's decision (a button in the app, or "make it so" in Telegram): nothing here posts by itself.
 
-Comments are other people's text: whoever passes them to a model quotes them as untrusted data (guard.py).
+Visitor posts are found in the Page's feed by their author (the visitor_posts edge needs more permissions than the
+Page token has). Facebook keeps replies one level deep: a reply to a reply lands under the top comment, so a comment
+counts as answered when the Page wrote in its thread at or after it.
+
+Comments and visitor posts are other people's text: whoever passes them to a model quotes them as untrusted data
+(guard.py).
 Plain HTTP (httpx) next to the LangChain stack; no model call here.
 
 Errors are FacebookError with the HTTP status the API should answer: 503 not configured / token invalid or missing a
@@ -29,7 +36,8 @@ import httpx
 
 from app.core import config
 from app.core.schemas import (
-    FacebookComment, FacebookComments, FacebookPage, FacebookPost, FacebookPosts, FacebookPublished, FacebookThread,
+    FacebookComment, FacebookComments, FacebookInboxItem, FacebookPage, FacebookPost, FacebookPosts, FacebookPublished,
+    FacebookThread,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,7 +47,7 @@ MAX_MESSAGE = 63206  # Facebook's limit for a post or comment
 MAX_LIMIT = 100  # items per request
 _ID = re.compile(r"^\d+(_\d+)?$")  # Graph object ids: "123" or "123_456"
 
-POST_FIELDS = "id,message,created_time,permalink_url,full_picture,comments.summary(true).limit(0)"
+POST_FIELDS = "id,message,created_time,from{id,name},permalink_url,full_picture,comments.summary(true).limit(0)"
 COMMENT_FIELDS = "id,message,created_time,from{id,name},parent{id},comment_count,permalink_url"
 
 # Graph error codes → our status (https://developers.facebook.com/docs/graph-api/guides/error-handling)
@@ -105,11 +113,32 @@ def recent_threads(posts: int = 10) -> list[FacebookThread]:
     for post in list_posts(limit=max(1, min(posts, 25))).items:
         if not post.comment_count:
             continue
-        comments = list_comments(post.id, limit=MAX_LIMIT).items
-        answered = {c.parent_id for c in comments if c.from_page and c.parent_id}
-        threads.append(FacebookThread(post=post, comments=[
-            c.model_copy(update={"answered": c.id in answered}) for c in comments]))
+        comments = _mark_answered(list_comments(post.id, limit=MAX_LIMIT).items)
+        threads.append(FacebookThread(post=post, comments=comments))
     return threads
+
+
+def open_items(posts: int = 10) -> list[FacebookInboxItem]:
+    """What on the Page waits for an answer, oldest first: visitors' comments the Page has not answered in their
+    thread, and visitor posts the Page has not commented on. Items without text (a sticker, a photo) are left out.
+
+    Args:
+        posts: How many of the latest posts to look at (1-25).
+    """
+    items = []
+    for post in list_posts(limit=max(1, min(posts, 25))).items:
+        comments = _mark_answered(list_comments(post.id, limit=MAX_LIMIT).items) if post.comment_count else []
+        page_commented = any(c.from_page and not c.parent_id for c in comments)
+        if not post.from_page and post.message.strip() and not page_commented:
+            items.append(FacebookInboxItem(
+                kind="visitor_post", id=post.id, reply_to=post.id, post=post, message=post.message,
+                author=post.author, created_time=post.created_time, permalink_url=post.permalink_url))
+        for c in comments:
+            if not c.from_page and not c.answered and c.message.strip():
+                items.append(FacebookInboxItem(
+                    kind="comment", id=c.id, reply_to=c.parent_id or c.id, post=post, message=c.message,
+                    author=c.author, created_time=c.created_time, permalink_url=c.permalink_url))
+    return sorted(items, key=lambda i: i.created_time)
 
 
 def publish_post(message: str, link: str | None = None) -> FacebookPublished:
@@ -136,6 +165,17 @@ def reply_to_comment(comment_id: str, message: str) -> FacebookPublished:
     """
     _check_id(comment_id, "comment")
     data = _request("POST", f"{comment_id}/comments", data={"message": _check_message(message)})
+    return FacebookPublished(id=data["id"], url=f"https://www.facebook.com/{data['id']}")
+
+
+def comment_on_post(post_id: str, message: str) -> FacebookPublished:
+    """Comment as the Page under a post (a visitor's post on the Page). Only on the author's decision.
+
+    Raises:
+        ValueError: If the post id is invalid or the message is empty or too long.
+    """
+    _check_id(post_id, "post")
+    data = _request("POST", f"{post_id}/comments", data={"message": _check_message(message)})
     return FacebookPublished(id=data["id"], url=f"https://www.facebook.com/{data['id']}")
 
 
@@ -212,11 +252,14 @@ def _after(data: dict[str, Any]) -> str | None:
 
 
 def _post(p: dict[str, Any]) -> FacebookPost:
-    """A Graph post as FacebookPost."""
+    """A Graph post as FacebookPost. Without `from` (Facebook left it out) the post counts as the Page's own, so an
+    unknown author is never treated as a visitor waiting for an answer."""
+    author = p.get("from") or {}
     return FacebookPost(
         id=p["id"], message=p.get("message", ""), created_time=p["created_time"],
         permalink_url=p.get("permalink_url"), picture=p.get("full_picture"),
         comment_count=((p.get("comments") or {}).get("summary") or {}).get("total_count", 0),
+        author=author.get("name"), from_page=not author or author.get("id") == config.FACEBOOK_PAGE_ID,
     )
 
 
@@ -229,6 +272,18 @@ def _comment(c: dict[str, Any], post_id: str) -> FacebookComment:
         parent_id=(c.get("parent") or {}).get("id"), reply_count=c.get("comment_count", 0),
         permalink_url=c.get("permalink_url"),
     )
+
+
+def _mark_answered(comments: list[FacebookComment]) -> list[FacebookComment]:
+    """The comments with `answered` set: a visitor's comment is answered when the Page wrote in its thread (a reply
+    under the top comment) at or after it. Replies to replies land under the top comment, so a visitor's follow-up
+    after the Page's reply is open again."""
+    page_replies: dict[str, list] = {}
+    for c in comments:
+        if c.from_page and c.parent_id:
+            page_replies.setdefault(c.parent_id, []).append(c.created_time)
+    return [c.model_copy(update={"answered": not c.from_page and any(
+        t >= c.created_time for t in page_replies.get(c.parent_id or c.id, []))}) for c in comments]
 
 
 def _check_id(value: str, what: str) -> None:

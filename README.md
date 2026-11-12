@@ -98,6 +98,8 @@ Press `Ctrl+C` in each terminal.
 - **RAG evaluation (RAGAs)**, with the server running: `cd eval`, then `uv run python run_eval.py --limit 3`. See [eval/README.md](eval/README.md).
 - **Agent evaluation**, with the server running: `cd eval`, then `uv run python run_agent_eval.py` (12 labelled
   discussions; `--no-judge` for decisions and checks only). See [eval/README.md](eval/README.md).
+- **Facebook Page inbox with approval in Telegram:** set `FACEBOOK_PAGE_*`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
+  and `FACEBOOK_INBOX_BOOKS` in `server/.env`, then send `/next` to your bot. See [docs/PAGE_INBOX.md](docs/PAGE_INBOX.md).
 - **Different server URL** for the client: set `NEXT_PUBLIC_API_URL` (default `http://127.0.0.1:8000`).
 
 More details: [docs/AGENT.md](docs/AGENT.md) (the agent), [server/README.md](server/README.md) (layout, MCP tools)

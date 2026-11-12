@@ -49,3 +49,4 @@ in the Python code. The loader is `app/core/prompt_files.py`.
 | Campaign kit | `campaign_personas`, `campaign_audience`, `campaign_posts`, `campaign_blurb` |
 | Discussion Relevance Agent | `discussion_research`, `discussion_assess`, `discussion_draft`, `discussion_reply_rules`, `discussion_situation`, `discussion_role` |
 | Reddit scan | `discussion_scan_triage` |
+| Page inbox agent | `page_inbox_revise` |

@@ -221,3 +221,92 @@ def test_recent_threads_skip_posts_without_comments_and_mark_answered(graph, mon
     assert asked == [f"{PAGE}_1"] and len(threads) == 1
     answered = {c.id: c.answered for c in threads[0].comments}
     assert answered == {"1_9": False, "1_8": True, "1_7": False}
+
+
+# ---------- visitor posts, comment_on_post, open_items ----------
+def test_posts_know_their_author(graph):
+    graph.answer = {"data": [
+        {"id": f"{PAGE}_1", "created_time": "2026-11-10T08:00:00+0000", "from": {"id": PAGE, "name": "HAIC"}},
+        {"id": f"{PAGE}_2", "created_time": "2026-11-10T08:00:00+0000", "from": {"id": "77", "name": "Ana"}},
+        {"id": f"{PAGE}_3", "created_time": "2026-11-10T08:00:00+0000"},  # Facebook left out the author
+    ]}
+    own, visitor, unknown = fb.list_posts().items
+    assert own.from_page and own.author == "HAIC"
+    assert not visitor.from_page and visitor.author == "Ana"
+    assert unknown.from_page and unknown.author is None  # never mistaken for a visitor waiting for an answer
+    assert "from{id,name}" in graph.requests[0].url.params["fields"]
+
+
+def test_comment_on_post(graph):
+    graph.answer = {"id": f"{PAGE}_2_99"}
+    published = fb.comment_on_post(f"{PAGE}_2", "  Thank you!  ")
+    request = graph.requests[0]
+    assert request.method == "POST" and request.url.path == f"/v27.0/{PAGE}_2/comments"
+    assert _form(request) == {"message": "Thank you!"}
+    assert published.id == f"{PAGE}_2_99"
+
+
+@pytest.mark.parametrize("post_id,message", [("../me", "hi"), (f"{PAGE}_2", "  ")])
+def test_comment_on_post_rejects_bad_input(graph, post_id, message):
+    with pytest.raises(ValueError):
+        fb.comment_on_post(post_id, message)
+    assert graph.requests == []
+
+
+def _c(id, minute, from_page=False, parent=None, message="text", author="Ana"):
+    from app.core.schemas import FacebookComment
+    return FacebookComment(id=id, post_id="p", message=message, created_time=f"2026-11-10T08:{minute:02d}:00+0000",
+                           from_page=from_page, parent_id=parent, author=None if from_page else author)
+
+
+def test_mark_answered_follows_the_thread():
+    comments = fb._mark_answered([
+        _c("top", 0),                                   # answered by the Page's reply at :05
+        _c("page1", 5, from_page=True, parent="top"),
+        _c("follow", 7, parent="top"),                  # a visitor's follow-up after the Page's reply: open again
+        _c("other", 1),                                 # no Page reply in its thread
+        _c("early", 2, parent="other2"),                # reply in a thread the Page answered later
+        _c("page2", 9, from_page=True, parent="other2"),
+    ])
+    answered = {c.id: c.answered for c in comments}
+    assert answered == {"top": True, "page1": False, "follow": False, "other": False, "early": True, "page2": False}
+
+
+def test_open_items_finds_unanswered_comments_and_visitor_posts(graph, monkeypatch):
+    from app.core.schemas import FacebookComments, FacebookPost, FacebookPosts
+    t = "2026-11-10T07:00:00+0000"
+    own = FacebookPost(id=f"{PAGE}_1", created_time=t, comment_count=3)
+    visitor_open = FacebookPost(id=f"{PAGE}_2", created_time="2026-11-10T09:00:00+0000", message="Is volume II out?",
+                                from_page=False, author="Ben")
+    visitor_done = FacebookPost(id=f"{PAGE}_3", created_time=t, message="Great book", from_page=False, comment_count=1)
+    visitor_photo = FacebookPost(id=f"{PAGE}_4", created_time=t, message="", from_page=False)
+    monkeypatch.setattr(fb, "list_posts", lambda limit=10, after=None: FacebookPosts(
+        items=[own, visitor_open, visitor_done, visitor_photo]))
+    asked = []
+
+    def comments(post_id, limit=25, after=None):
+        asked.append(post_id)
+        return FacebookComments(items={
+            own.id: [_c("1_9", 5, from_page=True, parent="1_8"), _c("1_8", 1), _c("1_7", 3, author="Cleo"),
+                     _c("1_6", 4, message=" ")],  # a sticker: no text
+            visitor_done.id: [_c("3_1", 2, from_page=True)],  # the Page commented on the visitor post
+        }[post_id])
+
+    monkeypatch.setattr(fb, "list_comments", comments)
+    items = fb.open_items(posts=99)
+    assert asked == [own.id, visitor_done.id]  # posts without comments cost no request
+    assert [(i.kind, i.id, i.reply_to, i.author) for i in items] == [
+        ("comment", "1_7", "1_7", "Cleo"),           # oldest first
+        ("visitor_post", visitor_open.id, visitor_open.id, "Ben"),
+    ]
+    assert items[0].post.id == own.id and items[1].message == "Is volume II out?"
+
+
+def test_open_items_reply_goes_to_the_top_comment(graph, monkeypatch):
+    from app.core.schemas import FacebookComments, FacebookPost, FacebookPosts
+    post = FacebookPost(id=f"{PAGE}_1", created_time="2026-11-10T07:00:00+0000", comment_count=3)
+    monkeypatch.setattr(fb, "list_posts", lambda limit=10, after=None: FacebookPosts(items=[post]))
+    monkeypatch.setattr(fb, "list_comments", lambda post_id, limit=25, after=None: FacebookComments(items=[
+        _c("top", 0), _c("page", 5, from_page=True, parent="top"), _c("follow", 7, parent="top")]))
+    [item] = fb.open_items()
+    assert item.id == "follow" and item.reply_to == "top"

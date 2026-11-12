@@ -26,6 +26,13 @@ Read once on import from environment variables (and server/.env, if present), fi
     FACEBOOK_APP_SECRET → optional, secret of the Meta app the token belongs to: every Graph request then carries an
                           appsecret_proof (Meta's protection against a stolen token being used elsewhere)
     FACEBOOK_GRAPH_VERSION → optional, the Graph API version (default "v27.0")
+    TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID → optional, the author's Telegram bot and their chat with it (Bot API, see
+                          social/telegram.py): the agent sends proposed replies there and the author approves them;
+                          messages from any other chat are ignored. Without both, Telegram is off
+    FACEBOOK_INBOX_BOOKS → optional, comma-separated book ids (src_...) of one client: the Page inbox agent
+                          (agents/page_inbox.py) answers readers on the Facebook Page from the best fitting of them
+    FACEBOOK_INBOX_INTERVAL → optional, minutes between the inbox worker's looks at the Page (default 30; 0 = only
+                          when the author sends /next in Telegram)
     LANGSMITH_PROJECT   → optional, the LangSmith project the traces go to (default "marketer-app")
     SUPABASE_URL        → URL of the Supabase project whose users may sign in (auth.py checks their access tokens
                           with its public signing keys); without it every API request except /health gets 503
@@ -42,6 +49,7 @@ Read once on import from environment variables (and server/.env, if present), fi
 """
 
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -74,6 +82,12 @@ FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID", "").strip()
 FACEBOOK_PAGE_TOKEN = os.getenv("FACEBOOK_PAGE_TOKEN", "").strip()
 FACEBOOK_APP_SECRET = os.getenv("FACEBOOK_APP_SECRET", "").strip()
 FACEBOOK_GRAPH_VERSION = os.getenv("FACEBOOK_GRAPH_VERSION", "v27.0").strip() or "v27.0"
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+_chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+TELEGRAM_CHAT_ID: int | None = int(_chat_id) if re.fullmatch(r"-?\d+", _chat_id) else None
+FACEBOOK_INBOX_BOOKS = [s.strip() for s in os.getenv("FACEBOOK_INBOX_BOOKS", "").split(",") if s.strip()]
+FACEBOOK_INBOX_INTERVAL = max(0.0, float(os.getenv("FACEBOOK_INBOX_INTERVAL", "30") or 0))
 
 LOG_FORMAT = "text" if os.getenv("LOG_FORMAT", "json").strip().lower() == "text" else "json"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()
