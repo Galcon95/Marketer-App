@@ -103,3 +103,29 @@ def test_the_cliche_list_is_in_the_prompt_from_level_50_on():
 
 def test_ai_tells_are_still_found_after_generation():
     assert "dive into" in style.find_ai_tells("Let's dive into this book.")
+
+
+@pytest.mark.parametrize("text", [
+    "This isn't just about voting; it's about continuous dialogue.",
+    "It is not only a book, it is a plan.",
+    "It's not about winning, it's about listening.",
+])
+def test_ai_sentence_patterns_are_found(text):
+    assert [t for t in style.find_ai_tells(text) if t in style.AI_PATTERNS]
+
+
+def test_plain_text_has_no_ai_tells():
+    assert style.find_ai_tells("People decide where the crews go. I would not trust a machine with that.") == []
+
+
+def test_posts_are_always_humanized_other_formats_only_on_cliches():
+    assert style.should_rewrite([], 60, is_post=True)
+    assert not style.should_rewrite([], 59, is_post=True)
+    assert not style.should_rewrite([], 80, is_post=False)
+    assert style.should_rewrite(["dive into"], 80, is_post=False)
+    post = {"req": GenerateRequest(asset_type="reader_question", humanize=60, brief="Ask."), "ai_tells": [],
+            "missing_sections": []}
+    assert generation._after_check(post) == "rewrite"
+    assert generation._after_check({**post, "rewritten": True}) == "finalize"
+    newsletter = {**post, "req": GenerateRequest(asset_type="newsletter", humanize=80, brief="News.")}
+    assert generation._after_check(newsletter) == "finalize"

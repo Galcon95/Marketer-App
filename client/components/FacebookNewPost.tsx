@@ -10,10 +10,12 @@
 
 import { useState, type SubmitEvent } from "react";
 import { PenLine, Sparkles, X } from "lucide-react";
-import { api, errorMessage, isFacebookPost, TONES, type Asset, type FacebookStatus, type Tone } from "@/lib/api";
+import {
+  api, errorMessage, humanizeLabel, isFacebookPost, TONES, type Asset, type FacebookStatus, type Tone,
+} from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import AssetCard from "./AssetCard";
-import { Button, ErrorNote, Field } from "./ui";
+import { Button, ErrorNote, Field, RangeField } from "./ui";
 
 /** What kind of post to write: a normal post, or a question that invites comments. */
 const KINDS = [
@@ -61,6 +63,7 @@ export default function FacebookNewPost({ bookId, facebook, onChange }: {
         brief: String(f.get("brief") ?? "").trim(),
         grounded: true,
         tone: (String(f.get("tone") ?? "") || "neutral") as Tone,
+        humanize: Number(f.get("humanize") || 80),
         ...(kind === "social_post" ? { platform: "facebook" as const } : {}),
         ...(bookId ? { source_ids: [bookId] } : {}),
       });
@@ -99,6 +102,8 @@ export default function FacebookNewPost({ bookId, facebook, onChange }: {
           </div>
           <Field key={`brief-${kind}`} name="brief" as="textarea" label="What should it be about?" rows={3} required
             placeholder={BRIEFS[kind]} />
+          <RangeField name="humanize" label="How human should it sound?" defaultValue={80} describe={humanizeLabel}
+            hint="Higher = less typical AI wording. From 60 on, the humanizer rewrites the post so it reads like you wrote it." />
           <div className="bc-row" style={{ gap: 8, alignItems: "center" }}>
             <Button type="submit" icon={Sparkles} loading={pending}>{pending ? "Writing…" : "Write from the book"}</Button>
             <span className="bc-hint" style={{ margin: 0 }}>Nothing is posted yet: you check the text first.</span>

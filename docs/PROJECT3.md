@@ -1,6 +1,6 @@
 # Project 3: what is implemented
 
-How the Marketer App meets the Project 3 (agents) requirements, as of 2026-11-10 (commit `882d2bf`).
+How the Marketer App meets the Project 3 (agents) requirements, as of 2026-11-12.
 Details: [AGENT.md](AGENT.md) (the agent) · [FEATURES.md](../FEATURES.md) (the whole app) · [README](../README.md) (run it).
 
 ---
@@ -12,12 +12,12 @@ Details: [AGENT.md](AGENT.md) (the agent) · [FEATURES.md](../FEATURES.md) (the 
 | **Clear purpose** | ✅ | The Discussion Relevance Agent decides whether an online discussion is worth joining with one book (`contribute` / `more_context` / `skip`) and drafts a cited reply. [AGENT.md §1](AGENT.md#1-purpose) |
 | **Why it's useful** | ✅ | Authors are told to "join the conversation", but most threads are a poor fit and promotional replies backfire. The agent filters and writes from the book. |
 | **Target users** | ✅ | Indie and self-published authors, small publishers and book marketers, mainly non-fiction. |
-| **Main features** | ✅ | Research tool loop, decision, grounded draft, platform and AI-cliché check, rewrite, citations. Reddit scan to find threads. Answering readers on the author's own Facebook Page. |
-| **User interactions** | ✅ | Book, platform, angle, tone, "how human" slider; edit the reply, copy for posting, delete; tool trace; Reply / Publish on Facebook on click. |
+| **Main features** | ✅ | Research tool loop, decision, grounded draft, platform and AI-cliché check, humanizer rewrite, citations. Reddit scan to find threads. Answering readers on the author's own Facebook Page and writing new posts for it from the book. |
+| **User interactions** | ✅ | Book, platform, angle, tone, "how human" slider; edit the reply, copy for posting, delete; tool trace; Reply / Publish on Facebook on click; "Write a new post" (post or reader question) on the Facebook tab. |
 | **User interface** | ✅ | Next.js app, Market Intelligence → Discussions (Paste / Scan Reddit / My Facebook Page). Phase 4 is clearly marked as planned. |
 | **Tools and libraries** | ✅ | LangGraph, LangChain (`bind_tools`, structured output), LangSmith, OpenRouter, Tavily, pgvector, FastAPI, Supabase. |
 | **Error handling** | ✅ | Tool errors returned to the model, loop limits, retries and timeouts, schema validation, budgets, clear HTTP errors. [AGENT.md §7](AGENT.md#7-error-handling-and-edge-cases) |
-| **Real-world usage** | ✅ | Sign-in, one library per user, per-user budgets and rate limits, data in Supabase, 565 server tests, eval on 12 labelled cases. |
+| **Real-world usage** | ✅ | Sign-in, one library per user, per-user budgets and rate limits, data in Supabase, 579 server tests, eval on 12 labelled cases. |
 | **Documentation: how to use** | ✅ | [README](../README.md) "See it in action", [AGENT.md §2](AGENT.md#2-how-to-use-it) |
 | **Documentation: use cases** | ✅ | [AGENT.md §3](AGENT.md#3-common-use-cases): 7 cases from the eval set |
 | **Documentation: technical decisions** | ✅ | [AGENT.md §6](AGENT.md#6-technical-decisions) |
@@ -27,7 +27,7 @@ Details: [AGENT.md](AGENT.md) (the agent) · [FEATURES.md](../FEATURES.md) (the 
 ### Easy
 | Task | Done | How |
 |---|---|---|
-| Personality | ✅ | 6 tones (neutral, inspiring, friendly, professional, punchy, literary) and the "how human" slider; own Page mode writes as the author in the first person. |
+| Personality | ✅ | 6 tones (neutral, inspiring, friendly, professional, punchy, literary) and the "how human" slider; from 60 on, a humanizer rewrites every social post and reply so it doesn't read as AI; own Page mode writes as the author in the first person. |
 | Interface for model settings | 🟡 | The "how human" slider sets the temperature (0.5–1.0) and the style guidance; no direct temperature or max-token fields. |
 | Choose the LLM | ❌ | One model, set by `LLM_MODEL` (OpenRouter makes switching a config change). |
 | Interactive help / chatbot guide | ❌ | |
@@ -60,6 +60,10 @@ Details: [AGENT.md](AGENT.md) (the agent) · [FEATURES.md](../FEATURES.md) (the 
 - Two **MCP servers** (book knowledge, guardrails) with sign-in, and an MCP client console in the app.
 - **Structured retrieval** (book, chapter and page filters taken from the question), a relevance floor, and contextual chunk headers, all measured with RAGAs.
 - **Prompt versions** from a hash of all prompt text, saved with every result.
+- **Every prompt in a Markdown file** (`server/prompts/*.md`, loaded by `core/prompt_files.py`), none in Python code.
+- **Humanizer for social media texts**: AI clichés and sentence patterns ("this isn't just X, it's Y") are found in
+  code; from "how human" 60 on, every post, reader question and reply is rewritten once by the model, longer formats
+  only when clichés were found.
 
 ---
 
@@ -101,8 +105,8 @@ again, until it is done. A chain or pipeline has fixed steps instead.
 ### Code organisation
 `server/app/`: `agents/` (graph, tools, scan) · `rag/` (ingestion, retrieval, QA, generation) · `api/` (FastAPI
 routes, one file per area) · `core/` (LLM, guard, limits, auth, prompts, usage) · `db/` (SQLAlchemy tables,
-records) · `social/` (Facebook) · `market/` (MCP servers and client). Alembic migrations, `tests/` (565), `eval/`
-as a separate project.
+records) · `social/` (Facebook) · `market/` (MCP servers and client). `server/prompts/` (all prompts as Markdown),
+Alembic migrations, `tests/` (579), `eval/` as a separate project.
 
 ### Security
 - Untrusted text (discussions, Reddit threads, Facebook comments, book passages, tool results) is only ever
@@ -121,11 +125,13 @@ as a separate project.
 Book not processed (409) · injection in the angle (400) · injection in a thread or comment (flagged, note to the
 model) · injected text in a reply (warning; Facebook refuses, 422) · too long (422) · model loops (limits) · unknown tool or
 bad arguments (error result) · no passage (forced *skip*) · invalid structured output (retry, then 502) · timeout
-(3 retries, then 504) · budget used up (429) · Tavily or Facebook down (503/502) · save fails (500).
+(3 retries, then 504) · budget used up (429) · Tavily or Facebook down (503/502) · Facebook Page not reachable (the tab shows Meta's reason and how to fix it) ·
+save fails (500).
 
 ### Eval results to quote (agent, 2026-11-10)
 11/12 right decisions, 3/3 traps skipped, all replies cited and within limits, injection ignored, faithfulness
-0.83, relevance 1.00, tone 0.88, about 14k tokens and 14.5 s per discussion.
+0.83, relevance 1.00, tone 0.88, about 14k tokens and 14.5 s per discussion. Measured before the humanizer rewrote
+every reply (2026-11-12): a re-run is due.
 
 ### Known problems (be honest)
 1. It never asks for more context: a fragment got *contribute*.
@@ -134,9 +140,12 @@ bad arguments (error result) · no passage (forced *skip*) · invalid structured
 4. 12 eval cases are few; the judge is also an LLM (`gpt-4o-mini`).
 5. Reddit only through Tavily (no votes or dates; some threads only as snippets).
 6. One model, no fallback; no feedback loop yet.
+7. The Facebook connection depends on Meta: on 2026-11-12 Meta's automatic checks blocked the new developer app
+   ("API access blocked") until the account was checked; the app then showed the reason instead of hiding the tab.
+8. The humanizer costs one more model call per post or reply.
 
 ### Improvements to suggest
-Feedback ratings used as few-shot examples · a code rule for `more_context` on short fragments · more eval cases
+Re-run the agent eval with the humanizer · feedback ratings used as few-shot examples · a code rule for `more_context` on short fragments · more eval cases
 from real threads · model choice and a fallback in debug mode · multi-book research · the Phase 4 multi-agent
 workflow · tool on/off switches.
 
@@ -145,5 +154,6 @@ workflow · tool on/off switches.
 2. Discussions → Scan Reddit: a topic, ranked threads, **Analyse** one.
 3. The result: decision, reason, cited reply, **tool trace**; edit and copy.
 4. A trap (gardening thread for *Garden Cities*) → *skip*.
-5. My Facebook Page: a reader's comment, answered as the author, Reply on Facebook.
+5. My Facebook Page: a reader's comment, answered as the author, Reply on Facebook; **Write a new post** from the
+   book with the "how human" slider, then Publish.
 6. Usage drawer (costs), a LangSmith trace, the agent eval report.

@@ -11,7 +11,10 @@ loads them and holds the logic around them:
     AI_TELLS       AI-typical phrases ("AI slop"): avoided in the prompt from humanize 50 on,
                    detected after generation (find_ai_tells) and rewritten from REWRITE_FROM on
                    (the list stays in code: the code uses it for the check too)
+    AI_PATTERNS    AI-typical sentence patterns (e.g. "isn't just X, it's Y"), found by find_ai_tells as well
     REWRITE_PROMPT the humanizer's prompt (prompts/style_rewrite.md)
+    should_rewrite when the humanizer runs: for posts and replies always from REWRITE_FROM on (2026-11-12: posts
+                   without a listed cliché still read as AI), for longer formats only when clichés were found
 
 Listing banned phrases verbatim can prime some models to use them. Measured for this app's model instead of assumed
 (2026-10-29, gpt-4o-mini, 10 grounded LinkedIn post drafts per variant at humanize 75, before the rewrite step):
@@ -44,8 +47,15 @@ AI_TELLS: list[str] = [
     "groundbreaking", "join the movement", "are you ready", "ready to explore", "look no further",
     "harmonious", "vibrant", "tapestry", "elevate", "embrace", "testament to", "a must-read", "timeless",
     "discover how", "the future is", "let's dive", "buckle up", "not just", "seamlessly", "synergy",
+    "truly", "empower", "empowers", "foster", "resonate", "resonates", "navigate", "landscape", "realm",
 ]
-REWRITE_FROM = 60  # humanize level from which found AI clichés are rewritten (one extra model call)
+# Sentence patterns no phrase list catches: label (shown, and given to the humanizer) → regular expression.
+AI_PATTERNS: dict[str, str] = {
+    "not just X, it's Y": r"\b(?:is ?n[o']t|are ?n[o']t|not)\s+(?:just|only|merely|simply)\b",
+    "it's not about X, it's about Y": r"\bn[o']t about\b[^.!?]{0,80}[.;,:]\s*(?:it'?s|it is)\s+about\b",
+    "more than just": r"\bmore than just\b",
+}
+REWRITE_FROM = 60  # humanize level from which the humanizer rewrites (one extra model call)
 
 REWRITE_PROMPT = prompt_files.chat_prompt("style_rewrite")  # prompts/style_rewrite.md
 
@@ -61,6 +71,17 @@ def style_guidance(humanize: int) -> str:
     return guidance
 
 
+def should_rewrite(tells: list[str], humanize: int, is_post: bool) -> bool:
+    """Whether the humanizer rewrites a text: from REWRITE_FROM on, posts and replies always (they must sound like a
+    person even when no listed cliché is found), other formats only when AI clichés were found."""
+    return humanize >= REWRITE_FROM and (is_post or bool(tells))
+
+
+def tells_for_prompt(tells: list[str]) -> str:
+    """The found AI clichés for the humanizer's prompt, quoted; a note when the check found none."""
+    return ", ".join(f'"{t}"' for t in tells) if tells else "none found by the automatic check"
+
+
 def find_ai_tells(text: str, emojis_expected: bool = False) -> list[str]:
     """AI-typical phrases and patterns in a text: listed clichés, many exclamation marks, emojis or em dashes.
 
@@ -70,6 +91,7 @@ def find_ai_tells(text: str, emojis_expected: bool = False) -> list[str]:
     """
     lower = text.lower()
     found = [t for t in AI_TELLS if re.search(rf"\b{re.escape(t)}\b", lower)]
+    found += [label for label, pattern in AI_PATTERNS.items() if re.search(pattern, lower)]
     if text.count("!") > 2:
         found.append("many exclamation marks")
     if not emojis_expected and len(re.findall(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]", text)) > 3:

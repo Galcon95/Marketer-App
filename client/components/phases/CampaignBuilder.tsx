@@ -166,7 +166,7 @@ function BriefForm({ books, assets, onDone }: { books: Source[]; assets: Asset[]
           {audience === CUSTOM_AUDIENCE && <Field name="audience_custom" placeholder="e.g. retired engineers who like local history" required />}
 
           <RangeField name="humanize" label="How human should it sound?" defaultValue={60} describe={humanizeLabel}
-            hint="Higher = less typical AI wording. From 60 on, AI clichés found in the posts and blurb are rewritten automatically." />
+            hint="Higher = less typical AI wording. From 60 on, every post goes through the humanizer; the blurb when AI clichés are found." />
         </div>
 
         <Button type="submit" icon={Sparkles} loading={pending}>{pending ? "Writing personas, posts and blurb…" : "Generate campaign (zero-shot)"}</Button>

@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from app.agents import discussion as agent
 from app.agents import discussion_tools as dt
 from app.core import state as db
+from app.core import style
 from app.core.llm import GenerationError
 from app.core.schemas import BookSummary, Chunk, ChunkLocation, DiscussionRequest, Source
 
@@ -62,6 +63,16 @@ def model(monkeypatch):
         monkeypatch.setattr(agent, "chat_model", lambda temperature=0.7: fake)
         return fake
     return install
+
+
+@pytest.fixture(autouse=True)
+def humanizer(monkeypatch):
+    """The humanizer rewrites every reply from humanize 60 on (one more model call). Off by default here, so the
+    tests about other steps need not script it; the humanizer tests turn it on with humanizer(True)."""
+    def turn(on: bool):
+        monkeypatch.setattr(style, "REWRITE_FROM", 60 if on else 101)
+    turn(False)
+    return turn
 
 
 @pytest.fixture(autouse=True)
@@ -243,7 +254,8 @@ def _contribute_with(reply: str, queued):
     queued["DraftReply"].append(agent.DraftReply(reply=reply, used_sources=[1], mention_book=False, mention_reason="No."))
 
 
-def test_ai_cliches_are_rewritten_once_keeping_the_markers(model, outputs):
+def test_ai_cliches_are_rewritten_once_keeping_the_markers(model, outputs, humanizer):
+    humanizer(True)
     queued, _ = outputs
     fake = model(*FULL_RESEARCH, _notes("People decide where the crews go [1].", tokens=4))
     _contribute_with("Let's dive into this: people decide where the crews go [1].", queued)
@@ -257,7 +269,8 @@ def test_ai_cliches_are_rewritten_once_keeping_the_markers(model, outputs):
     assert state["tokens"] == 25 + 7 + 7 + 4
 
 
-def test_cliches_left_after_the_rewrite_are_reported_not_rewritten_again(model, outputs):
+def test_cliches_left_after_the_rewrite_are_reported_not_rewritten_again(model, outputs, humanizer):
+    humanizer(True)
     queued, _ = outputs
     model(*FULL_RESEARCH, _notes("A game-changer: people decide [1]."))
     _contribute_with("Let's dive into this: people decide [1].", queued)
@@ -266,7 +279,18 @@ def test_cliches_left_after_the_rewrite_are_reported_not_rewritten_again(model, 
     assert state["platform_issues"] == ["Sounds AI-written: game-changer."]
 
 
-def test_below_the_rewrite_level_cliches_are_only_reported(model, outputs):
+def test_a_reply_without_cliches_is_humanized_too(model, outputs, humanizer):
+    humanizer(True)
+    queued, _ = outputs
+    fake = model(*FULL_RESEARCH, _notes("Honestly, people still decide where the crews go [1].", tokens=4))
+    _contribute_with("People decide where the crews go [1].", queued)
+    state = _run(humanize=60)
+    assert state["rewritten"] and state["suggested_reply"] == "Honestly, people still decide where the crews go [1]."
+    assert "none found by the automatic check" in fake.prompts[-1][0].content
+
+
+def test_below_the_rewrite_level_cliches_are_only_reported(model, outputs, humanizer):
+    humanizer(True)
     queued, _ = outputs
     model(*FULL_RESEARCH)  # no fourth model call scripted: a rewrite would fail the test
     _contribute_with("Let's dive into this: people decide [1].", queued)

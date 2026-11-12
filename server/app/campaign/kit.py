@@ -8,8 +8,8 @@
     posts     brief + personas → 5 posts, each written for one persona on a platform where that
               persona is reached, in five angles (hook, teaser, question, behind the scenes, call to action)
     blurb     brief + personas → a back-cover / store description aimed at the strongest persona
-    polish    finds AI-typical clichés in posts and blurb (core/style.find_ai_tells) and, from
-              humanize 60 on, rewrites just those parts once (core/style.REWRITE_PROMPT)
+    polish    finds AI-typical clichés in posts and blurb (core/style.find_ai_tells); from humanize 60 on
+              the humanizer rewrites every post once, the blurb when clichés were found (core/style.REWRITE_PROMPT)
 
 posts and blurb run in parallel, both after personas, so the whole kit targets the same readers.
 Zero-shot: the model sees only the brief, never excerpts from the book, so nothing is cited. The
@@ -33,7 +33,9 @@ from app.core.config import LLM_MODEL
 from app.core.logs import current_request_id
 from app.core.llm import GenerationError, chat_model, is_configured, model_failure, structured, tokens_used
 from app.core.schemas import CampaignRequest, Platform
-from app.core.style import PLATFORM_POST, REWRITE_FROM, REWRITE_PROMPT, find_ai_tells, style_guidance, temperature_for
+from app.core.style import (
+    PLATFORM_POST, REWRITE_PROMPT, find_ai_tells, should_rewrite, style_guidance, tells_for_prompt, temperature_for,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -215,21 +217,24 @@ def _blurb(state: CampaignState) -> CampaignState:
 
 
 def _polish(state: CampaignState) -> CampaignState:
-    """Polish node: check posts and blurb for AI clichés; from humanize 60 on, rewrite the affected ones once."""
+    """Polish node: check posts and blurb for AI clichés; from humanize 60 on, the humanizer rewrites every post
+    once, and the blurb when clichés were found."""
     humanize = state["req"].humanize
-    posts = [_polish_text(p.text, humanize, emojis_expected=p.platform in ("instagram", "tiktok")) for p in state["posts"]]
+    posts = [_polish_text(p.text, humanize, emojis_expected=p.platform in ("instagram", "tiktok"), is_post=True)
+             for p in state["posts"]]
     blurb = _polish_text(state["blurb"], humanize)
     return {"polished_posts": posts, "polished_blurb": blurb,
             "tokens": sum(p["tokens"] for p in posts) + blurb["tokens"]}
 
 
-def _polish_text(text: str, humanize: int, emojis_expected: bool = False) -> Piece:
-    """One text through the cliché check and, if needed, one rewrite (as in generation.py's check_style/rewrite)."""
+def _polish_text(text: str, humanize: int, emojis_expected: bool = False, is_post: bool = False) -> Piece:
+    """One text through the cliché check and, if needed, one rewrite (as in generation.py's check_style/rewrite;
+    posts always from humanize REWRITE_FROM on, see style.should_rewrite)."""
     tells = find_ai_tells(text, emojis_expected)
-    if not tells or humanize < REWRITE_FROM:
+    if not should_rewrite(tells, humanize, is_post):
         return {"text": text, "ai_tells": tells, "tokens": 0}
     reply: AIMessage = (REWRITE_PROMPT | chat_model(temperature_for(humanize))).invoke({
-        "tells": ", ".join(f'"{t}"' for t in tells), "style": style_guidance(humanize), "text": text,
+        "tells": tells_for_prompt(tells), "style": style_guidance(humanize), "text": text,
     })
     new_text = str(reply.content).strip() or text
     return {"text": new_text, "ai_tells": find_ai_tells(new_text, emojis_expected), "tokens": tokens_used(reply)}

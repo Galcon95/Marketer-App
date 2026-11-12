@@ -120,7 +120,7 @@ export default function GroundedGenerator({ refresh, bookId, onChange }: {
           </div>
           <Field name="audience" label="Target audience (optional)" placeholder="e.g. young urban planners" />
           <RangeField name="humanize" label="How human should it sound?" defaultValue={60} describe={humanizeLabel}
-            hint="Higher = less typical AI wording. From 60 on, AI clichés found in the result are rewritten automatically." />
+            hint="Higher = less typical AI wording. From 60 on, posts and replies always go through the humanizer; other formats when AI clichés are found." />
           {isReply && (
             <Field name="reply_to" as="textarea" label="Their post" rows={5} required
               placeholder="Paste the post you want to reply to" />

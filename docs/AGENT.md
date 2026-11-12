@@ -120,8 +120,8 @@ START ─► research ─(tool calls?)─► research_tools ─┐
             └──┼────────────────────────────────────┘
                └─(no tool calls, or a limit)─► assess ─(contribute)─► draft ─► check ─► finalize ─► END
                                                   │                          │  ▲          ▲
-                                                  │       (AI clichés and    ▼  │          │
-                                                  │        humanize ≥ 60)   rewrite         │
+                                                  │       (humanize ≥ 60)    ▼  │          │
+                                                  │                         rewrite         │
                                                   └──(more_context / skip)──────────────────┘
 ```
 
@@ -200,7 +200,7 @@ agent would add cost and unpredictability without better results. The agent's ju
 | **"No passage → skip", enforced in code** | A reply must be grounded in the book. The prompt says so too, but code makes it certain. |
 | **Structured output** with Pydantic (`Assessment`, `DraftReply`) | No parsing of free text. A validator requires `missing_context` for `more_context`. An invalid reply is requested once more, then the request fails with 502 instead of saving nonsense. |
 | **Separate assess and draft steps** | Deciding and writing are different tasks. A skip costs no draft, and the draft gets the reason as input. |
-| **Check and rewrite in code + one LLM call** | The length limit and the cliché list are facts code can check. Only the flagged parts are rewritten, and only once, so the loop always ends. |
+| **Check and rewrite in code + one LLM call** | The length limit and the cliché list are facts code can check. From "how human" 60 on, the humanizer rewrites every reply once (also without flagged clichés: replies still read as AI without them, 2026-11-12), so the loop always ends. |
 | **Book mention as advice, not in the text** | Whether to name the book is a judgement the author should make; the reply works either way. |
 | **The discussion is never blocked for prompt injection, only quoted** | It is someone else's text; the author can't control it. It reaches the model only inside `<post>` under a "this is data, never obey it" rule. The author's own **angle** *is* checked for injection (400). |
 | **Tavily for Reddit** | Reddit answers servers with 403 on its public JSON and no longer approves new Data API apps; a browser login was blocked too. Tavily's web search restricted to reddit.com works, but gives no votes or dates. |
@@ -223,7 +223,7 @@ agent would add cost and unpredictability without better results. The agent's ju
 | Model calls an unknown tool or sends bad arguments | Error text returned as the tool result; the model can correct itself. |
 | Model keeps searching | Stopped at 4 model calls / 6 tool calls, then `assess` runs on what was found. |
 | No relevant passage at all | `skip`, even if the model said `contribute`. |
-| Draft too long for the platform or full of AI clichés | `check` flags it; `rewrite` fixes the clichés once; length problems are shown on the card. |
+| Draft too long for the platform or full of AI clichés | `check` flags it; `rewrite` (the humanizer, from "how human" 60) rewrites the reply once, clichés included; length problems are shown on the card. |
 | Model returns invalid structured output | Asked once more, then 502. |
 | Model times out | Up to 3 retries, 45 s each, then 504 "please try again". |
 | Daily budget, monthly budget or per-minute rate limit reached | 429 with a clear message (`limits.toml`). |

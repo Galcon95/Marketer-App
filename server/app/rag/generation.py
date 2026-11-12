@@ -1,6 +1,6 @@
 """Asset generation with LangGraph + LangChain: the R-A-G of the RAG pipeline.
 
-    START ─(reply?)──► plan_query ─► retrieve ─► generate ─► check_style ─(AI clichés & humanize ≥ 60?)─► rewrite ─► finalize ─► END
+    START ─(reply?)──► plan_query ─► retrieve ─► generate ─► check_style ─(humanize ≥ 60: posts always, else on clichés)─► rewrite ─► finalize ─► END
           ─(grounded?)────────────► retrieve ─► generate ─► check_style ──────────────────────────────────────────► finalize ─► END
           └─────────────────────────────────────► generate     (zero-shot: same path from generate on, without excerpts)
 
@@ -11,7 +11,8 @@
               (Generation)   ChatOpenAI (via OpenRouter) writes the asset and cites excerpts as [n]
     check_style              finds AI-typical clichés ("Imagine a world", "Dive into", emoji piles, ...) and, for
                              video scripts and YouTube pages, missing section headings: then generate runs once more
-    rewrite                  at humanize ≥ 60: rephrases just those parts once, keeping facts, quotes and markers
+    rewrite                  the humanizer, at humanize ≥ 60: posts, reader questions and replies always, other
+                             formats when clichés were found; rewrites once, keeping facts, quotes and markers
     finalize                 turns the [n] markers into citations and records the clichés that remain
 
 The "humanize" setting (0-100) adds style guidance to the prompt (see core/style.py) and raises the
@@ -47,8 +48,8 @@ from app.core.llm import (
 )
 from app.core.schemas import Asset, AssetType, Chunk, Citation, GenerateRequest, Length
 from app.core.style import (
-    PLATFORM_POST, PLATFORM_REPLY, PLATFORM_VIDEO, REWRITE_FROM, REWRITE_PROMPT, TONES, find_ai_tells,
-    style_guidance, temperature_for,
+    PLATFORM_POST, PLATFORM_REPLY, PLATFORM_VIDEO, REWRITE_PROMPT, TONES, find_ai_tells, should_rewrite,
+    style_guidance, tells_for_prompt, temperature_for,
 )
 from app.db import records
 from app.rag import vectorstore
@@ -249,6 +250,10 @@ def missing_sections(asset_type: AssetType, text: str) -> list[str]:
             if not re.search(rf"^[\s*#]*{re.escape(heading.rstrip(':'))}\b", text, re.IGNORECASE | re.MULTILINE)]
 
 
+# Posts and replies: the humanizer rewrites them always (from humanize REWRITE_FROM on), not only on found clichés.
+POST_TYPES = {"social_post", "social_reply", "reader_question"}
+
+
 def emojis_are_normal(req: GenerateRequest) -> bool:
     """True for formats where several emojis are normal: Instagram and TikTok posts/replies, and short video scripts."""
     if req.asset_type == "video_script":
@@ -357,21 +362,24 @@ def _check_style(state: GenerationState) -> GenerationState:
 
 
 def _after_check(state: GenerationState) -> str:
-    """Edge after check_style: write the draft once more if required headings are missing; else rewrite once if
-    clichés were found and humanize is at least REWRITE_FROM; else finalize."""
+    """Edge after check_style: write the draft once more if required headings are missing; else rewrite once
+    (style.should_rewrite: posts and replies always from humanize REWRITE_FROM on, other formats only when clichés
+    were found); else finalize."""
     if state["missing_sections"] and state["attempts"] < 2:
         logger.info("%s draft lacks %s; writing it once more", state["req"].asset_type, state["missing_sections"])
         return "generate"
-    if state["ai_tells"] and state["req"].humanize >= REWRITE_FROM and not state.get("rewritten"):
+    req = state["req"]
+    if should_rewrite(state["ai_tells"], req.humanize, req.asset_type in POST_TYPES) and not state.get("rewritten"):
         return "rewrite"
     return "finalize"
 
 
 def _rewrite(state: GenerationState) -> GenerationState:
-    """Rewrite node: rephrase just the found clichés, keeping facts, quotes, format and [n] markers."""
+    """Rewrite node (the humanizer): make the draft sound human, rephrasing the found clichés, keeping facts,
+    quotes, format and [n] markers."""
     humanize = state["req"].humanize
     reply: AIMessage = (REWRITE_PROMPT | chat_model(temperature_for(humanize))).invoke({
-        "tells": ", ".join(f'"{t}"' for t in state["ai_tells"]), "style": style_guidance(humanize), "text": state["draft"],
+        "tells": tells_for_prompt(state["ai_tells"]), "style": style_guidance(humanize), "text": state["draft"],
     })
     return {"draft": str(reply.content).strip() or state["draft"], "rewritten": True,
             "tokens": state.get("tokens", 0) + tokens_used(reply)}

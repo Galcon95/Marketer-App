@@ -6,8 +6,8 @@ the author to contribute from one book, and if so, a reply grounded in that book
                 └──┼────────────────────────────────────┘
                    └─(no tool calls, or a limit)─► assess ─(contribute)─► draft ─► check ─────────► finalize ─► END
                                                       │                         │  ▲               ▲
-                                                      │      (AI clichés and    ▼  │               │
-                                                      │       humanize ≥ 60)   rewrite             │
+                                                      │      (humanize ≥ 60)    ▼  │               │
+                                                      │                        rewrite             │
                                                       └──(more_context / skip)─────────────────────┘
 
     research        the agent: the chat model with the tools bound (discussion_tools.py: get_book_profile,
@@ -24,9 +24,9 @@ the author to contribute from one book, and if so, a reply grounded in that book
                     numbered passages only, plus the advice whether to name the book
     check           pure code: the platform's hard character limit and AI clichés (style.find_ai_tells). Not
                     platforms.check_platform_fit, whose hashtag and word advice is for posts, not replies
-    rewrite         like the generator's humanizer: when check found AI clichés and the "how human" setting is at
-                    least style.REWRITE_FROM, the model rephrases just those parts once (style.REWRITE_PROMPT), keeping
-                    facts and [n] markers; then check runs again on the new text
+    rewrite         the generator's humanizer: when the "how human" setting is at least style.REWRITE_FROM, the model
+                    rewrites the reply once so it sounds human, rephrasing the clichés check found (style.REWRITE_PROMPT),
+                    keeping facts and [n] markers; then check runs again on the new text
     finalize        the [n] markers of the reason and the reply become one list of citations, numbered in order of
                     first use across both texts (retrieval.keep_cited)
 
@@ -74,7 +74,8 @@ from app.core.schemas import (
     BookMention, Citation, DiscussionAnalysis, DiscussionPlatform, DiscussionRequest, Recommendation, ToolCallRecord,
 )
 from app.core.style import (
-    PLATFORM_REPLY, REWRITE_FROM, REWRITE_PROMPT, TONES, find_ai_tells, style_guidance, temperature_for,
+    PLATFORM_REPLY, REWRITE_FROM, REWRITE_PROMPT, TONES, find_ai_tells, should_rewrite, style_guidance,
+    tells_for_prompt, temperature_for,
 )
 from app.rag import vectorstore
 from app.rag.chat_tools import run_tool_calls
@@ -348,18 +349,20 @@ def _check(state: DiscussionState) -> DiscussionState:
 
 
 def _after_check(state: DiscussionState) -> str:
-    """Rewrite once when AI clichés were found and the "how human" setting asks for it; else finalize."""
-    if state["ai_tells"] and _humanize(state) >= REWRITE_FROM and not state.get("rewritten"):
+    """Rewrite once (the humanizer) when the "how human" setting is at least REWRITE_FROM: a reply is a post, so
+    always, not only when AI clichés were found (style.should_rewrite); else finalize."""
+    if should_rewrite(state["ai_tells"], _humanize(state), is_post=True) and not state.get("rewritten"):
         return "rewrite"
     return "finalize"
 
 
 def _rewrite(state: DiscussionState) -> DiscussionState:
-    """Rewrite node: rephrase just the found clichés (the generator's REWRITE_PROMPT), keeping facts and [n] markers.
+    """Rewrite node: make the reply sound human, rephrasing the found clichés (the generator's REWRITE_PROMPT),
+    keeping facts and [n] markers.
     An empty answer keeps the draft."""
     humanize, draft = _humanize(state), state["draft"]
     reply: AIMessage = chat_model(temperature_for(humanize)).invoke(REWRITE_PROMPT.format_messages(
-        tells=", ".join(f'"{t}"' for t in state["ai_tells"]), style=style_guidance(humanize), text=draft.reply))
+        tells=tells_for_prompt(state["ai_tells"]), style=style_guidance(humanize), text=draft.reply))
     text = str(reply.content).strip()
     return {"draft": draft.model_copy(update={"reply": text}) if text else draft, "rewritten": True,
             "tokens": state.get("tokens", 0) + tokens_used(reply)}

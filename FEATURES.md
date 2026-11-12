@@ -2,7 +2,7 @@
 
 A tool for book marketing. A Next.js frontend (`client/`) talks to a FastAPI backend (`server/`). The AI parts use LangChain, LangGraph and LangSmith, with models reached through OpenRouter.
 
-Status as of 2026-11-10 (Facebook Page included).
+Status as of 2026-11-12 (Facebook Page included).
 
 | Phase | Name | Status |
 |---|---|---|
@@ -83,8 +83,11 @@ Status as of 2026-11-10 (Facebook Page included).
 
 ### "How human" (humanize slider, 0–100)
 - Adds more and more style guidance as the value rises and raises the temperature slightly.
-- Detects AI clichés ("dive into", "tapestry", "game-changer", emoji piles and more).
-- From 60 up, rewrites the flagged parts once and keeps the facts, quotes and `[n]` markers.
+- Detects AI clichés ("dive into", "tapestry", "game-changer", emoji piles and more) and AI sentence patterns
+  ("this isn't just X, it's Y", "it's not about X, it's about Y").
+- From 60 up, the humanizer rewrites every post, reader question and reply once, even when no cliché was found
+  (they still read as AI without one); longer formats (blurb, newsletter, scripts, ...) only when clichés were
+  found. It keeps the facts, quotes and `[n]` markers. Costs one more model call per post.
 
 ### Asset library
 - Every generated asset is saved. You can edit it, delete it, or copy it without the citation markers.
@@ -151,8 +154,8 @@ START ─► research ─(tool calls?)─► research_tools ─┐
             └──┼────────────────────────────────────┘
                └─(no tool calls, or a limit)─► assess ─(contribute)─► draft ─► check ─► finalize ─► END
                                                   │                          │  ▲          ▲
-                                                  │       (AI clichés and    ▼  │          │
-                                                  │        humanize ≥ 60)   rewrite         │
+                                                  │       (humanize ≥ 60)    ▼  │          │
+                                                  │                         rewrite         │
                                                   └──(more_context / skip)──────────────────┘
 ```
 
@@ -168,8 +171,9 @@ START ─► research ─(tool calls?)─► research_tools ─┐
 - **assess**: structured output (`contribute` / `more_context` / `skip` + reason). Without any passage found,
   "contribute" is overruled in code to "skip": a reply must be grounded in the book.
 - **draft**: structured output: the reply, written from the numbered passages only, plus the book-mention advice.
-- **check** (pure code): the platform's hard character limit and AI clichés. **rewrite**: from "how human" 60 up, the
-  flagged parts are rephrased once, keeping facts and `[n]` markers; then check runs again.
+- **check** (pure code): the platform's hard character limit and AI clichés. **rewrite** (the humanizer): from "how
+  human" 60 up, every reply is rewritten once to sound human, the flagged parts included, keeping facts and `[n]`
+  markers; then check runs again.
 - **finalize**: the `[n]` markers of reason and reply become one numbered list of citations.
 
 Around the graph:
@@ -358,7 +362,7 @@ Three layers, all in code and on every request (never left to the model):
   against naming the book even when a reader asked for a recommendation. Details in `docs/AGENT.md`.
 
 ### Tests
-- Backend: 565 pytest tests in `server/tests/`, among them: relevance floor and not-covered answer, chunk headers, BM25 and hybrid fusion, temperatures per task, format examples and section check, guardrails, timeouts and retries of model calls, request ids and log format, prompt versions, quoting of untrusted text, structured-output schemas and retries, platform check, citations, chapter detection, structured retrieval filters, uploads (wrong types, duplicates), deleting a book with what belongs only to it, sign-in on every route, ownership (another user's data → 404), limits and budgets, API keys and MCP sign-in, the database layer, the Discussion agent (graph routing, tool limits, schemas, API), the Reddit scan (Tavily and model faked) and the Facebook client and endpoints (Graph API faked), and the prompt-injection scan of third-party text and the output guard, and the prompt files and their loader. Run `uv run pytest` in `server/`.
+- Backend: 579 pytest tests in `server/tests/`, among them: relevance floor and not-covered answer, chunk headers, BM25 and hybrid fusion, temperatures per task, format examples and section check, guardrails, timeouts and retries of model calls, request ids and log format, prompt versions, quoting of untrusted text, structured-output schemas and retries, platform check, citations, chapter detection, structured retrieval filters, uploads (wrong types, duplicates), deleting a book with what belongs only to it, sign-in on every route, ownership (another user's data → 404), limits and budgets, API keys and MCP sign-in, the database layer, the Discussion agent (graph routing, tool limits, schemas, API), the Reddit scan (Tavily and model faked) and the Facebook client and endpoints (Graph API faked), and the prompt-injection scan of third-party text and the output guard, the prompt files and their loader, and the humanizer rule (AI sentence patterns, posts always rewritten). Run `uv run pytest` in `server/`.
 - Frontend: 21 Vitest tests in `client/tests/` (helpers in `lib/api.ts` and the API client's error handling with a stubbed `fetch`). Run `npm test` in `client/`.
 - No model calls, no API key needed; answer quality is measured separately with RAGAs (`eval/`).
 
