@@ -46,7 +46,9 @@ const THEME_INIT = `try {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" data-theme="dark" suppressHydrationWarning className={`${geistSans.variable} ${geistMono.variable}`}>
-      <body>
+      {/* suppressHydrationWarning: browser extensions (e.g. ColorZilla's cz-shortcut-listen) add attributes to <body>
+          before React loads; only <body>'s own attributes are ignored, not its children. */}
+      <body suppressHydrationWarning>
         {children}
         <Script id="theme-init" strategy="beforeInteractive">{THEME_INIT}</Script>
       </body>
