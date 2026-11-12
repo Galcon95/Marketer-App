@@ -5,10 +5,11 @@
  * YouTube or a forum, and the agent searches the book chosen under "Working on", recommends whether to contribute
  * (contribute, more context, skip) and drafts a reply grounded in the book's passages (POST /discussions).
  * The saved analyses are listed below the form, newest first, for the author to edit, copy and post themselves.
- * "Scan Reddit" (RedditScan.tsx) finds threads to analyse. With the author's Facebook Page connected (admin only) a
+ * "Scan Reddit" (RedditScan.tsx) finds threads to analyse. For the admin (the owner of the Facebook Page) a
  * third tab lists the comments on the Page (FacebookComments.tsx): one goes into the form, and the agent answers it as
  * the author ("own Page" mode); the reply can then be posted as the Page. Above the comments, "Write a new post"
- * (FacebookNewPost.tsx) writes a post or reader question from the book and publishes it on the Page.
+ * (FacebookNewPost.tsx) writes a post or reader question from the book and publishes it on the Page. When the Page is
+ * not configured or not reachable (e.g. an expired token), the tab stays and says why instead of disappearing.
  * Other people's text is scanned for prompt injection on the server and flagged, not blocked (InjectionBadge.tsx).
  */
 
@@ -50,6 +51,7 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
   const [fromPage, setFromPage] = useState<FacebookComment | null>(null); // the Page comment loaded into the form
   // The author's Facebook Page (403 for anyone but the admin: no Facebook tab).
   const facebook = useApi("facebook-status", api.facebookStatus);
+  const isPageAdmin = facebook.data !== undefined; // the status call succeeded: the admin, connected or not
   const pageConnected = facebook.data?.connected === true;
 
   const book = books.find((b) => b.id === bookId) ?? (books.length === 1 ? books[0] : undefined);
@@ -114,7 +116,7 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
         <div className="bc-row" role="group" aria-label="How to find a discussion" style={{ gap: 8, marginBottom: 16 }}>
           <Button size="sm" icon={Radar} variant={mode === "scan" ? "secondary" : "ghost"} aria-pressed={mode === "scan"}
             onClick={() => setMode("scan")}>Scan Reddit</Button>
-          {pageConnected && (
+          {isPageAdmin && (
             <Button size="sm" icon={MessageCircle} variant={mode === "facebook" ? "secondary" : "ghost"}
               aria-pressed={mode === "facebook"} onClick={() => setMode("facebook")}>My Facebook Page</Button>
           )}
@@ -124,6 +126,22 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
         <div hidden={mode !== "scan"}>
           <RedditScan bookId={book?.id} bookTitle={book ? bookTitle(book.filename) : undefined} onAnalyse={analyseThread} />
         </div>
+        {mode === "facebook" && facebook.data && !pageConnected && (
+          <div className="bc-stack" style={{ gap: 12 }}>
+            <ErrorNote>
+              {facebook.data.error
+                ? <>Facebook Page not reachable: {facebook.data.error}. Renew FACEBOOK_PAGE_TOKEN (and
+                  FACEBOOK_USER_TOKEN) in server/.env and restart the server.</>
+                : <>Facebook Page not configured: set FACEBOOK_PAGE_ID and FACEBOOK_PAGE_TOKEN in server/.env and
+                  restart the server.</>}
+            </ErrorNote>
+            <div>
+              <Button size="sm" variant="ghost" disabled={facebook.loading} onClick={facebook.reload}>
+                {facebook.loading ? "Checking…" : "Check again"}
+              </Button>
+            </div>
+          </div>
+        )}
         {mode === "facebook" && pageConnected && facebook.data && (
           <div className="bc-stack" style={{ gap: 20 }}>
             <FacebookNewPost bookId={book?.id ?? null} facebook={facebook.data} onChange={onChange} />
