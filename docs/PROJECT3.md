@@ -1,7 +1,7 @@
 # Project 3: what is implemented
 
-How the Marketer App meets the Project 3 (agents) requirements, as of 2026-11-12.
-Details: [AGENT.md](AGENT.md) (the agent) · [FEATURES.md](../FEATURES.md) (the whole app) · [README](../README.md) (run it).
+How the Marketer App meets the Project 3 (agents) requirements, as of 2026-11-13.
+Details: [AGENT.md](AGENT.md) (the agent) · [PAGE_INBOX.md](PAGE_INBOX.md) (the Page inbox agent) · [FEATURES.md](../FEATURES.md) (the whole app) · [README](../README.md) (run it).
 
 ---
 
@@ -12,12 +12,12 @@ Details: [AGENT.md](AGENT.md) (the agent) · [FEATURES.md](../FEATURES.md) (the 
 | **Clear purpose** | ✅ | The Discussion Relevance Agent decides whether an online discussion is worth joining with one book (`contribute` / `more_context` / `skip`) and drafts a cited reply. [AGENT.md §1](AGENT.md#1-purpose) |
 | **Why it's useful** | ✅ | Authors are told to "join the conversation", but most threads are a poor fit and promotional replies backfire. The agent filters and writes from the book. |
 | **Target users** | ✅ | Indie and self-published authors, small publishers and book marketers, mainly non-fiction. |
-| **Main features** | ✅ | Research tool loop, decision, grounded draft, platform and AI-cliché check, humanizer rewrite, citations. Reddit scan to find threads. Answering readers on the author's own Facebook Page and writing new posts for it from the book. |
-| **User interactions** | ✅ | Book, platform, angle, tone, "how human" slider; edit the reply, copy for posting, delete; tool trace; Reply / Publish on Facebook on click; "Write a new post" (post or reader question) on the Facebook tab. |
-| **User interface** | ✅ | Next.js app, Market Intelligence → Discussions (Paste / Scan Reddit / My Facebook Page). Phase 4 is clearly marked as planned. |
-| **Tools and libraries** | ✅ | LangGraph, LangChain (`bind_tools`, structured output), LangSmith, OpenRouter, Tavily, pgvector, FastAPI, Supabase. |
+| **Main features** | ✅ | Research tool loop, decision, grounded draft, platform and AI-cliché check, humanizer rewrite, citations. Reddit scan to find threads. Answering readers on the author's own Facebook Page and writing new posts for it from the book. A second agent, the **Page inbox agent**, watches the Page, drafts replies with the Discussion agent and waits for the author's approval in Telegram. |
+| **User interactions** | ✅ | Book, platform, angle, tone, "how human" slider; edit the reply, copy for posting, delete; tool trace; Reply / Publish on Facebook on click; "Write a new post" (post or reader question) on the Facebook tab. In Telegram: `/next`, **Make it so**, **Skip**, or feedback text that has the reply rewritten. |
+| **User interface** | ✅ | Next.js app, Market Intelligence → Discussions (Paste / Scan Reddit / My Facebook Page). Telegram chat with buttons for the Page inbox agent. Phase 4 is clearly marked as planned. |
+| **Tools and libraries** | ✅ | LangGraph (incl. `interrupt()` + checkpointer for the human in the loop), LangChain (`bind_tools`, structured output), LangSmith, OpenRouter, Tavily, Telegram Bot API, pgvector, FastAPI, Supabase. |
 | **Error handling** | ✅ | Tool errors returned to the model, loop limits, retries and timeouts, schema validation, budgets, clear HTTP errors. [AGENT.md §7](AGENT.md#7-error-handling-and-edge-cases) |
-| **Real-world usage** | ✅ | Sign-in, one library per user, per-user budgets and rate limits, data in Supabase, 579 server tests, eval on 12 labelled cases. |
+| **Real-world usage** | ✅ | Sign-in, one library per user, per-user budgets and rate limits, data in Supabase, 675 server tests, eval on 12 labelled cases. |
 | **Documentation: how to use** | ✅ | [README](../README.md) "See it in action", [AGENT.md §2](AGENT.md#2-how-to-use-it) |
 | **Documentation: use cases** | ✅ | [AGENT.md §3](AGENT.md#3-common-use-cases): 7 cases from the eval set |
 | **Documentation: technical decisions** | ✅ | [AGENT.md §6](AGENT.md#6-technical-decisions) |
@@ -38,9 +38,9 @@ Details: [AGENT.md](AGENT.md) (the agent) · [FEATURES.md](../FEATURES.md) (the 
 |---|---|---|
 | Token usage and costs | ✅ | Every model call logged with tokens and exact OpenRouter cost; usage drawer in the top bar; per-user totals. |
 | Memory | ✅ | Short-term: the chat's last 4 turns plus a follow-up rewrite. Long-term: chats, analyses and assets saved per user in Postgres. |
-| Extra function tool calling an external API | 🟡 | External APIs are integrated (Tavily for Reddit, Facebook Graph API), but called from code, not as LLM tools. |
+| Extra function tool calling an external API | 🟡 | External APIs are integrated (Tavily for Reddit, Facebook Graph API, Telegram Bot API), but called from code, not as LLM tools. |
 | Auth and personalisation | ✅ | Supabase Auth, one library per user, personal API keys for the MCP servers. |
-| Feedback loop with ratings | ❌ | Planned ([AGENT.md §10](AGENT.md#10-possible-improvements)). |
+| Feedback loop with ratings | 🟡 | No ratings yet, but in the Page inbox agent the author's feedback in Telegram ("shorter, mention volume 2") has the reply rewritten and proposed again, up to 5 rounds. Ratings are planned ([AGENT.md §10](AGENT.md#10-possible-improvements)). |
 | 5 tools with enable/disable UI | 🟡 | 5 LLM tools exist (chat: `list_books`, `check_platform_fit`, `draft_social_post`; agent: `get_book_profile`, `search_book_material`), plus 7 MCP tools; no on/off switches. |
 | Multi-model support | ❌ | |
 | Security guard + developer settings apart from the user | ✅ | Input checks, prompt-injection detection, untrusted text quoted as data, rate limits and budgets, a guardrails MCP server; LangSmith and debug settings only in `server/.env` (debug mode), never in the UI. |
@@ -51,12 +51,16 @@ Details: [AGENT.md](AGENT.md) (the agent) · [FEATURES.md](../FEATURES.md) (the 
 | Agentic RAG | ✅ | The agent decides what to search in the book, how often, and when to stop (`search_book_material` in a loop). |
 | LLM observability | ✅ | LangSmith traces of every graph run, with prompt version and request id (debug mode). |
 | Evaluation report (RAGAs) | ✅ | RAG eval (13 questions, 5 runs) and agent eval (12 discussions: decisions, checks, RAGAs faithfulness, LLM judge), HTML reports. |
-| External data sources | ✅ | Reddit threads via Tavily; comments from the author's Facebook Page via the Graph API. |
+| External data sources | ✅ | Reddit threads via Tavily; comments and visitor posts from the author's Facebook Page via the Graph API. |
 | Agent that learns from feedback | ❌ | |
 
-**Bonus requirement (≥ 2 medium + 1 hard): met.** 4 medium (plus 2 partial) and 4 hard.
+**Bonus requirement (≥ 2 medium + 1 hard): met.** 4 medium (plus 3 partial) and 4 hard.
 
 ### Beyond the list
+- **Human in the loop: the Page inbox agent** ([PAGE_INBOX.md](PAGE_INBOX.md)). A LangGraph graph that pauses with
+  `interrupt()` and a checkpointer until the author answers in Telegram: **make it so** posts the reply as the Page,
+  **skip** drops it, any other text is feedback for a rewrite. Each decision applies exactly once, only the author's
+  chat counts, and the output guard runs again before posting.
 - Two **MCP servers** (book knowledge, guardrails) with sign-in, and an MCP client console in the app.
 - **Structured retrieval** (book, chapter and page filters taken from the question), a relevance floor, and contextual chunk headers, all measured with RAGAs.
 - **Prompt versions** from a hash of all prompt text, saved with every result.
@@ -85,6 +89,7 @@ again, until it is done. A chain or pipeline has fixed steps instead.
 | Router / single tool round | Ask your book: the model may call tools once, then must answer |
 | ReAct tool loop | The agent's `research` step |
 | Workflow with an agentic step | The Discussion agent as a whole: loop for research, fixed nodes for decide, draft, check |
+| Human-in-the-loop agent | The Page inbox agent: pauses (`interrupt()`) until the author approves, skips or gives feedback in Telegram |
 | Plan-and-execute | Not used: the task is small |
 | Multi-agent | Planned (Phase 4): Strategist → Copywriter → Auditor → human |
 
@@ -106,7 +111,7 @@ again, until it is done. A chain or pipeline has fixed steps instead.
 `server/app/`: `agents/` (graph, tools, scan) · `rag/` (ingestion, retrieval, QA, generation) · `api/` (FastAPI
 routes, one file per area) · `core/` (LLM, guard, limits, auth, prompts, usage) · `db/` (SQLAlchemy tables,
 records) · `social/` (Facebook) · `market/` (MCP servers and client). `server/prompts/` (all prompts as Markdown),
-Alembic migrations, `tests/` (579), `eval/` as a separate project.
+Alembic migrations, `tests/` (675), `eval/` as a separate project.
 
 ### Security
 - Untrusted text (discussions, Reddit threads, Facebook comments, book passages, tool results) is only ever
@@ -118,7 +123,8 @@ Alembic migrations, `tests/` (579), `eval/` as a separate project.
   refuses an injected text (defence in depth: input scan → quoting → output check → human click).
 - Sign-in on every route and MCP server; another user's data answers 404; API keys stored only as hashes.
 - Per-user rate limit and budgets ($1/day, $10/month), app-wide $20/day.
-- Nothing posts by itself: Facebook writes only on a click, admin only, once.
+- Nothing posts by itself: Facebook writes only on a click or on "make it so" in Telegram, admin only, once.
+- The Telegram bot obeys only the author's chat; other chats are dropped, the bot token never appears in logs.
 - The agent's tools have no book argument, so the model can't reach another library.
 
 ### Error scenarios to name
@@ -143,11 +149,13 @@ every reply (2026-11-12): a re-run is due.
 7. The Facebook connection depends on Meta: on 2026-11-12 Meta's automatic checks blocked the new developer app
    ("API access blocked") until the account was checked; the app then showed the reason instead of hiding the tab.
 8. The humanizer costs one more model call per post or reply.
+9. The Page inbox agent keeps waiting proposals in memory (`MemorySaver`): a restart proposes them again; only one
+   server process may poll Telegram.
 
 ### Improvements to suggest
 Re-run the agent eval with the humanizer · feedback ratings used as few-shot examples · a code rule for `more_context` on short fragments · more eval cases
 from real threads · model choice and a fallback in debug mode · multi-book research · the Phase 4 multi-agent
-workflow · tool on/off switches.
+workflow · a Postgres checkpointer for the Page inbox agent · tool on/off switches.
 
 ### Demo order (about 10 minutes)
 1. Knowledge Hub: a processed book, its summary, one question in Ask your book (citations, tool card).
@@ -156,4 +164,6 @@ workflow · tool on/off switches.
 4. A trap (gardening thread for *Garden Cities*) → *skip*.
 5. My Facebook Page: a reader's comment, answered as the author, Reply on Facebook; **Write a new post** from the
    book with the "how human" slider, then Publish.
-6. Usage drawer (costs), a LangSmith trace, the agent eval report.
+6. Page inbox agent: `/next` in Telegram, the proposal with its buttons, feedback ("shorter"), then **Make it so**
+   and the reply on the Page.
+7. Usage drawer (costs), a LangSmith trace, the agent eval report.
