@@ -312,23 +312,23 @@ class BookLoader(BaseLoader):
         width = _typical_line_width(pages)
         repeated = _repeated_lines(pages)
         chapter_starts = (_chapter_starts(self._read_toc()) or _font_chapter_starts(self._read_styled_lines())
-                          or _text_chapter_starts([(n, [l for l in ls if _repeat_key(l) not in repeated])
+                          or _text_chapter_starts([(n, [line for line in ls if _repeat_key(line) not in repeated])
                                                    for n, ls in pages]))
 
         chapter: str | None = None
         lines: list[tuple[int, str]] = []  # (page, line) of the current chapter
         for page_no, page_lines in pages:
-            page_lines = [l for l in page_lines if _repeat_key(l) not in repeated]
+            page_lines = [line for line in page_lines if _repeat_key(line) not in repeated]
             heading_at: dict[int, str] = {}  # line index → chapter starting there
             if chapter == LICENSE_SECTION:  # everything after the e-book's end marker is license text
                 for line in page_lines:
                     lines.append((page_no, line))
                 continue
-            end = next((i for i, l in enumerate(page_lines) if _EBOOK_END.match(l)), None)
+            end = next((i for i, line in enumerate(page_lines) if _EBOOK_END.match(line)), None)
             if end is not None:
                 heading_at[end] = LICENSE_SECTION
             for title in chapter_starts.get(page_no, []):
-                match = next((i for i, l in enumerate(page_lines) if i not in heading_at and _is_heading(l, title)), None)
+                match = next((i for i, line in enumerate(page_lines) if i not in heading_at and _is_heading(line, title)), None)
                 if match is None:  # heading not found: chapter starts at the top of the page
                     lines = yield from _close_section(lines, chapter, title, width)
                     chapter = title
@@ -348,8 +348,8 @@ class BookLoader(BaseLoader):
         pages: list[tuple[int, list[str]]] = []
         try:
             for doc in PyMuPDFLoader(str(self.path), mode="page").lazy_load():
-                lines = [l.strip() for l in doc.page_content.splitlines()]
-                pages.append((doc.metadata["page"] + 1, [l for l in lines if l]))
+                lines = [line.strip() for line in doc.page_content.splitlines()]
+                pages.append((doc.metadata["page"] + 1, [line for line in lines if line]))
                 if self.on_progress:
                     self.on_progress(len(pages) / doc.metadata["total_pages"])
         except _Cancelled:
@@ -446,7 +446,7 @@ def _ends_paragraph(line: str, width: float) -> bool:
 
 def _typical_line_width(pages: list[tuple[int, list[str]]]) -> float:
     """Length of a full line in this book: the 90th percentile of all line lengths (1 if no text)."""
-    lengths = sorted(len(l) for _, lines in pages for l in lines)
+    lengths = sorted(len(line) for _, lines in pages for line in lines)
     return lengths[int(len(lengths) * 0.9)] if lengths else 1
 
 
@@ -467,9 +467,9 @@ def _repeated_lines(pages: list[tuple[int, list[str]]]) -> set[str]:
     """Keys of headers and footers: short lines that appear on at least half of the pages (and at least 3), or
     among the first or last EDGE_LINES lines of at least 3 pages (running headers that change per chapter, e.g.
     "Chapter V — Industry Management" on the odd pages of chapter V only)."""
-    counts = Counter(key for _, lines in pages for key in {_repeat_key(l) for l in lines} if key)
+    counts = Counter(key for _, lines in pages for key in {_repeat_key(line) for line in lines} if key)
     edges = Counter(key for _, lines in pages
-                    for key in {_repeat_key(l) for l in lines[:EDGE_LINES] + lines[-EDGE_LINES:]} if key)
+                    for key in {_repeat_key(line) for line in lines[:EDGE_LINES] + lines[-EDGE_LINES:]} if key)
     threshold = max(3, len(pages) / 2)
     return {key for key, n in counts.items() if n >= threshold} | {key for key, n in edges.items() if n >= 3}
 

@@ -30,6 +30,15 @@ dev = [
     "pytest>=9.1.1",
 ]
 
+[tool.ruff]
+line-length = 120
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+# Correctness only (syntax errors, undefined or unused names). Pinned so CI does not change with
+# ruff's default rule set.
+select = ["E4", "E7", "E9", "F"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]  # so tests can import the app package

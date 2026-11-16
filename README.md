@@ -1,8 +1,28 @@
 # Marketer App
 
-A tool for book marketing: a Next.js frontend (`client/`) talks to a FastAPI backend (`server/`), which also
-hosts two MCP servers. What is built so far: [FEATURES.md](FEATURES.md). The app's agent, the **Discussion
-Relevance Agent** (purpose, use cases, how it works, technical decisions): [docs/AGENT.md](docs/AGENT.md).
+[![CI](https://github.com/Galcon95/Marketer-App/actions/workflows/ci.yml/badge.svg)](https://github.com/Galcon95/Marketer-App/actions/workflows/ci.yml)
+
+**Goal, problem and how it works.** Independent authors know their book but rarely have time to market it, and the
+best readers are found in online discussions where people already ask about the book's topic. Joining those
+discussions by hand is slow, and replying with ads gets authors ignored or banned. The Marketer App helps an author
+answer only where the book really helps. The author uploads the book, and the app indexes it for retrieval (RAG:
+LangChain, pgvector, hybrid search). For a discussion pasted in or found by a Reddit scan, the **Discussion Relevance
+Agent** (LangGraph) searches the book in a bounded loop and makes one of three decisions: *contribute* (with a
+drafted reply grounded in cited passages, and advice on whether to name the book), *more context needed*, or *skip*.
+The author edits and approves every reply; nothing is posted automatically. On 12 labelled discussions, the agent
+made an acceptable decision in 11 (exactly the expected one in 10), skipped all 3 keyword traps, cited the book in
+every drafted reply and reached a RAGAs faithfulness of 0.83
+([eval results](docs/AGENT.md#8-quality-how-it-is-measured)).
+
+Around the agent, the app also writes summaries, posts and campaign kits from the book with citations, answers
+readers on a Facebook Page with approval in Telegram, and offers the book and the guardrails as two MCP servers.
+
+- Features: [FEATURES.md](FEATURES.md)
+- The agent (purpose, use cases, how it works, technical decisions, evaluation): [docs/AGENT.md](docs/AGENT.md)
+- Stack: Next.js client (`client/`), FastAPI server (`server/`), Supabase (Auth, PostgreSQL with pgvector, Storage),
+  models via OpenRouter, tracing in LangSmith
+- Quality: 675 server tests (pytest) and 21 client tests (Vitest), run by CI with ruff, ESLint and a type check;
+  RAG and agent evaluations in [eval/](eval/README.md)
 
 ## Run it locally, step by step
 
@@ -68,8 +88,10 @@ You can also call both MCP servers inside the app, in the **Market Intelligence*
 
 ### 4. See it in action
 
-1. **Knowledge Hub**: upload a PDF book (e.g. `Garden-Cities-of-To-Morrow_Ebenezer-Howard.pdf` in the repo root)
-   and press **Process**. Wait until it shows `ready`. Uploaded books are stored in Supabase and survive restarts.
+1. **Knowledge Hub**: upload a PDF book and press **Process**. Books are not stored in this repository; for a free
+   sample, download Ebenezer Howard's *Garden Cities of To-Morrow* (public domain) from
+   [Project Gutenberg](https://www.gutenberg.org/ebooks/search/?query=garden+cities+of+to-morrow) (open the HTML
+   version and print it to PDF in the browser). Wait until it shows `ready`. Uploaded books are stored in Supabase and survive restarts.
    A book can be at most **50 MB** (the largest file Supabase Storage accepts on the free plan). For a larger PDF,
    compress it (it is usually the images; the app only reads the text) or split it into parts and upload each part as
    its own book.
@@ -113,7 +135,7 @@ and [eval/README.md](eval/README.md).
 3. **MCP Inspector (terminal 3):** `npx @modelcontextprotocol/inspector`. Connect with Streamable HTTP to
    `http://127.0.0.1:8000/mcp` (books) or `http://127.0.0.1:8000/guardrails/mcp` (security checks).
 4. **See it in action:**
-   - Upload the Garden Cities PDF from the repo root and press **Process**.
+   - Upload a PDF book (e.g. *Garden Cities of To-Morrow*, see step 4 above) and press **Process**.
    - Make the summary and try the chat.
    - In the Content Studio, generate an asset (Single asset) and a campaign (Campaign kit).
    - In Market Intelligence → Discussions, paste a discussion (or scan Reddit) and let the agent analyse it.

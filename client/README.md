@@ -1,46 +1,48 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Marketer App: client
 
-## Getting Started
+The web interface of the Marketer App: Next.js 16 (App Router), React 19 and TypeScript. It signs the user in with
+Supabase Auth and sends every request to the FastAPI server in [`../server`](../server), which does all of the
+work: RAG, content generation, the Discussion Relevance Agent and the MCP servers. The client holds no model keys
+and no business logic.
 
-First, run the development server:
+How to run the whole app (server and client): [../README.md](../README.md).
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-
-## Tests
+## Run
 
 ```sh
+cp .env.example .env.local   # then fill in the Supabase URL and publishable key
+npm install                  # first time, and after package.json changes
+npm run dev                  # http://localhost:3000 (the server must run on http://127.0.0.1:8000)
+```
+
+| Variable | Meaning |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | The Supabase project URL (sign-in). |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | The publishable key. It is public (sent to the browser); the secret key never goes here. |
+| `NEXT_PUBLIC_API_URL` | Optional. URL of the FastAPI server, default `http://127.0.0.1:8000`. |
+
+## Layout
+
+| Path | What it is |
+|---|---|
+| `app/page.tsx` | The only app page: renders `AppShell`. |
+| `app/login/`, `app/auth/confirm/` | Sign-in page and the link from the confirmation email. |
+| `proxy.ts` | Runs before every page request: refreshes the Supabase session and sends visitors who are not signed in to `/login`. It only guards pages; the server checks the access token of every API request itself. |
+| `components/AppShell.tsx` | Sidebar navigation between the three phases, sign-out, the usage and API-key drawers. |
+| `components/phases/` | The phases: `KnowledgeHub` (upload and process books, summary, chat), `ContentStudio` (single assets with citations; its Campaign kit is `CampaignBuilder`) and `MarketIntelligence` (Discussion agent, Reddit scan, Facebook Page; its MCP tool console, admin only, is `McpServers`). |
+| `components/` | Building blocks: `DiscussionAgent`, `DiscussionCard`, `ToolCallCard` (the agent's tool trace), `RedditScan`, `Facebook*`, `InjectionBadge` (flags third-party text that looks like prompt injection), `KeysPanel` (MCP API keys) and others. |
+| `lib/api.ts` | Typed API client for the server: every endpoint, error handling and helpers for labels, citations and URLs. |
+| `lib/useApi.ts`, `lib/supabase.ts` | React hook for API calls; Supabase browser client. |
+| `app/styles/` | Design tokens and the app's stylesheet (see `../app-design-system/`). |
+
+## Checks
+
+```sh
+npm run lint         # ESLint
+npx tsc --noEmit     # type check
 npm test             # Vitest, about 1 second
 ```
 
-`tests/api.test.ts` covers the helpers in `lib/api.ts` (book titles, labels, citation markers, URLs) and the API
-client's error handling, with `fetch` replaced by a stub so no server is needed.
-
+`tests/api.test.ts` (21 tests) covers the helpers in `lib/api.ts` (book titles, labels, citation markers, URLs) and
+the API client's error handling, with `fetch` replaced by a stub so no server is needed. All three checks also run in
+GitHub Actions on every push and pull request (`.github/workflows/ci.yml`).

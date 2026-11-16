@@ -322,7 +322,6 @@ def _after_assess(state: DiscussionState) -> str:
 def _draft(state: DiscussionState) -> DiscussionState:
     """Draft node: a reply for the platform from the passages only, with the advice whether to name the book."""
     research = state["research"]
-    platform = state.get("platform", "forum")
     draft, used = structured(DRAFT_PROMPT, {
         "rules": _rules(state), "role": ROLE[_mode(state)], "style": style_guidance(_humanize(state)),
         "book": _book(research),

@@ -140,8 +140,11 @@ a text with a likely injection).
 ## Tests
 
 ```sh
-uv run pytest        # from server/; 565 tests, about 15 seconds
+uv run pytest        # from server/; 675 tests, about 20 seconds
+uvx ruff check .     # lint (rules pinned in pyproject.toml)
 ```
+
+Both run in GitHub Actions on every push to `main` and every pull request (`.github/workflows/ci.yml`).
 
 `tests/` needs no model, no API key and no network: the chat model, the vector search, Tavily and the Facebook Graph
 API are faked, and Storage is an in-memory store. Among them:
