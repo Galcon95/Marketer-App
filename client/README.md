@@ -39,7 +39,7 @@ npm run dev                  # http://localhost:3000 (the server must run on htt
 
 ```sh
 npm run lint         # ESLint
-npx tsc --noEmit     # type check
+npx tsc --noEmit     # type check (on a fresh checkout run `npx next typegen` first)
 npm test             # Vitest, about 1 second
 ```
 

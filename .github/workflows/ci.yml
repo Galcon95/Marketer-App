@@ -51,6 +51,9 @@ jobs:
       - name: Lint (ESLint)
         run: npm run lint
       - name: Type check
-        run: npx tsc --noEmit
+        # next typegen writes the generated types (LayoutProps, routes) that `next dev` creates locally
+        run: |
+          npx next typegen
+          npx tsc --noEmit
       - name: Tests (Vitest)
         run: npm test
