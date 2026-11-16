@@ -2,13 +2,14 @@
 
 /**
  * The app frame: sidebar (navigation, current client, system status from GET /health), top bar (title,
- * usage and costs button, MCP keys, export) and the four phase tabs, which render the phase views. Holds the state the
+ * usage and costs button, MCP keys, export) and the four phase tabs, which render the phase views; the sidebar also
+ * opens the MCP servers page (Integrations). Holds the state the
  * views share (refresh counter, the book being worked on) and the Agent Workspace (Phase 4) placeholder.
  */
 
 import { useCallback, useState, useSyncExternalStore, type JSX } from "react";
 import {
-  Bot, Brain, Cpu, Database, FileText, Info, KeyRound, LogOut, Menu, Moon, Network, Server, Settings,
+  Bot, Brain, Cpu, Database, FileText, Info, KeyRound, LogOut, Menu, MessagesSquare, Moon, Network, Plug, Server, Settings,
   Sparkles, Sun, SunMoon, Target, Terminal, Users, UserCheck,
 } from "lucide-react";
 import { api, API_URL } from "@/lib/api";
@@ -16,7 +17,8 @@ import { signOut } from "@/lib/supabase";
 import { useApi } from "@/lib/useApi";
 import ContentStudio from "./phases/ContentStudio";
 import KnowledgeHub from "./phases/KnowledgeHub";
-import MarketIntelligence from "./phases/MarketIntelligence";
+import Community from "./phases/Community";
+import McpServers from "./phases/McpServers";
 import ExportDrawer from "./ExportDrawer";
 import KeysDrawer from "./KeysPanel";
 import UsageDrawer, { formatTokens, formatUsd } from "./UsagePanel";
@@ -43,6 +45,8 @@ function useTheme(): "light" | "dark" | null {
 
 /** Id of one of the four pipeline phases (tabs). */
 type PhaseId = "p1" | "p2" | "p3" | "p4";
+/** Id of a view: a phase, or a page opened from the sidebar only (no phase tab). */
+type ViewId = PhaseId | "mcp";
 /**
  * Props passed to every phase view: `refresh` reloads its data, `onChange` triggers a global refresh, `bookId` is
  * the book being worked on (null = all books; shared, so a choice in the Knowledge Hub carries over to the
@@ -54,16 +58,17 @@ type PhaseProps = { refresh: number; onChange: () => void; bookId: string | null
 const TABS: TabItem<PhaseId>[] = [
   { id: "p1", kicker: "PHASE 1", label: "Knowledge Hub", icon: Database },
   { id: "p2", kicker: "PHASE 2", label: "Content Studio", icon: Sparkles },
-  { id: "p3", kicker: "PHASE 3", label: "Market Intelligence", icon: Network },
+  { id: "p3", kicker: "PHASE 3", label: "Community", icon: MessagesSquare },
   { id: "p4", kicker: "PHASE 4 · PLANNED", label: "Agent Workspace", icon: Cpu },
 ];
 
-/** Page title and breadcrumb subtitle shown in the top bar for each phase. */
-const TITLES: Record<PhaseId, [title: string, crumb: string]> = {
+/** Page title and breadcrumb subtitle shown in the top bar for each view. */
+const TITLES: Record<ViewId, [title: string, crumb: string]> = {
   p1: ["Knowledge hub", "Retrieval-augmented generation over your content"],
   p2: ["Content studio", "Grounded assets from your books · zero-shot campaign kits"],
-  p3: ["Market intelligence", "Discussions worth joining · live tool calls via Model Context Protocol"],
+  p3: ["Community", "Discussions worth joining · replies grounded in your books"],
   p4: ["Agent workspace", "Planned · Strategist → Copywriter → Auditor → You"],
+  mcp: ["MCP servers", "Integrations · live tool calls via Model Context Protocol"],
 };
 
 /** Display label and icon for each service name reported by GET /health. */
@@ -85,7 +90,7 @@ const AGENTS = [
 
 /**
  * Phase 4 placeholder: agent cards, console and review area, under a banner that says it is planned and where the
- * working agent is (Market Intelligence → Discussions). No API calls.
+ * working agent is (Community). No API calls.
  */
 function AgentWorkspace() {
   return (
@@ -97,7 +102,7 @@ function AgentWorkspace() {
         </p>
         <p className="bc-hint" style={{ margin: "8px 0 0" }}>
           The app&apos;s working agent is the <strong>Discussion Relevance Agent</strong> in{" "}
-          <strong>Market Intelligence → Discussions</strong>.
+          <strong>Community</strong>.
         </p>
       </Card>
       <div>
@@ -120,12 +125,13 @@ function AgentWorkspace() {
   );
 }
 
-/** Component rendered for each phase tab. */
-const VIEWS: Record<PhaseId, (props: PhaseProps) => JSX.Element> = {
+/** Component rendered for each view. */
+const VIEWS: Record<ViewId, (props: PhaseProps) => JSX.Element> = {
   p1: KnowledgeHub,
   p2: ContentStudio,
-  p3: MarketIntelligence,
+  p3: Community,
   p4: AgentWorkspace,
+  mcp: McpServers,
 };
 
 /* ---------- Shell ---------- */
@@ -136,7 +142,7 @@ const VIEWS: Record<PhaseId, (props: PhaseProps) => JSX.Element> = {
  * and loads the health status and the current project (for names and counts).
  */
 export default function AppShell() {
-  const [tab, setTab] = useState<PhaseId>("p1");
+  const [tab, setTab] = useState<ViewId>("p1");
   const [navOpen, setNavOpen] = useState(false); // sidebar visibility on small screens
   // Bumped after any change (upload, delete, generate) so every list and count reloads.
   const [refresh, setRefresh] = useState(0);
@@ -175,15 +181,19 @@ export default function AppShell() {
         { id: "settings", icon: Settings, label: "Settings" },
       ],
     },
+    {
+      title: "Integrations",
+      items: [{ id: "mcp", icon: Plug, label: "MCP servers" }],
+    },
   ];
 
   /**
-   * Handle a sidebar click: switch to the phase if the id is one (library pages do not exist yet)
+   * Handle a sidebar click: switch to the phase or page if the id is one (library pages do not exist yet)
    * and close the mobile navigation.
    * @param id Id of the clicked link.
    */
   function navigate(id: string) {
-    if (id in TITLES) setTab(id as PhaseId);
+    if (id in TITLES) setTab(id as ViewId);
     setNavOpen(false);
   }
 
@@ -237,7 +247,7 @@ export default function AppShell() {
           </Button>
         </div>
         <div className="bc-tabs-wrap">
-          <Tabs items={TABS} value={tab} onChange={setTab} />
+          <Tabs items={TABS} value={tab as PhaseId} onChange={setTab} />
         </div>
         {/* key={tab} remounts the view on tab change, resetting its local state. */}
         <div className="bc-view" key={tab}>

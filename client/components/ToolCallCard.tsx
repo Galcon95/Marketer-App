@@ -2,7 +2,7 @@
 
 /**
  * A tool call a model made, as a collapsible card: used by the "Ask your book" chat (Knowledge Hub) and the
- * Discussion Relevance Agent's trace (Market Intelligence).
+ * Discussion Relevance Agent's trace (Community).
  */
 
 import { Wrench } from "lucide-react";

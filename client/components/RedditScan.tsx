@@ -42,19 +42,18 @@ function parseSubreddits(text: string): string[] {
 }
 
 /**
- * The scan form and its results (kept while the author switches to the paste form and back).
+ * The scan form (settings column of the Discussions tab); the threads found go to `onResult` and are shown by
+ * ScanResults in the wide column.
  * @param bookId The book the threads are ranked for (undefined = no book chosen).
  * @param bookTitle Its readable title.
- * @param onAnalyse Called with a thread to analyse: its text and link go to the paste form.
+ * @param onResult Called with each new scan result.
  */
-export default function RedditScan({ bookId, bookTitle, onAnalyse }: {
-  bookId?: string; bookTitle?: string; onAnalyse: (thread: ScannedThread) => void;
+export default function RedditScan({ bookId, bookTitle, onResult }: {
+  bookId?: string; bookTitle?: string; onResult: (result: ScanResult) => void;
 }) {
   const [scanning, setScanning] = useState(false);
-  const [result, setResult] = useState<ScanResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [subreddits, setSubreddits] = useState("");
-  const [showLow, setShowLow] = useState(false);
 
   const subs = parseSubreddits(subreddits);
   const tooManySubs = subs.length > MAX_SUBREDDITS;
@@ -66,9 +65,8 @@ export default function RedditScan({ bookId, bookTitle, onAnalyse }: {
     const form = new FormData(e.currentTarget);
     setScanning(true);
     setError(null);
-    setShowLow(false);
     try {
-      setResult(await api.scanDiscussions({
+      onResult(await api.scanDiscussions({
         source_id: bookId, topic: String(form.get("topic") ?? "").trim(), subreddits: subs,
         time_range: String(form.get("time") || "month") as ScanTime, max_results: Number(form.get("count") || 10),
       }));
@@ -79,13 +77,8 @@ export default function RedditScan({ bookId, bookTitle, onAnalyse }: {
     }
   }
 
-  const threads = result?.threads ?? [];
-  const shown = threads.filter((t) => showLow || t.fit !== "low");
-  const hidden = threads.length - shown.length;
-
   return (
-    <div className="bc-stack">
-      <form className="bc-stack" onSubmit={scan}>
+    <form className="bc-stack" onSubmit={scan}>
         <span className="bc-hint">
           Enter a topic. The app searches recent Reddit threads and ranks them by how well{" "}
           {bookTitle ? <strong>{bookTitle}</strong> : "the book"} could add to them. Pick one to let the agent
@@ -96,8 +89,7 @@ export default function RedditScan({ bookId, bookTitle, onAnalyse }: {
           <input id="f-scan-topic" name="topic" className="bc-input" required maxLength={300}
             placeholder="e.g. AI future, AI societies, civilizations" />
         </div>
-        <div className="bc-row" style={{ gap: 12, alignItems: "flex-start" }}>
-          <div className="bc-field" style={{ flex: "3 1 280px" }}>
+        <div className="bc-field">
             <label className="bc-label" htmlFor="f-scan-subs">Subreddits (optional)</label>
             <input id="f-scan-subs" name="subreddits" className="bc-input" value={subreddits}
               onChange={(e) => setSubreddits(e.target.value)}
@@ -105,8 +97,9 @@ export default function RedditScan({ bookId, bookTitle, onAnalyse }: {
             <span className="bc-hint" style={tooManySubs ? { color: "var(--danger-text)" } : undefined}>
               {tooManySubs ? `At most ${MAX_SUBREDDITS} subreddits.` : "One search per subreddit, at most 5."}
             </span>
-          </div>
-          <div className="bc-field" style={{ flex: "1 1 140px" }}>
+        </div>
+        <div className="bc-row" style={{ gap: 12, alignItems: "flex-start", flexWrap: "nowrap" }}>
+          <div className="bc-field" style={{ flex: 1 }}>
             <label className="bc-label" htmlFor="f-scan-time">Time</label>
             <div className="bc-select-wrap">
               <select id="f-scan-time" name="time" className="bc-select" defaultValue="month">
@@ -115,8 +108,8 @@ export default function RedditScan({ bookId, bookTitle, onAnalyse }: {
               <ChevronDown size={16} className="bc-ico" aria-hidden />
             </div>
           </div>
-          <div className="bc-field" style={{ flex: "1 1 120px" }}>
-            <label className="bc-label" htmlFor="f-scan-count">Threads per search</label>
+          <div className="bc-field" style={{ flex: 1 }}>
+            <label className="bc-label" htmlFor="f-scan-count">Threads / search</label>
             <div className="bc-select-wrap">
               <select id="f-scan-count" name="count" className="bc-select" defaultValue={10}>
                 {RESULT_COUNTS.map((n) => <option key={n} value={n}>{n}</option>)}
@@ -125,15 +118,29 @@ export default function RedditScan({ bookId, bookTitle, onAnalyse }: {
             </div>
           </div>
         </div>
-        <Button type="submit" icon={Radar} loading={scanning} disabled={!bookId || tooManySubs}>
-          {scanning ? "Scanning Reddit…" : "Scan Reddit"}
-        </Button>
+        <div className="bc-studio-actions">
+          <Button type="submit" icon={Radar} loading={scanning} disabled={!bookId || tooManySubs}>
+            {scanning ? "Scanning Reddit…" : "Scan Reddit"}
+          </Button>
+        </div>
         {!bookId && <span className="bc-hint">Choose a book under &ldquo;Working on&rdquo; first: the scan ranks threads for one book.</span>}
         {scanning && <span className="bc-hint">This takes 5-20 seconds: one search per subreddit, then the threads are ranked.</span>}
         {error && <ErrorNote>{error}</ErrorNote>}
-      </form>
+    </form>
+  );
+}
 
-      {result && (
+/**
+ * The threads of a scan, best fit first; low-fit ones only on request.
+ * @param result The scan result.
+ * @param onAnalyse Called with a thread to analyse: its text and link go to the paste form.
+ */
+export function ScanResults({ result, onAnalyse }: { result: ScanResult; onAnalyse: (thread: ScannedThread) => void }) {
+  const [showLow, setShowLow] = useState(false);
+  const threads = result.threads;
+  const shown = threads.filter((t) => showLow || t.fit !== "low");
+  const hidden = threads.length - shown.length;
+  return (
         <div className="bc-stack" style={{ gap: 10 }}>
           <span className="bc-label" style={{ margin: 0 }}>
             {threads.length
@@ -155,8 +162,6 @@ export default function RedditScan({ bookId, bookTitle, onAnalyse }: {
             </Button>
           )}
         </div>
-      )}
-    </div>
   );
 }
 

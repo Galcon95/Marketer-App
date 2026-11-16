@@ -1,6 +1,6 @@
 """The app as an MCP client: connects to our MCP servers over Streamable HTTP, like any outside client.
 
-    GUI (Market Intelligence: server cards, tool console, call log)
+    GUI (Integrations → MCP servers: server cards, tool console, call log)
         │  GET /mcp-servers, POST /mcp-servers/{name}/call  (api/mcp_console.py)
         ▼
     server_status / call_tool   (this module, official mcp SDK Client)

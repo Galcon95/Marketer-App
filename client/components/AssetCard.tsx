@@ -14,6 +14,7 @@ import {
   type Asset, type Citation, type FacebookStatus, type VerifyItem,
 } from "@/lib/api";
 import { PageLink } from "./BookCover";
+import { formatUsd } from "./UsagePanel";
 import { Badge, Button, ErrorNote, Score } from "./ui";
 
 /**
@@ -258,6 +259,7 @@ export default function AssetCard({ asset, onChange, facebook }: {
         </span>
         <span>· {asset.citations.length} citations</span>
         {asset.tokens > 0 && <span>· {asset.tokens} tokens</span>}
+        {asset.cost != null && <span title="Cost of the model calls that wrote it">· {formatUsd(asset.cost)}</span>}
         <span style={{ flex: 1 }} />
         <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copy}
           title="Copy the text without citation markers">{copied ? "Copied" : "Copy"}</Button>

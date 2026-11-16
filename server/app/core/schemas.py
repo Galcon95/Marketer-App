@@ -156,7 +156,7 @@ class SourceDeletion(BaseModel):
     name: str  # readable book name, e.g. "Successful Stock Speculation — J. J. Butler"
     assets: int  # generated assets made only from this book
     conversations: int  # chats whose passages all come from this book
-    discussions: int = 0  # discussion analyses made for this book (Market Intelligence)
+    discussions: int = 0  # discussion analyses made for this book (Community)
 
 
 class ChunkPage(BaseModel):
@@ -260,6 +260,7 @@ class Asset(BaseModel):
     published_id: str = ""  # id of the post it was published as on the author's Facebook Page; "" = not published
     published_url: str = ""  # link to that post
     published_at: datetime | None = None
+    cost: float | None = None  # USD of the model calls that wrote it (single assets); None = not recorded (older, kits)
 
 
 class CampaignRequest(BaseModel):
@@ -299,6 +300,7 @@ class CampaignSummary(BaseModel):
     created_at: datetime
     tokens: int  # LLM tokens used by the whole kit
     asset_count: int  # assets still in the kit (single assets can be deleted)
+    cost: float | None = None  # USD of the model calls that made the kit; None = not recorded (older kits)
     audience: str = ""  # the audience focus of the brief
 
 
@@ -378,7 +380,7 @@ class ConversationInfo(BaseModel):
     turn_count: int
 
 
-# ---------- Discussions (Market Intelligence: Discussion Relevance Agent) ----------
+# ---------- Discussions (Community: Discussion Relevance Agent) ----------
 # Where a discussion was found. The social platforms match Platform, so the draft reply can be checked against
 # their rules (core/platforms.py); "reddit", "forum" and "other" have no fixed rules.
 # Prompt-injection risk of someone else's text (core/guard.scan_third_party; the same values as guard.InjectionRisk).
@@ -472,7 +474,7 @@ class DiscussionUpdate(BaseModel):
     reply: str = Field(min_length=1, max_length=12000)
 
 
-# ---------- Reddit scan (Market Intelligence: find discussions for the agent) ----------
+# ---------- Reddit scan (Community: find discussions for the agent) ----------
 ScanTime = Literal["day", "week", "month", "year"]  # how far back the search looks
 Fit = Literal["high", "medium", "low"]  # how well the book fits a thread found by the scan
 _SUBREDDIT = re.compile(r"^[A-Za-z0-9_]{2,21}$")  # Reddit's rule for subreddit names
@@ -649,7 +651,7 @@ class TelegramUpdates(BaseModel):
     next_offset: int | None = None
 
 
-# ---------- MCP console (Market Intelligence) ----------
+# ---------- MCP console (Community) ----------
 class McpTool(BaseModel):
     """One tool of an MCP server, as listed by tools/list."""
 
@@ -714,6 +716,10 @@ class UsageRecord(BaseModel):
     source_id: str | None = None
     request_id: str | None = None  # the HTTP request that caused the call (logs.py); None for older records
     user_id: str | None = None  # the signed-in user who caused it; None for older records and outside sign-in (MCP)
+    # What the call was for (usage.tagged); None for older records and calls outside these features:
+    asset_id: str | None = None  # the single asset it generated (POST /generate)
+    asset_type: str | None = None  # that asset's type, e.g. "newsletter"
+    campaign_id: str | None = None  # the campaign kit it was part of (POST /campaigns)
 
 
 class UsageTotals(BaseModel):

@@ -1,4 +1,4 @@
-"""Scan Reddit for discussions (Market Intelligence): find recent Reddit threads on a topic and rank them by how well
+"""Scan Reddit for discussions (Community): find recent Reddit threads on a topic and rank them by how well
 one book could add to them, so the author can pick some for the Discussion Relevance Agent (agents/discussion.py).
 
     search (Tavily, one search per subreddit or one for all of Reddit) ─► keep threads, clean ─► triage (one model call)

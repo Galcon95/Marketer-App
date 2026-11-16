@@ -1,4 +1,4 @@
-"""Discussion Relevance Agent (Market Intelligence): is a discussion from another platform a good opportunity for
+"""Discussion Relevance Agent (Community): is a discussion from another platform a good opportunity for
 the author to contribute from one book, and if so, a reply grounded in that book.
 
     START ─► research ─(tool calls?)─► research_tools ─┐
@@ -54,6 +54,7 @@ below are what the chat model fills in with structured output; their Field descr
 """
 
 import logging
+import re
 from functools import cache
 from typing import TypedDict
 
@@ -134,7 +135,7 @@ class DraftReply(BaseModel):
     reply: str = Field(min_length=1, description="The reply in plain text, in the discussion's language, as a "
                                                  "person taking part: answer what was asked, add the book's idea or "
                                                  "example, with [n] right after each statement that uses passage n. "
-                                                 "No sales pitch.")
+                                                 "No sales pitch. Follow the role on naming the book and its author.")
     used_sources: list[int] = Field(min_length=1, description="Numbers of all passages the reply draws on.")
     mention_book: bool = Field(description="True if naming the book would genuinely help the readers (e.g. someone "
                                            "asked for reading); False if it would look like advertising.")
@@ -164,6 +165,7 @@ class DiscussionState(TypedDict, total=False):
     injection_findings: list[str]  # high-risk findings of the discussion's injection scan (for the prompt note)
     output_issues: list[str]  # what the output guard found in the draft
     ai_tells: list[str]  # AI clichés found in the draft by the last check
+    names: list[str]  # the book's title or author named in a reply that must not name them (found by the check)
     rewritten: bool  # the rewrite step ran (it runs at most once)
     reason: str  # final texts, with [n] renumbered to match citations
     suggested_reply: str
@@ -341,16 +343,25 @@ def _check(state: DiscussionState) -> DiscussionState:
         issues.append(f"Too long for {rules.label}: {len(text)} characters, the limit is {rules.max_chars}.")
     if tells := find_ai_tells(text, emojis_expected=platform in ("instagram", "tiktok")):
         issues.append("Sounds AI-written: " + ", ".join(tells) + ".")
-    # Output guard: an injection in the discussion that got through, or a link the book's passages don't contain.
+    # Outside the author's own Page the reply names neither the book nor its author (ROLE); one that does is
+    # rewritten once without the names, and the author is told if any remain.
     research = state.get("research")
+    names = named_in(text, research.source_id) if research and _mode(state) == "discussion" else []
+    if names:
+        issues.append(f"Names {', '.join(names)}: readers do not know the book or its author. Remove the name, or "
+                      "give the source only when someone asks for it.")
+    # Output guard: an injection in the discussion that got through, or a link the book's passages don't contain.
     passages = "\n".join(chunk.text for chunk, _ in research.passages) if research else ""
-    return {"platform_issues": issues, "ai_tells": tells, "output_issues": check_output(text, allowed=passages)}
+    return {"platform_issues": issues, "ai_tells": tells, "names": names,
+            "output_issues": check_output(text, allowed=passages)}
 
 
 def _after_check(state: DiscussionState) -> str:
     """Rewrite once (the humanizer) when the "how human" setting is at least REWRITE_FROM: a reply is a post, so
     always, not only when AI clichés were found (style.should_rewrite); else finalize."""
-    if should_rewrite(state["ai_tells"], _humanize(state), is_post=True) and not state.get("rewritten"):
+    if state.get("rewritten"):
+        return "finalize"
+    if state.get("names") or should_rewrite(state["ai_tells"], _humanize(state), is_post=True):
         return "rewrite"
     return "finalize"
 
@@ -360,8 +371,12 @@ def _rewrite(state: DiscussionState) -> DiscussionState:
     keeping facts and [n] markers.
     An empty answer keeps the draft."""
     humanize, draft = _humanize(state), state["draft"]
+    tells = tells_for_prompt(state["ai_tells"])
+    if names := state.get("names"):  # the book's title or author: describe the idea without them
+        tells += "; and these names, which must go: " + ", ".join(f'"{n}"' for n in names) + (
+            " (remove each one: say the idea in plain words, or \"an old argument\" / \"an economist once argued\")")
     reply: AIMessage = chat_model(temperature_for(humanize)).invoke(REWRITE_PROMPT.format_messages(
-        tells=tells_for_prompt(state["ai_tells"]), style=style_guidance(humanize), text=draft.reply))
+        tells=tells, style=style_guidance(humanize), text=draft.reply))
     text = str(reply.content).strip()
     return {"draft": draft.model_copy(update={"reply": text}) if text else draft, "rewritten": True,
             "tokens": state.get("tokens", 0) + tokens_used(reply)}
@@ -409,6 +424,23 @@ def _mode(state: DiscussionState) -> str:
 
 def _angle(state: DiscussionState) -> str:
     return state.get("angle") or "(nothing particular)"
+
+
+def named_in(text: str, source_id: str) -> list[str]:
+    """The book's title and its author's names (each part of 3+ letters, e.g. "John", "Stuart", "Mill") that the text
+    names, as whole words, ignoring case for the title. From the book's readable name "Title — Author" and the PDF's
+    author; nothing when neither is known."""
+    source = db.sources.get(source_id)
+    name = source_name(source_id) or ""
+    title, _, author = name.partition(" — ")
+    author = author or (source.author if source else "") or ""
+    found = []
+    if len(title) > 3 and re.search(rf"\b{re.escape(title)}\b", text, re.IGNORECASE):
+        found.append(title)
+    for part in re.findall(r"[A-ZÄÖÜ][\w'-]{2,}", author):
+        if re.search(rf"\b{re.escape(part)}\b", text) and part not in found:
+            found.append(part)
+    return found
 
 
 def _book(research: Research) -> str:

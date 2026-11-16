@@ -38,7 +38,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
 from app.core import prompt_files
-from app.core import prompts, style, tracing
+from app.core import prompts, style, tracing, usage
 from app.core import state as db
 from app.core.config import LLM_MODEL
 from app.core.guard import quote_untrusted
@@ -147,9 +147,17 @@ def create_asset(project_id: str, req: GenerateRequest) -> Asset:
         GenerationError: As generate_asset.
         OSError: If the generated asset cannot be saved (it is then not stored in memory either).
     """
-    result = generate_asset(project_id, req)
+    asset_id = db.new_id("ast")
+    # Every model call of this asset is tagged with it (usage.tagged): its cost, and costs per book and format.
+    book = req.source_ids[0] if req.source_ids and len(req.source_ids) == 1 else None
+    with usage.tagged(asset_id=asset_id, asset_type=req.asset_type, source_id=book):
+        result = generate_asset(project_id, req)
+    try:
+        cost = records.usage_cost(asset_id=asset_id)
+    except OSError:  # DatabaseError: the asset is still worth keeping, only without its cost
+        cost = None
     asset = Asset(
-        id=db.new_id("ast"),
+        id=asset_id,
         project_id=project_id,
         asset_type=req.asset_type,
         grounded=req.grounded,
@@ -169,6 +177,7 @@ def create_asset(project_id: str, req: GenerateRequest) -> Asset:
         ai_tells=result.get("ai_tells", []),
         model=LLM_MODEL,
         prompt_version=PROMPT_VERSION,
+        cost=cost,
     )
     records.save_assets([asset])  # first in the database: if that fails, the asset is not kept anywhere
     db.assets[asset.id] = asset

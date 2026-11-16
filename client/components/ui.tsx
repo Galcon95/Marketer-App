@@ -113,16 +113,17 @@ interface FieldProps {
   required?: boolean;
   hint?: string; // small help text below the control
   onChange?: (value: string) => void; // called with the new value on every change
+  form?: string; // id of the <form> it belongs to, when it is placed outside it (e.g. in another column)
 }
 /**
  * Labeled form control: text input, textarea, select box or search input.
  * Derives a stable element id from name/label/placeholder to link the <label> to the control.
  * @param props See FieldProps.
  */
-export function Field({ label, name, as = "input", options = [], groups, rows = 3, placeholder, defaultValue, required, hint, onChange }: FieldProps) {
+export function Field({ label, name, as = "input", options = [], groups, rows = 3, placeholder, defaultValue, required, hint, onChange, form }: FieldProps) {
   const id = `f-${(name ?? label ?? placeholder ?? "field").replace(/\W+/g, "-").toLowerCase()}`;
   const handleChange = onChange && ((e: { target: { value: string } }) => onChange(e.target.value));
-  const base = { id, name, placeholder, defaultValue, required, onChange: handleChange };
+  const base = { id, name, placeholder, defaultValue, required, onChange: handleChange, form };
   let control: ReactNode;
   if (as === "textarea") control = <textarea {...base} rows={rows} className="bc-textarea" />;
   else if (as === "select")
@@ -167,10 +168,11 @@ export function Field({ label, name, as = "input", options = [], groups, rows = 
  * @param hint Small help text below the slider.
  * @param tip Help text behind an ⓘ next to the label (shown on hover or focus) instead of a line below.
  * @param ends Words under both ends of the slider, e.g. ["Polished", "Casual"].
+ * @param form Id of the <form> it belongs to, when it is placed outside it.
  */
-export function RangeField({ name, label, min = 0, max = 100, step = 5, defaultValue, describe, hint, tip, ends }: {
+export function RangeField({ name, label, min = 0, max = 100, step = 5, defaultValue, describe, hint, tip, ends, form }: {
   name: string; label: string; min?: number; max?: number; step?: number; defaultValue: number;
-  describe?: (value: number) => string; hint?: string; tip?: string; ends?: [string, string];
+  describe?: (value: number) => string; hint?: string; tip?: string; ends?: [string, string]; form?: string;
 }) {
   const [value, setValue] = useState(defaultValue);
   const id = `f-${name}`;
@@ -181,7 +183,7 @@ export function RangeField({ name, label, min = 0, max = 100, step = 5, defaultV
         {tip && <span className="bc-tip" tabIndex={0} title={tip} aria-label={tip}><Info size={13} aria-hidden /></span>}
         <span className="bc-mono bc-range-value">{value}{describe ? ` · ${describe(value)}` : ""}</span>
       </div>
-      <input id={id} name={name} type="range" min={min} max={max} step={step} value={value}
+      <input id={id} name={name} form={form} type="range" min={min} max={max} step={step} value={value}
         onChange={(e) => setValue(Number(e.target.value))} style={{ width: "100%", accentColor: "var(--accent)" }} />
       {ends && <div className="bc-range-ends" aria-hidden><span>{ends[0]}</span><span>{ends[1]}</span></div>}
       {hint && <span className="bc-hint">{hint}</span>}

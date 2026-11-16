@@ -15,11 +15,15 @@ Reports and budgets are sums the database computes (records.usage_totals, record
 totals for the console line are kept in memory.
 The operation name comes from the run's metadata: "operation" set by the graph invocation plus the
 LangGraph node, e.g. "summarize_book/summarize_chapter".
+What a call was for (book, single asset and its type, campaign kit) comes from `tagged`, a context around the
+feature's work: every call recorded inside it gets these fields, chat and embedding calls alike.
 """
 
 import logging
 import threading
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from functools import cache
 from typing import Any
@@ -46,6 +50,26 @@ logger = logging.getLogger("usage")  # goes to the console handler set up in log
 _lock = threading.Lock()
 _totals = UsageTotals()  # all calls so far, for the console line (loaded from the database on startup)
 
+TAG_FIELDS = ("source_id", "asset_id", "asset_type", "campaign_id")
+_tags: ContextVar[dict[str, str]] = ContextVar("usage_tags", default={})
+
+
+@contextmanager
+def tagged(**tags: str | None) -> Iterator[None]:
+    """Tag every model call recorded inside the `with` block with what it is for (fields of TAG_FIELDS; None values
+    are left out). Nested blocks add to and override the outer tags; a field the call itself sets wins.
+
+    Example: `with usage.tagged(asset_id="ast_1", asset_type="newsletter", source_id="src_1"): generate(...)`.
+    """
+    unknown = set(tags) - set(TAG_FIELDS)
+    if unknown:
+        raise ValueError(f"Unknown usage tags: {sorted(unknown)}")
+    token = _tags.set({**_tags.get(), **{k: v for k, v in tags.items() if v}})
+    try:
+        yield
+    finally:
+        _tags.reset(token)
+
 
 # ---------- Recording ----------
 def record(rec: UsageRecord) -> None:
@@ -61,6 +85,9 @@ def record(rec: UsageRecord) -> None:
         rec.request_id = current_request_id()
     if rec.user_id is None:
         rec.user_id = current_user_id()
+    for field, value in _tags.get().items():
+        if getattr(rec, field) is None:
+            setattr(rec, field, value)
     try:
         records.add_usage(rec)
     except OSError as e:  # DatabaseError

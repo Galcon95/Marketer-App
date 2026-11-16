@@ -195,7 +195,7 @@ def test_the_default_project_does_not_go_to_anyone_else(app, monkeypatch):
 
 # ---------- App-wide endpoints: the admin only ----------
 
-@pytest.mark.parametrize("path", ["/usage?scope=app", "/mcp-calls"])
+@pytest.mark.parametrize("path", ["/usage?scope=app", "/usage/export?scope=app", "/mcp-calls"])
 def test_app_wide_endpoints_are_for_the_admin_only(app, monkeypatch, path):
     monkeypatch.setattr(accounts, "DEFAULT_CLIENT_OWNER", OWNER.email)
     assert client_for(app, STRANGER).get(path).status_code == 403

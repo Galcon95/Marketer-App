@@ -6,8 +6,8 @@
  */
 
 import { useState } from "react";
-import { Cpu } from "lucide-react";
-import { api, type UsageBudget, type UsageTotals } from "@/lib/api";
+import { Cpu, Download } from "lucide-react";
+import { api, downloadUsage, errorMessage, type UsageBudget, type UsagePeriod, type UsageTotals } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { Badge, Button, Drawer, ErrorNote, Placeholder, ProgressBar } from "./ui";
 
@@ -30,6 +30,52 @@ export function formatUsd(amount: number) {
   if (amount < 0.01) return `$${amount.toFixed(6)}`;
   if (amount < 1) return `$${amount.toFixed(4)}`;
   return `$${amount.toFixed(2)}`;
+}
+
+const PERIODS: { value: UsagePeriod; label: string }[] = [
+  { value: "this_month", label: "This month" },
+  { value: "last_month", label: "Last month" },
+  { value: "all", label: "All time" },
+];
+
+/**
+ * Period choice and a button that downloads the usage as an Excel workbook (sheets Calls, By day, By operation).
+ * @param scope Whose calls: the user's own or (admin) the whole app's, as shown in the panel.
+ */
+function ExcelExport({ scope }: { scope: "me" | "app" }) {
+  const [period, setPeriod] = useState<UsagePeriod>("this_month");
+  const [pending, setPending] = useState(false);
+  const [note, setNote] = useState<{ error: boolean; text: string } | null>(null);
+
+  async function download() {
+    setPending(true);
+    setNote(null);
+    try {
+      setNote({ error: false, text: `Saved as ${await downloadUsage(period, scope)}.` });
+    } catch (err) {
+      setNote({ error: true, text: errorMessage(err) });
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="bc-stack" style={{ gap: 6 }}>
+      <div className="bc-row" style={{ gap: "var(--space-2)", flexWrap: "nowrap" }}>
+        <div className="bc-select-wrap" style={{ flex: 1 }}>
+          <select className="bc-select" aria-label="Period to export" value={period}
+            onChange={(e) => setPeriod(e.target.value as UsagePeriod)}>
+            {PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+          </select>
+        </div>
+        <Button size="sm" variant="secondary" icon={Download} loading={pending} onClick={download}
+          title="Download the calls as an Excel file: every call, per day and per operation">
+          Excel
+        </Button>
+      </div>
+      {note && (note.error ? <ErrorNote>{note.text}</ErrorNote> : <span className="bc-hint">{note.text}</span>)}
+    </div>
+  );
 }
 
 /**
@@ -58,6 +104,7 @@ export default function UsageDrawer({ openCount, onClose, admin }: { openCount: 
         {scope === "app" ? "All users' model calls." : "Your own model calls."} Chat costs are the exact amounts
         reported by OpenRouter; embedding costs are estimated from the price list (input tokens only).
       </span>
+      <ExcelExport scope={scope} />
       {usage.error ? (
         <ErrorNote>{usage.error}</ErrorNote>
       ) : !report ? (

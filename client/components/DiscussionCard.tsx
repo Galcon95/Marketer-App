@@ -15,7 +15,7 @@ import {
   ShieldAlert, ThumbsUp, Trash2, UserCheck, X,
 } from "lucide-react";
 import {
-  api, cleanText, DISCUSSION_PLATFORMS, errorMessage, humanizeLabel, TONES, type DiscussionAnalysis, type Recommendation,
+  api, cleanText, DISCUSSION_PLATFORMS, errorMessage, humanizeLabel, locationLabel, TONES, type DiscussionAnalysis, type Recommendation,
 } from "@/lib/api";
 import { CitationList, TextWithMarkers } from "./AssetCard";
 import InjectionBadge, { findingRules } from "./InjectionBadge";
@@ -45,14 +45,16 @@ function Boxed({ label, children }: { label: string; children: ReactNode }) {
  * "Reply as Page" (once; then a link to the posted reply).
  * @param analysis The saved analysis.
  * @param book Readable title of its book, shown when the list is not limited to one book.
+ * @param bookRef The book as a reference ("Title by Author"), for "Copy source": the reply itself names neither.
  * @param onChange Called after the reply was saved or the analysis deleted, to reload the list.
  */
-export default function DiscussionCard({ analysis: a, book, onChange }: {
-  analysis: DiscussionAnalysis; book?: string; onChange: () => void;
+export default function DiscussionCard({ analysis: a, book, bookRef, onChange }: {
+  analysis: DiscussionAnalysis; book?: string; bookRef?: string; onChange: () => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null); // reply being edited; null = not editing
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [sourceCopied, setSourceCopied] = useState(false);
   const [replying, setReplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -77,6 +79,19 @@ export default function DiscussionCard({ analysis: a, book, onChange }: {
       await navigator.clipboard.writeText(publishable);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError("Could not copy to the clipboard.");
+    }
+  }
+
+  /** Copy a short follow-up naming the book and the places the reply drew on, for when someone asks for the source. */
+  async function copySource() {
+    const places = [...new Set(a.citations.map((c) => locationLabel(c.location)).filter(Boolean))];
+    const text = `The source is ${bookRef}.` + (places.length ? ` The parts I drew on: ${places.join("; ")}.` : "");
+    try {
+      await navigator.clipboard.writeText(text);
+      setSourceCopied(true);
+      setTimeout(() => setSourceCopied(false), 2000);
     } catch {
       setError("Could not copy to the clipboard.");
     }
@@ -235,7 +250,13 @@ export default function DiscussionCard({ analysis: a, book, onChange }: {
               {a.book_mention.suggest ? "Mention the book" : "Don't name the book"}
             </Badge>
           </span>
-          <span className="bc-hint">{a.book_mention.reason}</span>
+          <span className="bc-hint" style={{ flex: 1 }}>{a.book_mention.reason}</span>
+          {bookRef && !a.facebook_comment_id && (
+            <Button size="sm" variant={sourceCopied ? "success" : "ghost"} icon={sourceCopied ? Check : BookMarked}
+              onClick={copySource} title={`If someone asks for the source: copies "The source is ${bookRef}…" with the chapters and pages`}>
+              {sourceCopied ? "Copied" : "Copy source"}
+            </Button>
+          )}
         </div>
       )}
 

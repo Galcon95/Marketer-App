@@ -102,8 +102,8 @@ export default function FacebookNewPost({ bookId, facebook, onChange }: {
           </div>
           <Field key={`brief-${kind}`} name="brief" as="textarea" label="What should it be about?" rows={3} required
             placeholder={BRIEFS[kind]} />
-          <RangeField name="humanize" label="How human should it sound?" defaultValue={80} describe={humanizeLabel}
-            hint="Higher = less typical AI wording. From 60 on, the humanizer rewrites the post so it reads like you wrote it." />
+          <RangeField name="humanize" label="How human?" defaultValue={80} describe={humanizeLabel} ends={["Polished", "Casual"]}
+            tip="Higher = less typical AI wording. From 60 on, the humanizer rewrites the post so it reads like you wrote it." />
           <div className="bc-row" style={{ gap: 8, alignItems: "center" }}>
             <Button type="submit" icon={Sparkles} loading={pending}>{pending ? "Writing…" : "Write from the book"}</Button>
             <span className="bc-hint" style={{ margin: 0 }}>Nothing is posted yet: you check the text first.</span>

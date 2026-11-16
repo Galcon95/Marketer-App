@@ -49,7 +49,7 @@ what the book actually says.
 
 ## Discussion Relevance Agent (`run_agent_eval.py`)
 
-Measures the agent of Market Intelligence → Discussions against the **real, running app**
+Measures the agent of Community (Phase 3) against the **real, running app**
 (`POST /projects/{id}/discussions`, the same graph as in the GUI). Sign-in and API key work as above; the migration
 `0008` (table `discussion_analyses`) must be applied.
 

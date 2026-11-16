@@ -50,7 +50,7 @@ server/
 │   │   └── generation.py   single assets, grounded or zero-shot (LangGraph)
 │   ├── campaign/       Phase 2 Content Studio: campaign kits
 │   │   └── kit.py      zero-shot kit: personas → posts + blurb (LangGraph)
-│   ├── market/         Phase 3 Market Intelligence (MCP)
+│   ├── market/         MCP servers (sidebar: Integrations)
 │   │   ├── book_server.py  mcp-book-knowledge: the books as MCP tools (mounted at /mcp)
 │   │   └── guard_server.py mcp-guardrails: input validation and prompt-injection checks (/guardrails/mcp)
 │   ├── agents/         Discussion Relevance Agent (LangGraph), its tools, the Reddit scan, the Page inbox agent

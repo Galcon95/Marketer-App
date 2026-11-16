@@ -127,6 +127,7 @@ export interface Asset {
   published_id?: string; // id of the post on the author's Facebook Page; "" = not published
   published_url?: string; // link to that post
   published_at?: string | null; // when it was published (ISO 8601, UTC)
+  cost?: number | null; // USD of the model calls that wrote it; null = not recorded (older assets, campaign kits)
 }
 /** The author's own Facebook Page (server/.env FACEBOOK_PAGE_*). */
 export interface FacebookPage { id: string; name: string; followers: number | null; link: string | null }
@@ -189,6 +190,7 @@ export interface CampaignResponse { campaign_id: string; personas: Asset[]; post
 export interface CampaignSummary {
   campaign_id: string; title: string; source_id: string | null; created_at: string; tokens: number;
   asset_count: number; audience: string;
+  cost: number | null; // USD of the kit's model calls; null = not recorded (older kits)
 }
 /** Response of GET /campaigns: one page of kits, newest first, and how many there are in all. */
 export interface CampaignPage { items: CampaignSummary[]; total: number }
@@ -373,7 +375,7 @@ export interface SourceDeletion {
   name: string; // readable book name
   assets: number; // generated assets made only from this book (incl. its campaign kits)
   conversations: number; // chats whose passages all come from this book
-  discussions: number; // discussion analyses made for this book (Market Intelligence)
+  discussions: number; // discussion analyses made for this book (Community)
 }
 
 /** One logged model call with its tokens and costs in USD (server/app/core/usage.py). */
@@ -713,8 +715,28 @@ export async function downloadAssets(format: ExportFormat, filters: { asset_type
   const query = new URLSearchParams({ format });
   if (filters.asset_type) query.set("asset_type", filters.asset_type);
   if (filters.source_id) query.set("source_id", filters.source_id);
-  const res = await send(`/projects/${await projectId()}/assets/export?${query}`);
-  const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? `assets.${format === "md" ? "md" : "csv"}`;
+  return downloadFile(`/projects/${await projectId()}/assets/export?${query}`, `assets.${format === "md" ? "md" : "csv"}`);
+}
+
+/** Periods of the usage export: UTC calendar months, or everything. */
+export type UsagePeriod = "this_month" | "last_month" | "all";
+
+/**
+ * Download the LLM usage of one period as an Excel workbook (GET /usage/export; sheets Calls, By day, By operation).
+ * @param period Which calls.
+ * @param scope "me": the user's own calls; "app": all users' (the admin only).
+ */
+export function downloadUsage(period: UsagePeriod, scope: "me" | "app" = "me") {
+  return downloadFile(`/usage/export?period=${period}&scope=${scope}`, "llm-usage.xlsx");
+}
+
+/**
+ * Download a file from the API and save it under the name the server gives (Content-Disposition), else `fallback`.
+ * @returns The file name it was saved as.
+ */
+async function downloadFile(path: string, fallback: string) {
+  const res = await send(path);
+  const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? fallback;
   const url = URL.createObjectURL(await res.blob());
   const link = document.createElement("a");
   link.href = url;

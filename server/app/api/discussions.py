@@ -1,4 +1,4 @@
-"""Discussions (Market Intelligence): the Discussion Relevance Agent and its saved results.
+"""Discussions (Community): the Discussion Relevance Agent and its saved results.
 
     POST   /projects/{id}/discussions/scan  search Reddit for threads on a topic, ranked for one book (not saved)
     POST   /projects/{id}/discussions   analyse a pasted discussion for one book (runs the agent), save the result

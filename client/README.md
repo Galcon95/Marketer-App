@@ -29,7 +29,7 @@ npm run dev                  # http://localhost:3000 (the server must run on htt
 | `app/login/`, `app/auth/confirm/` | Sign-in page and the link from the confirmation email. |
 | `proxy.ts` | Runs before every page request: refreshes the Supabase session and sends visitors who are not signed in to `/login`. It only guards pages; the server checks the access token of every API request itself. |
 | `components/AppShell.tsx` | Sidebar navigation between the three phases, sign-out, the usage and API-key drawers. |
-| `components/phases/` | The phases: `KnowledgeHub` (upload and process books, summary, chat), `ContentStudio` (single assets with citations; its Campaign kit is `CampaignBuilder`) and `MarketIntelligence` (Discussion agent, Reddit scan, Facebook Page; its MCP tool console, admin only, is `McpServers`). |
+| `components/phases/` | The phases: `KnowledgeHub` (upload and process books, summary, chat), `ContentStudio` (single assets with citations; its Campaign kit is `CampaignBuilder`) and `Community` (Discussion agent, Reddit scan, Facebook Page); `McpServers` is the MCP tool console (sidebar: Integrations; admin only). |
 | `components/` | Building blocks: `DiscussionAgent`, `DiscussionCard`, `ToolCallCard` (the agent's tool trace), `RedditScan`, `Facebook*`, `InjectionBadge` (flags third-party text that looks like prompt injection), `KeysPanel` (MCP API keys) and others. |
 | `lib/api.ts` | Typed API client for the server: every endpoint, error handling and helpers for labels, citations and URLs. |
 | `lib/useApi.ts`, `lib/supabase.ts` | React hook for API calls; Supabase browser client. |

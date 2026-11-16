@@ -128,6 +128,7 @@ class AssetRow(Base):
     published_id: Mapped[str] = mapped_column(Text, default="")  # Facebook post id; "" = not published
     published_url: Mapped[str] = mapped_column(Text, default="")
     published_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
+    cost: Mapped[float | None] = mapped_column(Double)  # USD of the model calls that wrote it; None = not recorded
 
 
 class ConversationRow(Base):
@@ -208,6 +209,9 @@ class UsageRow(Base):
     source_id: Mapped[str | None] = mapped_column(Text)
     request_id: Mapped[str | None] = mapped_column(Text)  # the HTTP request that caused it
     user_id: Mapped[str | None] = mapped_column(Text, index=True)  # who caused it; None for calls before sign-in
+    asset_id: Mapped[str | None] = mapped_column(Text, index=True)  # the single asset it generated
+    asset_type: Mapped[str | None] = mapped_column(Text)  # that asset's type
+    campaign_id: Mapped[str | None] = mapped_column(Text, index=True)  # the campaign kit it was part of
 
 
 class SourceRow(Base):

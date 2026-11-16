@@ -3,7 +3,7 @@
 The agent of the Marketer App: it tells an author whether an online discussion is a good place to contribute from
 their book and, if so, drafts a reply that is grounded in that book.
 
-Code: [`server/app/agents/`](../server/app/agents/) · UI: Market Intelligence → **Discussions** ·
+Code: [`server/app/agents/`](../server/app/agents/) · UI: **Community** (Phase 3) ·
 Evaluation: [`eval/run_agent_eval.py`](../eval/run_agent_eval.py) · Overview of the whole app: [FEATURES.md](../FEATURES.md)
 
 ---
@@ -55,7 +55,7 @@ click.
 (status `ready`). Make the book summary too: the book profile tool returns its overview and themes.
 
 ### Paste a discussion
-1. Market Intelligence → **Discussions** → **Paste a discussion**.
+1. **Community** → **Paste**.
 2. Pick the **book**.
 3. Paste the discussion: the post, plus replies if they matter (at most 8,000 characters).
 4. Choose the **platform**: Reddit, LinkedIn, YouTube, X, Facebook, Instagram, TikTok, forum or other. It sets the

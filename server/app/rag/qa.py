@@ -42,7 +42,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from app.core import prompt_files
-from app.core import prompts, tracing
+from app.core import prompts, tracing, usage
 from app.core.config import LLM_MODEL, MIN_RELEVANCE, RETRIEVAL_MODE
 from app.core.logs import current_request_id
 from app.core.llm import (
@@ -150,8 +150,9 @@ def answer_question(project_id: str, question: str, k: int, source_ids: list[str
     """
     if not is_configured():
         raise GenerationError(503, "No API key set. Add OPENROUTER_API_KEY (or OPENAI_API_KEY) and restart the server.")
+    book = source_ids[0] if source_ids and len(source_ids) == 1 else None  # its costs count for this book
     try:
-        with tracing.scope():
+        with tracing.scope(), usage.tagged(source_id=book):
             state = _graph().invoke(
                 {"project_id": project_id, "question": question, "history": (history or [])[-HISTORY_TURNS:], "k": k,
                  "source_ids": source_ids, "operation": operation, "use_tools": use_tools},

@@ -8,7 +8,7 @@ Status as of 2026-11-12 (Facebook Page included).
 |---|---|---|
 | 1 | Knowledge Hub (RAG) | ✅ Built |
 | 2 | Content Studio (grounded single assets + zero-shot campaign kits) | ✅ Built |
-| 3 | Market Intelligence: Discussion Relevance Agent, Reddit scan, 2 MCP servers + tool console | ✅ Built, incl. the author's own Facebook Page |
+| 3 | Community: Discussion Relevance Agent, Reddit scan; 2 MCP servers + tool console (Integrations) | ✅ Built, incl. the author's own Facebook Page |
 | 4 | Agent Workspace (multi-agent campaign: Strategist → Copywriter → Auditor) | ⬜ Placeholder UI only |
 | – | Sign-in, one library per user, limits and budgets, all data in Supabase | ✅ Built |
 
@@ -123,10 +123,10 @@ personas ─┬─► 5 social posts ─┬─► polish (AI-cliché check / rew
 
 ---
 
-## Phase 3 – Market Intelligence
+## Phase 3 – Community
 
-Finding conversations where the author's book can add something, and answering them. Two tabs: **Discussions**
-(the agent) and **MCP servers**.
+Finding conversations where the author's book can add something, and answering them (the agent). The MCP servers
+and their tool console have their own page in the sidebar, under **Integrations**.
 
 ### Discussion Relevance Agent (LangGraph, `server/app/agents/`)
 
@@ -135,7 +135,7 @@ poor fit, and a reply that reads like an ad hurts more than it helps. The agent 
 discussion and one book: *is this a good place to contribute?* and, if yes, *what would a helpful reply say, grounded
 in the book?* The author always decides; nothing is posted without a click.
 
-**How to use:** Market Intelligence → Discussions → **Paste a discussion**: pick the book, paste the post (plus
+**How to use:** Community → **Paste**: pick the book, paste the post (plus
 replies if useful, at most 8,000 characters), choose the platform (Reddit, LinkedIn, YouTube, X, Facebook, Instagram,
 TikTok, forum, other), optionally an angle ("what I'd like to bring in"), a tone and the "how human" setting, then
 **Analyse**.
@@ -253,7 +253,7 @@ Served at `http://127.0.0.1:8000/guardrails/mcp`. Unlike the book server, it is 
 - Needs the same sign-in as the book server. The app's endpoints call the same functions directly in code (see
   "Security & guardrails"); the MCP server offers them to outside clients and the tool console.
 
-### MCP tool console (Market Intelligence tab)
+### MCP tool console (sidebar: Integrations → MCP servers)
 
 The app acts as a real **MCP client** (official `mcp` SDK `Client`, Streamable HTTP). It talks to its own servers exactly as Claude Desktop would.
 
@@ -335,7 +335,7 @@ Three layers, all in code and on every request (never left to the model):
 - A LangChain callback logs every LLM call: input and output tokens, and the exact cost in USD reported by OpenRouter (estimated when that isn't available).
 - Embedding tokens are counted with tiktoken and priced.
 - Each call is saved in the database (table `usage_log`) with the signed-in user and the request id, and printed to the console with running totals. Budgets and reports are sums the database computes.
-- The top bar shows the user's cost and tokens. Clicking it opens the **LLM usage & costs** drawer with the call history; the admin also sees the app-wide totals.
+- The top bar shows the user's cost and tokens. Clicking it opens the **LLM usage & costs** drawer with the call history; the admin also sees the app-wide totals. **Excel** downloads one period (this month, last month, all) as an .xlsx with the sheets Calls, By day, By operation, By book, By purpose (asset format, campaign kit, book summary, ...) and By campaign; costs are real numbers, so Excel in any language can sum and chart them (`GET /usage/export`). Every model call is tagged with its book, single asset (and type) and campaign kit (`usage.tagged`); a single asset and a campaign row show what their calls cost.
 
 ### Evaluation
 

@@ -225,6 +225,38 @@ def recent_usage(limit: int, user_id: str | None = None, project_ids: Iterable[s
                 for row in s.scalars(query)]
 
 
+def usage_between(start: datetime | None, end: datetime | None, user_id: str | None = None,
+                  project_ids: Iterable[str] = ()) -> list[UsageRecord]:
+    """Every call from `start` (inclusive) to `end` (exclusive), oldest first, of all calls or of the user's;
+    None = no limit on that side. For the usage export."""
+    conditions = [*_where(user_id, project_ids), *([UsageRow.timestamp >= start] if start else []),
+                  *([UsageRow.timestamp < end] if end else [])]
+    query = select(UsageRow).where(*conditions).order_by(UsageRow.timestamp, UsageRow.id)
+    with session() as s:
+        return [UsageRecord.model_validate({k: getattr(row, k) for k in UsageRecord.model_fields})
+                for row in s.scalars(query)]
+
+
+def usage_cost(asset_id: str | None = None, campaign_id: str | None = None) -> float | None:
+    """USD of the calls tagged with this asset or this campaign; None if no call is tagged with it."""
+    column, value = (UsageRow.asset_id, asset_id) if asset_id else (UsageRow.campaign_id, campaign_id)
+    with session() as s:
+        count, cost = s.execute(select(func.count(), func.coalesce(func.sum(UsageRow.cost), 0.0))
+                                .where(column == value)).one()
+    return float(cost) if count else None
+
+
+def campaign_costs(campaign_ids: Iterable[str]) -> dict[str, float]:
+    """USD per campaign kit, for the campaigns that have tagged calls (one query for a page of kits)."""
+    ids = list(campaign_ids)
+    if not ids:
+        return {}
+    query = (select(UsageRow.campaign_id, func.sum(UsageRow.cost)).where(UsageRow.campaign_id.in_(ids))
+             .group_by(UsageRow.campaign_id))
+    with session() as s:
+        return {cid: float(cost) for cid, cost in s.execute(query)}
+
+
 def spending(user_id: str, project_ids: Iterable[str], today: datetime, month: datetime) -> tuple[float, float, float]:
     """In one query: what the user spent since `today` and since `month`, and what all users spent since `today`
     (USD). The budget check runs before every model request, so this is one round trip, not three."""

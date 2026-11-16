@@ -9,9 +9,9 @@ The code lives in the app package (see README.md, "Project layout"):
     app/db        the database (Supabase PostgreSQL with pgvector; SQLAlchemy tables and records)
     app/rag       Phase 1 Knowledge Hub: ingestion, vector store, retrieval, summaries, Q&A, generation
     app/campaign  Phase 2 Content Studio: zero-shot campaign kit
-    app/agents    Phase 3 Market Intelligence: the Discussion Relevance Agent (LangGraph), its tools, the Reddit scan
+    app/agents    Phase 3 Community: the Discussion Relevance Agent (LangGraph), its tools, the Reddit scan
     app/social    the author's Facebook Page (Graph API)
-    app/market    Phase 3 Market Intelligence: MCP servers (mcp-book-knowledge at /mcp, mcp-guardrails at /guardrails/mcp)
+    app/market    Integrations: MCP servers (mcp-book-knowledge at /mcp, mcp-guardrails at /guardrails/mcp)
                   and the app's MCP client for the console (client.py)
     app/api       FastAPI routers, one per area
 

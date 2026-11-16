@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The "MCP servers" tab of Market Intelligence (Phase 3): our MCP servers with their live status and a tool console
+ * The "MCP servers" page (sidebar, Integrations): our MCP servers with their live status and a tool console
  * like the MCP Inspector (forms built from each tool's input schema, results, call log).
  */
 

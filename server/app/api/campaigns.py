@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.api.deps import check_sources, checked_optional, checked_text, llm_limits, owned_project
 from app.campaign import kit
 from app.core import state as db
+from app.core import usage
 from app.core.config import LLM_MODEL
 from app.core.llm import GenerationError
 from app.core.schemas import Asset, CampaignPage, CampaignRequest, CampaignResponse, CampaignSummary
@@ -40,12 +41,13 @@ def create_campaign(project_id: str, body: CampaignRequest):
     """
     check_sources(project_id, [body.source_id] if body.source_id else None)
     body = _checked_brief(body)
+    campaign_id = db.new_id("cmp")
     try:
-        result = kit.generate_campaign(body)
+        with usage.tagged(campaign_id=campaign_id, source_id=body.source_id):  # its calls count for the kit and book
+            result = kit.generate_campaign(body)
     except GenerationError as e:
         raise HTTPException(e.status_code, str(e)) from e
 
-    campaign_id = db.new_id("cmp")
     brief = kit.format_brief(body)
     created = db.now()
     order = iter(range(9))  # 1 µs apart, so the kit keeps its order when the assets are reloaded (sorted by time)
@@ -91,7 +93,12 @@ def list_campaigns(project_id: str, limit: int = Query(10, ge=1, le=100), offset
         if asset.project_id == project_id and asset.campaign_id:
             kits.setdefault(asset.campaign_id, []).append(asset)
     rows = sorted((_summary(cid, assets) for cid, assets in kits.items()), key=lambda r: r.created_at, reverse=True)
-    return CampaignPage(items=rows[offset:offset + limit], total=len(rows))
+    page = rows[offset:offset + limit]
+    try:
+        costs = records.campaign_costs(r.campaign_id for r in page)
+    except OSError:  # DatabaseError: the list still works, only without costs
+        costs = {}
+    return CampaignPage(items=[r.model_copy(update={"cost": costs.get(r.campaign_id)}) for r in page], total=len(rows))
 
 
 @router.get("/projects/{project_id}/campaigns/{campaign_id}", response_model=list[Asset],

@@ -11,6 +11,7 @@ import { BookOpen, Check, ChevronDown, ChevronRight, FileText, Megaphone, Sparkl
 import { api, bookTitle, errorMessage, humanizeLabel, type Asset, type CampaignSummary, type Source } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import AssetCard from "../AssetCard";
+import { formatUsd } from "../UsagePanel";
 import BookCover from "../BookCover";
 import { Badge, Button, Card, ErrorNote, Field, Placeholder, RangeField, SectionHeading } from "../ui";
 
@@ -258,6 +259,7 @@ function CampaignRow({ campaign, defaultOpen, refresh, onChange }: {
             <strong>{title}</strong>
             <span className="bc-hint" style={{ display: "block" }}>
               {new Date(campaign.created_at).toLocaleString()} · {count} assets · {campaign.tokens.toLocaleString()} tokens
+              {campaign.cost != null && ` · ${formatUsd(campaign.cost)}`}
               {campaign.audience && ` · focus: ${campaign.audience}`}
             </span>
           </span>

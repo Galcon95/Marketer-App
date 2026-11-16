@@ -84,7 +84,7 @@ Then connect with **Transport type** `Streamable HTTP` and one of these URLs:
 | mcp-guardrails (security checks) | `http://127.0.0.1:8000/guardrails/mcp` |
 
 Press **Connect**, then **List Tools**, then pick a tool and **Run Tool**. The server from step 1 must be running.
-You can also call both MCP servers inside the app, in the **Market Intelligence** tab, without the Inspector.
+You can also call both MCP servers inside the app, under **Integrations → MCP servers** in the sidebar, without the Inspector.
 
 ### 4. See it in action
 
@@ -98,7 +98,7 @@ You can also call both MCP servers inside the app, in the **Market Intelligence*
 2. Make the **book summary** and try **Ask your book** (the chat).
 3. **Content Studio**: in **Single asset**, write a blurb, post, newsletter, ... from the book with citations; in
    **Campaign kit**, check the brief and press **Generate campaign (zero-shot)** for personas, posts and a blurb.
-4. **Market Intelligence → Discussions** (the agent):
+4. **Community** (the agent):
    - **Paste a discussion**: pick the book, paste a post (e.g. from Reddit, plus some replies), choose the platform
      and press **Analyse**. The agent answers *contribute* (with a reply grounded in the book, citations and advice
      on naming the book), *more context needed* or *skip*, with its reason. Open the **tool trace** to see which
@@ -107,7 +107,7 @@ You can also call both MCP servers inside the app, in the **Market Intelligence*
      high / medium / low for the book. **Analyse** loads one into the agent.
    - Try a trap: a thread that only shares a keyword with the book (e.g. "garden" in a gardening question) should be
      *skip*.
-5. **Market Intelligence → MCP servers**: the MCP tool console (both MCP servers, status, tools, call log; admin only).
+5. **Integrations → MCP servers** (sidebar): the MCP tool console (both MCP servers, status, tools, call log; admin only).
 6. Costs so far: the usage panel in the app, or http://127.0.0.1:8000/usage.
 
 ### Stop
@@ -138,8 +138,8 @@ and [eval/README.md](eval/README.md).
    - Upload a PDF book (e.g. *Garden Cities of To-Morrow*, see step 4 above) and press **Process**.
    - Make the summary and try the chat.
    - In the Content Studio, generate an asset (Single asset) and a campaign (Campaign kit).
-   - In Market Intelligence → Discussions, paste a discussion (or scan Reddit) and let the agent analyse it.
-   - Call the MCP tools in Market Intelligence → MCP servers.
+   - In Community, paste a discussion (or scan Reddit) and let the agent analyse it.
+   - Call the MCP tools under Integrations → MCP servers.
    - Look at the costs.
 5. **Stop:** `Ctrl+C` in each terminal.
 

@@ -289,6 +289,40 @@ def test_a_reply_without_cliches_is_humanized_too(model, outputs, humanizer):
     assert "none found by the automatic check" in fake.prompts[-1][0].content
 
 
+# ---------- no names of the book or its author in a reply elsewhere ----------
+def test_names_of_the_book_and_author_are_found():
+    found = agent.named_in("As Schmidt shows in the human ai civilization, Peter knows.", BOOK)
+    assert found == ["The Human AI Civilization", "Peter", "Schmidt"]
+    assert agent.named_in("People decide where the crews go.", BOOK) == []
+    assert agent.named_in("Schmidtke and civilization", BOOK) == []  # whole words only
+
+
+def test_a_reply_that_names_the_author_is_rewritten_without_the_name(model, outputs):
+    queued, _ = outputs  # the humanizer is off: the rewrite runs because of the name alone
+    fake = model(*FULL_RESEARCH, _notes("People decide where the crews go [1].", tokens=4))
+    _contribute_with("Schmidt argues that people decide where the crews go [1].", queued)
+    state = _run(humanize=40)
+    assert state["rewritten"] and state["suggested_reply"] == "People decide where the crews go [1]."
+    assert state["names"] == [] and state["platform_issues"] == []
+    assert '"Schmidt"' in fake.prompts[-1][0].content and "must go" in fake.prompts[-1][0].content
+
+
+def test_a_name_left_after_the_rewrite_is_reported(model, outputs):
+    queued, _ = outputs
+    model(*FULL_RESEARCH, _notes("Schmidt says people decide [1]."))
+    _contribute_with("Schmidt argues that people decide [1].", queued)
+    state = _run(humanize=40)
+    assert state["platform_issues"][0].startswith("Names Schmidt: readers do not know the book")
+
+
+def test_on_the_own_page_the_author_may_name_the_book(model, outputs):
+    queued, _ = outputs
+    model(*FULL_RESEARCH)  # no rewrite scripted
+    _contribute_with("In The Human AI Civilization I argue that people decide [1].", queued)
+    state = _run(own_page=True, platform="facebook", humanize=40)
+    assert not state.get("rewritten") and state["names"] == []
+
+
 def test_below_the_rewrite_level_cliches_are_only_reported(model, outputs, humanizer):
     humanizer(True)
     queued, _ = outputs
@@ -381,7 +415,7 @@ def test_own_page_mode_changes_the_situation_and_the_role(model, outputs, own_pa
     if own_page:
         assert "OWN Facebook Page" in assess["situation"] and "first person" in draft["role"]
     else:
-        assert assess["situation"] == "" and "Do not name the book" in draft["role"]
+        assert assess["situation"] == "" and "Never name the book" in draft["role"]
 
 
 # ---------- prompt injection in the discussion, and the output guard ----------
