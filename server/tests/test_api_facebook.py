@@ -137,9 +137,12 @@ def test_publishable_text_matches_the_clients_clean_text():
     assert facebook.publishable_text("A claim [1] , and more [12].\nNext [3]!") == "A claim, and more.\nNext!"
 
 
-def test_reader_question_instructions_are_for_facebook_and_end_with_a_question():
-    text = generation.build_instructions(GenerateRequest(asset_type="reader_question", brief="AI and accountability"))
-    assert "Facebook Page" in text and "End with the question" in text
+@pytest.mark.parametrize("platform, rule", [("facebook", "for Facebook"), ("x", "280 characters"),
+                                            ("linkedin", "for LinkedIn")])
+def test_reader_question_instructions_follow_the_platform_and_end_with_a_question(platform, rule):
+    text = generation.build_instructions(GenerateRequest(asset_type="reader_question", platform=platform,
+                                                         brief="AI and accountability"))
+    assert rule in text and "ends with the question" in text
     assert "first person" in text and "never refer to the book in the third person" in text
     assert "{" not in text  # nothing left unfilled
 

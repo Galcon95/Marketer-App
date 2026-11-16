@@ -290,6 +290,25 @@ class CampaignResponse(BaseModel):
     tokens: int  # LLM tokens used by the whole kit
 
 
+class CampaignSummary(BaseModel):
+    """One campaign kit in GET /projects/{id}/campaigns: what its list row shows, without the assets' texts."""
+
+    campaign_id: str  # e.g. "cmp_1a2b3c4d"
+    title: str  # the book title from the brief ("Campaign" if the brief names none)
+    source_id: str | None = None  # the library book it was made for, if any
+    created_at: datetime
+    tokens: int  # LLM tokens used by the whole kit
+    asset_count: int  # assets still in the kit (single assets can be deleted)
+    audience: str = ""  # the audience focus of the brief
+
+
+class CampaignPage(BaseModel):
+    """Response of GET /projects/{id}/campaigns: one page of campaign kits, newest first."""
+
+    items: list[CampaignSummary]
+    total: int  # campaign kits in the project
+
+
 class AssetUpdate(BaseModel):
     """Request body for PATCH /assets/{id}: the user's edited text."""
 

@@ -61,6 +61,22 @@ html, body { background: var(--bg); color: var(--ink); font-family: var(--font-s
 .bc-search { position: relative; }
 .bc-search .bc-ico { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--ink-muted); }
 .bc-search .bc-input { padding-left: 34px; }
+/* Slider head (label, optional ⓘ tip, value) and the words under its ends (RangeField) */
+.bc-range-head { display: flex; align-items: center; gap: 6px; }
+.bc-range-value { margin-left: auto; font-size: 11px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: .04em; }
+.bc-range-ends { display: flex; justify-content: space-between; font-size: 11px; line-height: 14px; color: var(--ink-subtle); margin-top: -2px; }
+.bc-tip { display: inline-flex; color: var(--ink-subtle); cursor: help; border-radius: var(--radius-full); }
+.bc-tip:hover, .bc-tip:focus-visible { color: var(--ink); outline: none; }
+/* Segmented choice (Segmented): joined buttons over radio inputs */
+.bc-seg-field { border: 0; margin: 0; padding: 0; }
+.bc-seg-field > legend { padding: 0; margin-bottom: 6px; }
+.bc-seg { display: flex; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--surface-raised); padding: 2px; gap: 2px; }
+.bc-seg-opt { flex: 1; position: relative; }
+.bc-seg-opt input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.bc-seg-opt span { display: block; text-align: center; padding: 5px var(--space-2); border-radius: var(--radius-sm); font: 500 13px/20px var(--font-sans); color: var(--ink-muted); white-space: nowrap; }
+.bc-seg-opt input:hover + span { color: var(--ink); }
+.bc-seg-opt input:checked + span { background: var(--accent-soft); color: var(--accent-text); }
+.bc-seg-opt input:focus-visible + span { outline: 2px solid var(--accent-text); outline-offset: -1px; }
 
 /* Tabs */
 .bc-tabs { display: flex; gap: var(--space-1); border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
@@ -260,6 +276,29 @@ html, body { background: var(--bg); color: var(--ink); font-family: var(--font-s
 .bc-sec-h .bc-n { font: 500 11px/16px var(--font-mono); color: var(--ink-subtle); }
 .bc-empty { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); padding: var(--space-8); color: var(--ink-muted); text-align: center; border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); font-size: 13px; }
 .bc-menu-btn { display: none; }
+/* Campaign kit rows (CampaignBuilder): a clickable head; the kit's assets below it only while open */
+.bc-campaign { padding: var(--space-2) var(--space-3); }
+.bc-campaign-head { gap: var(--space-2); flex-wrap: nowrap; }
+.bc-campaign-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--space-3); background: none; border: 0; padding: var(--space-2); color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: var(--radius-md); }
+.bc-campaign-toggle:hover { background: var(--surface-raised); }
+.bc-campaign-toggle:focus-visible { outline: 2px solid var(--accent-text); }
+.bc-campaign-body { padding: var(--space-4) var(--space-2) var(--space-2); border-top: 1px solid var(--border); margin-top: var(--space-2); }
+/* Generator layout (GroundedGenerator): settings on the left (stay in view), brief and results on the right.
+   The <form> is display: contents so its two parts can sit in different grid cells. */
+.bc-studio { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: var(--space-4); align-items: start; max-width: 1400px; }
+.bc-studio > form { display: contents; }
+.bc-studio-side { grid-column: 1; grid-row: 1 / span 2; position: sticky; top: var(--space-4); }
+.bc-studio-brief { grid-column: 2; grid-row: 1; }
+.bc-studio-results { grid-column: 2; grid-row: 2; display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.bc-studio-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-3); flex-wrap: wrap; }
+.bc-type-info { margin: 0; font-size: 12px; line-height: 17px; color: var(--ink-muted); }
+.bc-type-info .bc-tip { vertical-align: -2px; background: none; border: 0; padding: 0; }
+.bc-type-detail { margin: 0; font-size: 12px; line-height: 17px; color: var(--ink); background: var(--surface-sunken); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+.bc-kbd { font: 400 11px/16px var(--font-mono); color: var(--ink-subtle); }
+@media (max-width: 1000px) {
+  .bc-studio { grid-template-columns: minmax(0, 1fr); }
+  .bc-studio-side, .bc-studio-brief, .bc-studio-results { grid-column: 1; grid-row: auto; position: static; }
+}
 @media (max-width: 1100px) { .bc-g3 { grid-template-columns: minmax(0, 1fr); } .bc-split { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 860px) {
   .bc-side { position: fixed; z-index: 20; inset: 0 auto 0 0; transform: translateX(-100%); transition: transform .2s; box-shadow: var(--shadow-pop); }

@@ -185,6 +185,17 @@ export interface CampaignRequest {
 }
 /** Response of POST /campaigns: the stored assets of one kit. */
 export interface CampaignResponse { campaign_id: string; personas: Asset[]; posts: Asset[]; blurb: Asset; tokens: number }
+/** One campaign kit in the campaign list: its row, without the assets' texts. */
+export interface CampaignSummary {
+  campaign_id: string; title: string; source_id: string | null; created_at: string; tokens: number;
+  asset_count: number; audience: string;
+}
+/** Response of GET /campaigns: one page of kits, newest first, and how many there are in all. */
+export interface CampaignPage { items: CampaignSummary[]; total: number }
+/** Optional filters of GET /assets (all left out = every asset of the project). */
+export interface AssetFilters {
+  asset_type?: AssetType; source_id?: string; grounded?: boolean; in_campaign?: boolean; limit?: number;
+}
 
 /** Verification result for one claim (sentence); chunk_id/score are set only when verified. */
 export interface VerifyItem { claim: string; status: "verified" | "not_found"; chunk_id: string | null; score: number | null }
@@ -411,26 +422,95 @@ export class ApiError extends Error {
   }
 }
 
-/** Asset types with their display labels, in the order shown in select boxes. */
-export const ASSET_TYPES: { value: AssetType; label: string }[] = [
-  { value: "blurb", label: "Blurb / product description" },
-  { value: "social_post", label: "Social post" },
-  { value: "social_reply", label: "Reply to a post" },
-  { value: "video_script", label: "Short video script (Reels · TikTok · Shorts)" },
-  { value: "youtube_video", label: "YouTube video page (titles · description · tags)" },
-  { value: "newsletter", label: "Newsletter" },
-  { value: "ad_copy", label: "Ad copy" },
-  { value: "lead_magnet", label: "Lead magnet" },
-  { value: "persona", label: "Audience persona" },
-  { value: "reader_question", label: "Question for my readers (Facebook Page)" },
+/** Groups of the asset type list (an <optgroup> each), in this order: what the format is used for. */
+export const ASSET_GROUPS = ["Sell", "Social media", "Email", "Plan"] as const;
+export type AssetGroup = (typeof ASSET_GROUPS)[number];
+
+/** Asset types with their display labels and groups, in the order shown in select boxes. */
+export const ASSET_TYPES: { value: AssetType; label: string; group: AssetGroup }[] = [
+  { value: "blurb", label: "Blurb / product description", group: "Sell" },
+  { value: "ad_copy", label: "Ad copy", group: "Sell" },
+  { value: "social_post", label: "Social post", group: "Social media" },
+  { value: "social_reply", label: "Reply to a post", group: "Social media" },
+  { value: "reader_question", label: "Question for my readers", group: "Social media" },
+  { value: "video_script", label: "Short video script (Reels · TikTok · Shorts)", group: "Social media" },
+  { value: "youtube_video", label: "YouTube video page (titles · description · tags)", group: "Social media" },
+  { value: "newsletter", label: "Newsletter", group: "Email" },
+  { value: "lead_magnet", label: "Lead magnet", group: "Email" },
+  { value: "persona", label: "Audience persona", group: "Plan" },
 ];
-/** Planned formats, shown disabled after ASSET_TYPES ("coming soon"); the server cannot generate them yet. */
-export const PLANNED_ASSET_TYPES: { value: string; label: string; disabled: true }[] = [
-  { value: "carousel", label: "Carousel post – swipeable slides (coming soon)", disabled: true },
-  { value: "carousel_ad", label: "Carousel ad – paid, cards with links (coming soon)", disabled: true },
-  { value: "slides_gif", label: "GIF from slides (coming soon)", disabled: true },
-  { value: "slides_video", label: "Short video from slides – MP4 (coming soon)", disabled: true },
+/** Planned formats, shown disabled in their group ("coming soon"); the server cannot generate them yet. */
+export const PLANNED_ASSET_TYPES: { value: string; label: string; group: AssetGroup; disabled: true }[] = [
+  { value: "carousel", label: "Carousel post – swipeable slides (coming soon)", group: "Social media", disabled: true },
+  { value: "carousel_ad", label: "Carousel ad – paid, cards with links (coming soon)", group: "Sell", disabled: true },
+  { value: "slides_gif", label: "GIF from slides (coming soon)", group: "Social media", disabled: true },
+  { value: "slides_video", label: "Short video from slides – MP4 (coming soon)", group: "Social media", disabled: true },
 ];
+
+/** The asset types (planned ones last, disabled) grouped by ASSET_GROUPS, for a select with option groups. */
+export const ASSET_TYPE_GROUPS = ASSET_GROUPS.map((group) => ({
+  label: group,
+  options: [...ASSET_TYPES, ...PLANNED_ASSET_TYPES].filter((t) => t.group === group),
+}));
+
+/**
+ * What each asset type is good for, shown under the asset type box of the generator: `short` always,
+ * `detail` (when to use it, where it goes, a tip for the brief) behind the ⓘ.
+ */
+export const ASSET_TYPE_INFO: Record<AssetType, { short: string; detail: string }> = {
+  blurb: {
+    short: "Back-cover or shop text that makes people want to read the book.",
+    detail: "Use it on Amazon and other shops, your website, the back cover and press material. Write it once, "
+      + "then reuse it everywhere. Brief tip: name the one idea that makes the book worth reading today.",
+  },
+  ad_copy: {
+    short: "Three ad variants (headline + text) for paid ads.",
+    detail: "For Facebook/Instagram ads, Amazon ads or Google ads, where you pay to reach people who do not know you yet. "
+      + "Run all three with a small budget and keep the one that gets the most clicks. Brief tip: say who the ad is for "
+      + "and what they gain (\"for people who find economics boring: …\"), not just the topic.",
+  },
+  social_post: {
+    short: "A post for one platform, in that platform's style and length.",
+    detail: "Reaches the people who already follow you. The platform you pick decides the length, hashtags and emojis "
+      + "(X stays under 280 characters). Brief tip: one idea or quote per post is enough.",
+  },
+  social_reply: {
+    short: "Your answer to someone else's post that adds the book's view.",
+    detail: "Reaches new people in discussions that already exist. Paste their post; the reply answers their point "
+      + "first and mentions the book at most once, so it does not read like an ad.",
+  },
+  reader_question: {
+    short: "A short post that asks your readers one question from the book.",
+    detail: "For any platform: written as the author in the first person, ending with an open question; the platform "
+      + "you pick decides the length. Its job is comments and conversation, which the platforms reward with more "
+      + "reach. Brief tip: pick a question people can answer without having read the book.",
+  },
+  video_script: {
+    short: "Script for a 30-60 second vertical video: hook, scenes, voice-over, caption.",
+    detail: "For Instagram Reels, TikTok and YouTube Shorts. You film or assemble it yourself from the scenes "
+      + "(visual, voice-over, on-screen text). Brief tip: the first 3 seconds decide everything, so give it a surprising angle.",
+  },
+  youtube_video: {
+    short: "Title options, description, chapters and tags for a longer YouTube video.",
+    detail: "Not the video itself, but everything around it that helps people find it: titles, the description, "
+      + "timestamps and tags. Brief tip: say what the video explains and for whom.",
+  },
+  newsletter: {
+    short: "An email section for your subscribers, with subject line and call to action.",
+    detail: "For your mailing list (e.g. Mailchimp, Brevo, Substack). Email reaches everyone on the list, unlike "
+      + "social media. Brief tip: one topic per email and one clear call to action.",
+  },
+  lead_magnet: {
+    short: "Outline of a free guide people get for their email address.",
+    detail: "Builds your mailing list: a social post or ad links to a sign-up page, the reader gets the guide, then "
+      + "your newsletter. You get the outline (title, promise, points with sources) and write the guide (3-10 pages) from it.",
+  },
+  persona: {
+    short: "A profile of your ideal reader: who they are, what they want, where to find them.",
+    detail: "Not for publishing: it helps you aim everything else. Put what you learn into \"Target audience\" of the "
+      + "other formats.",
+  },
+};
 
 /**
  * Human-readable label of an asset type, e.g. "social_post" → "Social post".
@@ -490,14 +570,16 @@ export function platformFromUrl(url: string): DiscussionPlatform | null {
   return hosts.find(([, names]) => names.some((n) => host === n || host.endsWith(`.${n}`)))?.[0] ?? null;
 }
 
-/** True for asset types made for a platform (a platform is chosen instead of a length): posts, replies, video scripts. */
+/** True for asset types made for a platform (a platform is chosen instead of a length): posts, replies,
+ * reader questions, video scripts. */
 export function usesPlatform(type: AssetType) {
-  return type === "social_post" || type === "social_reply" || type === "video_script";
+  return type === "social_post" || type === "social_reply" || type === "reader_question" || type === "video_script";
 }
 
-/** True for asset types whose text is checked against the platform's character limit (posts and replies). */
+/** True for asset types whose text is checked against the platform's character limit (posts, reader questions,
+ * replies). */
 export function hasCharLimit(type: AssetType) {
-  return type === "social_post" || type === "social_reply";
+  return type === "social_post" || type === "social_reply" || type === "reader_question";
 }
 
 /**
@@ -616,6 +698,30 @@ async function send(path: string, init?: RequestInit): Promise<Response> {
 export async function fileBlobUrl(path: string) {
   const res = await send(path);
   return URL.createObjectURL(await res.blob());
+}
+
+/** File formats of the asset export: CSV with commas, CSV with semicolons (Excel, German locale), Markdown. */
+export type ExportFormat = "csv" | "csv_semicolon" | "md";
+
+/**
+ * Download the project's assets as a file (GET /assets/export) and save it under the name the server gives
+ * (e.g. "assets-social-post-2026-11-16.csv").
+ * @param format File format.
+ * @param filters Only this asset type and/or book (both optional).
+ */
+export async function downloadAssets(format: ExportFormat, filters: { asset_type?: AssetType; source_id?: string } = {}) {
+  const query = new URLSearchParams({ format });
+  if (filters.asset_type) query.set("asset_type", filters.asset_type);
+  if (filters.source_id) query.set("source_id", filters.source_id);
+  const res = await send(`/projects/${await projectId()}/assets/export?${query}`);
+  const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? `assets.${format === "md" ? "md" : "csv"}`;
+  const url = URL.createObjectURL(await res.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return name;
 }
 
 /**
@@ -755,8 +861,20 @@ export const api = {
   generate: async (body: GenerateRequest) => request<Asset>(`/projects/${await projectId()}/generate`, postJson(body)),
   /** POST /projects/{id}/campaigns: generate a zero-shot campaign kit (3 personas, 5 posts, 1 blurb); takes some seconds. */
   createCampaign: async (body: CampaignRequest) => request<CampaignResponse>(`/projects/${await projectId()}/campaigns`, postJson(body)),
-  /** GET /projects/{id}/assets: all generated assets of the current project, oldest first. */
-  listAssets: async () => request<Asset[]>(`/projects/${await projectId()}/assets`),
+  /** DELETE /projects/{id}/campaigns/{campaignId}: delete a whole campaign kit (all of its assets). */
+  deleteCampaign: async (campaignId: string) =>
+    request<void>(`/projects/${await projectId()}/campaigns/${campaignId}`, { method: "DELETE" }),
+  /** GET /projects/{id}/campaigns: one page of campaign kits (summaries only), newest first. */
+  listCampaigns: async (limit: number, offset = 0) =>
+    request<CampaignPage>(`/projects/${await projectId()}/campaigns?limit=${limit}&offset=${offset}`),
+  /** GET /projects/{id}/campaigns/{campaignId}: the assets of one kit, in the order they were made. */
+  getCampaign: async (campaignId: string) => request<Asset[]>(`/projects/${await projectId()}/campaigns/${campaignId}`),
+  /** GET /projects/{id}/assets: the generated assets of the current project, oldest first; all, or only those
+   * matching the filters. */
+  listAssets: async (filters: AssetFilters = {}) => {
+    const query = new URLSearchParams(Object.entries(filters).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)]));
+    return request<Asset[]>(`/projects/${await projectId()}/assets${query.size ? `?${query}` : ""}`);
+  },
   /** PATCH /assets/{assetId}: replace an asset's text with the user's edited version. */
   updateAsset: (assetId: string, text: string) =>
     request<Asset>(`/assets/${assetId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }),

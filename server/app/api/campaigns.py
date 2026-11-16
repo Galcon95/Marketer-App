@@ -1,15 +1,16 @@
-"""Campaign Builder (Phase 2): zero-shot campaign kits (3 personas, 5 posts, 1 blurb)."""
+"""Campaign Builder (Phase 2): zero-shot campaign kits (3 personas, 5 posts, 1 blurb): create one, delete one."""
 
+import re
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import check_sources, checked_optional, checked_text, llm_limits, owned_project
 from app.campaign import kit
 from app.core import state as db
 from app.core.config import LLM_MODEL
 from app.core.llm import GenerationError
-from app.core.schemas import Asset, CampaignRequest, CampaignResponse
+from app.core.schemas import Asset, CampaignPage, CampaignRequest, CampaignResponse, CampaignSummary
 from app.db import records
 
 router = APIRouter()
@@ -73,6 +74,76 @@ def create_campaign(project_id: str, body: CampaignRequest):
     db.assets.update((asset.id, asset) for asset in kit_assets)
     return CampaignResponse(campaign_id=campaign_id, personas=personas, posts=posts, blurb=blurb,
                             tokens=result.get("tokens", 0))
+
+
+@router.get("/projects/{project_id}/campaigns", response_model=CampaignPage, dependencies=[Depends(owned_project)])
+def list_campaigns(project_id: str, limit: int = Query(10, ge=1, le=100), offset: int = Query(0, ge=0)):
+    """One page of the project's campaign kits, newest first: one summary row each, without the assets' texts,
+    so the list stays small with many kits (GET .../campaigns/{campaign_id} loads one kit's assets).
+
+    Args:
+        project_id: Id of the project (path parameter). 404 if unknown or not the user's.
+        limit: Kits per page (1-100).
+        offset: Kits to skip (the newest first).
+    """
+    kits: dict[str, list[Asset]] = {}
+    for asset in db.assets.values():
+        if asset.project_id == project_id and asset.campaign_id:
+            kits.setdefault(asset.campaign_id, []).append(asset)
+    rows = sorted((_summary(cid, assets) for cid, assets in kits.items()), key=lambda r: r.created_at, reverse=True)
+    return CampaignPage(items=rows[offset:offset + limit], total=len(rows))
+
+
+@router.get("/projects/{project_id}/campaigns/{campaign_id}", response_model=list[Asset],
+            dependencies=[Depends(owned_project)])
+def get_campaign(project_id: str, campaign_id: str):
+    """The assets of one campaign kit in the order they were made (personas, posts, blurb).
+
+    Raises:
+        HTTPException: 404 if the project has no asset of this campaign.
+    """
+    assets = _kit(project_id, campaign_id)
+    if not assets:
+        raise HTTPException(404, f"Campaign '{campaign_id}' not found")
+    return assets
+
+
+@router.delete("/projects/{project_id}/campaigns/{campaign_id}", status_code=204, dependencies=[Depends(owned_project)])
+def delete_campaign(project_id: str, campaign_id: str):
+    """Delete a whole campaign kit: every asset of the project with this campaign_id, in one transaction.
+
+    Args:
+        project_id: Id of the project (path parameter). 404 if unknown or not the user's.
+        campaign_id: Id of the campaign (path parameter), e.g. "cmp_1a2b3c4d".
+
+    Raises:
+        HTTPException: 404 if the project has no asset of this campaign; 500 if they cannot be deleted
+            (then all of them are kept).
+    """
+    ids = [a.id for a in _kit(project_id, campaign_id)]
+    if not ids:
+        raise HTTPException(404, f"Campaign '{campaign_id}' not found")
+    try:
+        records.delete_assets(ids)
+    except OSError as e:  # DatabaseError
+        raise HTTPException(500, "The campaign could not be deleted, please try again.") from e
+    for asset_id in ids:
+        db.assets.pop(asset_id, None)
+
+
+def _kit(project_id: str, campaign_id: str) -> list[Asset]:
+    """The project's assets of this campaign, oldest first ([] for an unknown campaign)."""
+    return sorted((a for a in db.assets.values() if a.project_id == project_id and a.campaign_id == campaign_id),
+                  key=lambda a: a.created_at)
+
+
+def _summary(campaign_id: str, assets: list[Asset]) -> CampaignSummary:
+    """The list row of one kit; its title comes from the brief's first line ('Book: "Title" by Author')."""
+    first = min(assets, key=lambda a: a.created_at)
+    title = re.match(r'Book: "([^"]+)"', first.brief)
+    return CampaignSummary(campaign_id=campaign_id, title=title.group(1) if title else "Campaign",
+                           source_id=first.source_ids[0] if first.source_ids else None, created_at=first.created_at,
+                           tokens=sum(a.tokens for a in assets), asset_count=len(assets), audience=first.audience)
 
 
 MAX_THEMES = 10

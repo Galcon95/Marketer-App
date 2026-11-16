@@ -64,7 +64,7 @@ export default function FacebookNewPost({ bookId, facebook, onChange }: {
         grounded: true,
         tone: (String(f.get("tone") ?? "") || "neutral") as Tone,
         humanize: Number(f.get("humanize") || 80),
-        ...(kind === "social_post" ? { platform: "facebook" as const } : {}),
+        platform: "facebook", // both kinds are published on the Page
         ...(bookId ? { source_ids: [bookId] } : {}),
       });
       setWritten((ids) => [asset.id, ...ids]);

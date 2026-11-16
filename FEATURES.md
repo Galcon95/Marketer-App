@@ -391,7 +391,8 @@ Three layers, all in code and on every request (never left to the model):
 ### Frontend / UI
 - Next.js app shell: a login page; a sidebar with pipeline and library navigation, the current client and system status. Phase tabs, a mobile menu, a light/dark theme toggle, the usage drawer and the MCP keys panel.
 - Uses the **BookCraft design system** (`app-design-system/`): tokens, a Tailwind preset, React primitives, web components and component docs.
-- Not built yet: the sidebar's Asset Library, Audiences and Settings pages, and the Export button (disabled).
+- Not built yet: the sidebar's Asset Library, Audiences and Settings pages.
+- **Export** (top bar): download the assets as CSV (comma, or semicolon for Excel with German settings; text without citation markers, sources in their own column) or Markdown, all or one book and/or one asset type, newest first (`GET /projects/{id}/assets/export`).
 
 ---
 

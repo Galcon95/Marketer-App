@@ -161,8 +161,7 @@ def create_asset(project_id: str, req: GenerateRequest) -> Asset:
         tone=req.tone,
         length=req.length,
         audience=req.audience,
-        platform=("facebook" if req.asset_type == "reader_question"
-                  else req.platform if req.asset_type in ("social_post", "social_reply", "video_script") else None),
+        platform=req.platform if req.asset_type in ("social_post", "social_reply", "reader_question", "video_script") else None,
         source_ids=req.source_ids or [],
         reply_to=req.reply_to,
         search_query=result.get("query", ""),
@@ -221,14 +220,12 @@ def build_instructions(req: GenerateRequest) -> str:
     Target audience: urban planners."
     """
     template = ASSET_INSTRUCTIONS[req.asset_type]
-    if req.asset_type == "social_post":
+    if req.asset_type in ("social_post", "reader_question"):
         text = template.format(platform=PLATFORM_POST[req.platform])
     elif req.asset_type == "social_reply":
         text = template.format(platform=PLATFORM_REPLY[req.platform])
     elif req.asset_type == "video_script":
         text = template.format(platform=PLATFORM_VIDEO[req.platform])
-    elif req.asset_type == "reader_question":
-        text = template
     else:
         text = template.format(size=SIZES[req.asset_type][LENGTH_INDEX[req.length]])
     if TONES[req.tone]:
@@ -258,7 +255,7 @@ def emojis_are_normal(req: GenerateRequest) -> bool:
     """True for formats where several emojis are normal: Instagram and TikTok posts/replies, and short video scripts."""
     if req.asset_type == "video_script":
         return True
-    return req.asset_type in ("social_post", "social_reply") and req.platform in ("instagram", "tiktok")
+    return req.asset_type in POST_TYPES and req.platform in ("instagram", "tiktok")
 
 
 def build_request(req: GenerateRequest) -> str:

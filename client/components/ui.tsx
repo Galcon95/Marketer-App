@@ -4,7 +4,7 @@
  */
 import { useEffect, useRef, useState, type ComponentPropsWithRef, type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
-import { AlertTriangle, ChevronDown, Megaphone, RefreshCw, Search, UserRound, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, Info, Megaphone, RefreshCw, Search, UserRound, X } from "lucide-react";
 
 /**
  * Join CSS class names, skipping falsy values, so classes can be added conditionally.
@@ -93,12 +93,20 @@ export function Card({ title, icon: Icon, meta, actions, flush, className, child
 }
 
 /* ---------- Field ---------- */
+/** One choice of a select box: a plain string, or value and label (optionally disabled). */
+type Option = string | { value: string; label: string; disabled?: boolean };
+/** A select box's <option> for one choice. */
+function optionEl(o: Option) {
+  const { value, label, disabled } = typeof o === "string" ? { value: o, label: o, disabled: false } : o;
+  return <option key={value} value={value} disabled={disabled}>{label}</option>;
+}
 /** Props of Field. Fields are uncontrolled: read their values from the form with FormData via `name`. */
 interface FieldProps {
   label?: string; // visible label above the control
   name?: string; // form field name, also used to build the element id
   as?: "input" | "textarea" | "select" | "search"; // which control to render, default "input"
-  options?: Array<string | { value: string; label: string; disabled?: boolean }>; // choices for as="select"
+  options?: Option[]; // choices for as="select"
+  groups?: Array<{ label: string; options: Option[] }>; // choices for as="select" in option groups (instead of options)
   rows?: number; // height of as="textarea", default 3
   placeholder?: string;
   defaultValue?: string;
@@ -111,7 +119,7 @@ interface FieldProps {
  * Derives a stable element id from name/label/placeholder to link the <label> to the control.
  * @param props See FieldProps.
  */
-export function Field({ label, name, as = "input", options = [], rows = 3, placeholder, defaultValue, required, hint, onChange }: FieldProps) {
+export function Field({ label, name, as = "input", options = [], groups, rows = 3, placeholder, defaultValue, required, hint, onChange }: FieldProps) {
   const id = `f-${(name ?? label ?? placeholder ?? "field").replace(/\W+/g, "-").toLowerCase()}`;
   const handleChange = onChange && ((e: { target: { value: string } }) => onChange(e.target.value));
   const base = { id, name, placeholder, defaultValue, required, onChange: handleChange };
@@ -121,10 +129,9 @@ export function Field({ label, name, as = "input", options = [], rows = 3, place
     control = (
       <div className="bc-select-wrap">
         <select {...base} className="bc-select">
-          {options.map((o) => {
-            const { value, label: text, disabled } = typeof o === "string" ? { value: o, label: o, disabled: false } : o;
-            return <option key={value} value={value} disabled={disabled}>{text}</option>;
-          })}
+          {groups
+            ? groups.map((g) => <optgroup key={g.label} label={g.label}>{g.options.map(optionEl)}</optgroup>)
+            : options.map(optionEl)}
         </select>
         <ChevronDown size={16} className="bc-ico" aria-hidden />
       </div>
@@ -158,23 +165,55 @@ export function Field({ label, name, as = "input", options = [], rows = 3, place
  * @param defaultValue Initial value.
  * @param describe Optional text for a value, e.g. 80 → "Very human".
  * @param hint Small help text below the slider.
+ * @param tip Help text behind an ⓘ next to the label (shown on hover or focus) instead of a line below.
+ * @param ends Words under both ends of the slider, e.g. ["Polished", "Casual"].
  */
-export function RangeField({ name, label, min = 0, max = 100, step = 5, defaultValue, describe, hint }: {
+export function RangeField({ name, label, min = 0, max = 100, step = 5, defaultValue, describe, hint, tip, ends }: {
   name: string; label: string; min?: number; max?: number; step?: number; defaultValue: number;
-  describe?: (value: number) => string; hint?: string;
+  describe?: (value: number) => string; hint?: string; tip?: string; ends?: [string, string];
 }) {
   const [value, setValue] = useState(defaultValue);
   const id = `f-${name}`;
   return (
     <div className="bc-field">
-      <label className="bc-label" htmlFor={id} style={{ display: "flex", justifyContent: "space-between" }}>
-        <span>{label}</span>
-        <span className="bc-mono">{value}{describe ? ` · ${describe(value)}` : ""}</span>
-      </label>
+      <div className="bc-range-head">
+        <label className="bc-label" htmlFor={id}>{label}</label>
+        {tip && <span className="bc-tip" tabIndex={0} title={tip} aria-label={tip}><Info size={13} aria-hidden /></span>}
+        <span className="bc-mono bc-range-value">{value}{describe ? ` · ${describe(value)}` : ""}</span>
+      </div>
       <input id={id} name={name} type="range" min={min} max={max} step={step} value={value}
         onChange={(e) => setValue(Number(e.target.value))} style={{ width: "100%", accentColor: "var(--accent)" }} />
+      {ends && <div className="bc-range-ends" aria-hidden><span>{ends[0]}</span><span>{ends[1]}</span></div>}
       {hint && <span className="bc-hint">{hint}</span>}
     </div>
+  );
+}
+
+/* ---------- Segmented choice ---------- */
+/**
+ * A few choices as a row of joined buttons (radio buttons underneath, so it is uncontrolled and read with
+ * FormData via `name`, like Field). For short lists where seeing every choice beats opening a dropdown.
+ * @param name Form field name.
+ * @param label Visible label (the group's legend).
+ * @param options The choices, in order.
+ * @param defaultValue The choice selected at first (default: the first one).
+ */
+export function Segmented({ name, label, options, defaultValue }: {
+  name: string; label: string; options: Array<{ value: string; label: string }>; defaultValue?: string;
+}) {
+  const initial = defaultValue ?? options[0]?.value;
+  return (
+    <fieldset className="bc-field bc-seg-field">
+      <legend className="bc-label">{label}</legend>
+      <div className="bc-seg">
+        {options.map((o) => (
+          <label key={o.value} className="bc-seg-opt">
+            <input type="radio" name={name} value={o.value} defaultChecked={o.value === initial} />
+            <span>{o.label}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
   );
 }
 

@@ -1,11 +1,14 @@
 """Generated assets: single-asset generation (grounded or zero-shot) and asset management."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from app.api.deps import check_sources, checked_optional, checked_text, llm_limits, owned_asset, owned_project
+from app.core import export
 from app.core import state as db
 from app.core.llm import GenerationError
-from app.core.schemas import Asset, AssetUpdate, GenerateRequest
+from app.core.schemas import Asset, AssetType, AssetUpdate, GenerateRequest
 from app.db import records
 from app.rag import generation
 
@@ -53,13 +56,55 @@ def generate(project_id: str, body: GenerateRequest):
 
 
 @router.get("/projects/{project_id}/assets", response_model=list[Asset], dependencies=[Depends(owned_project)])
-def list_assets(project_id: str):
-    """List all generated assets of a project.
+def list_assets(project_id: str, asset_type: AssetType | None = None, source_id: str | None = None,
+                grounded: bool | None = None, in_campaign: bool | None = None,
+                limit: int | None = Query(None, ge=1, le=1000)):
+    """List the generated assets of a project, oldest first; every filter is optional.
 
     Args:
         project_id: Id of the project (path parameter). 404 if unknown.
+        asset_type: Only this type, e.g. "persona".
+        source_id: Only assets made for this book.
+        grounded: Only grounded (true) or only zero-shot (false) assets.
+        in_campaign: Only assets of campaign kits (true) or only those outside any kit (false).
+        limit: At most this many, the newest (still listed oldest first).
     """
-    return [a for a in db.assets.values() if a.project_id == project_id]
+    assets = [a for a in db.assets.values() if a.project_id == project_id
+              and (asset_type is None or a.asset_type == asset_type)
+              and (source_id is None or source_id in a.source_ids)
+              and (grounded is None or a.grounded == grounded)
+              and (in_campaign is None or bool(a.campaign_id) == in_campaign)]
+    return assets[-limit:] if limit else assets
+
+
+@router.get("/projects/{project_id}/assets/export", dependencies=[Depends(owned_project)],
+            responses={200: {"content": {"text/csv": {}, "text/markdown": {}}}})
+def export_assets(project_id: str, format: Literal["csv", "csv_semicolon", "md"] = "csv",
+                  asset_type: AssetType | None = None, source_id: str | None = None):
+    """Download the project's assets as a file, newest first, optionally only one type and/or one book.
+
+    Args:
+        project_id: Id of the project (path parameter). 404 if unknown or not the user's.
+        format: "csv" (comma: Google Sheets, scheduling tools), "csv_semicolon" (Excel with a German locale) or
+            "md" (Markdown, to read and edit).
+        asset_type: Only this type.
+        source_id: Only assets made for this book.
+
+    Raises:
+        HTTPException: 404 if no asset matches.
+    """
+    assets = list(reversed(list_assets(project_id, asset_type=asset_type, source_id=source_id, limit=None)))
+    if not assets:
+        raise HTTPException(404, "No assets match these filters.")
+    day = db.now().strftime("%Y-%m-%d")
+    name = "-".join(p for p in ["assets", asset_type or "", day] if p).replace("_", "-")
+    if format == "md":
+        body = export.to_markdown(assets, title=f"Marketing assets ({export.TYPE_LABELS.get(asset_type, 'all types')})")
+        media, name = "text/markdown; charset=utf-8", f"{name}.md"
+    else:
+        body = export.to_csv(assets, delimiter=";" if format == "csv_semicolon" else ",")
+        media, name = "text/csv; charset=utf-8", f"{name}.csv"
+    return Response(body, media_type=media, headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @router.get("/assets/{asset_id}", response_model=Asset)

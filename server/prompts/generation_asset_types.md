@@ -37,7 +37,7 @@ a lead magnet outline: a compelling title, a one-sentence promise, and {size} bu
 
 ## reader_question
 
-a post for the book's own Facebook Page that asks its readers ONE open question drawn from the book: start with 2-4 short sentences that present an idea, claim or scene from the excerpts (cited), then ask one clear question people can answer from their own view or experience, without having read the book. 40-100 words, conversational. Write as the book's author in the first person, talking to their readers (e.g. "In my book I argue ...", "While writing chapter 3 I kept asking myself ..."); never refer to the book in the third person (not "the book discusses", "the text states", "the author argues"). End with the question. No sales pitch, no "link in bio", at most one hashtag.
+a post on the author's own account that asks the readers ONE open question drawn from the book, {platform}. Start with 1-4 short sentences that present an idea, claim or scene from the excerpts (cited), then ask one clear question people can answer from their own view or experience, without having read the book. Conversational. Write as the book's author in the first person, talking to their readers (e.g. "In my book I argue ...", "While writing chapter 3 I kept asking myself ..."); never refer to the book in the third person (not "the book discusses", "the text states", "the author argues"). The post text ends with the question. No sales pitch, no "link in bio".
 
 ## persona
 

@@ -2,19 +2,19 @@
 
 /**
  * The grounded asset generator (Content Studio, "Single asset"): writes a blurb, post, reply, video script,
- * newsletter, ad copy, lead magnet, persona or question for the readers of the author's Facebook Page from the books, with citations (POST /generate), and lists the
- * generated assets of the selected type below the form.
+ * newsletter, ad copy, lead magnet, persona or question for the author's readers from the books, with citations (POST /generate), and lists the
+ * generated assets of the selected type: settings on the left, brief and results on the right.
  */
 
-import { useState, type SubmitEvent } from "react";
-import { Sparkles } from "lucide-react";
+import { useState, type KeyboardEvent, type SubmitEvent } from "react";
+import { Info, Sparkles } from "lucide-react";
 import {
-  api, ASSET_TYPES, assetTypeLabel, errorMessage, humanizeLabel, LENGTHS, PLANNED_ASSET_TYPES, PLATFORMS, TONES, usesPlatform,
+  api, ASSET_TYPE_GROUPS, ASSET_TYPE_INFO, assetTypeLabel, errorMessage, humanizeLabel, LENGTHS, PLATFORMS, TONES, usesPlatform,
   type AssetType, type Length, type Platform, type Tone,
 } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import AssetCard from "./AssetCard";
-import { Button, Card, ErrorNote, Field, Placeholder, RangeField, SectionHeading } from "./ui";
+import { Button, Card, ErrorNote, Field, Placeholder, RangeField, SectionHeading, Segmented } from "./ui";
 
 /** Example brief per asset type, shown as the brief's placeholder (for replies: the optional angle). */
 const BRIEF_EXAMPLES: Record<AssetType, string> = {
@@ -32,7 +32,7 @@ const BRIEF_EXAMPLES: Record<AssetType, string> = {
 
 /**
  * Form for grounded (RAG) generation plus the list of grounded assets, newest first.
- * Options adapt to the asset type: social posts, replies and video scripts choose a platform (which
+ * Options adapt to the asset type: social posts, replies, reader questions and video scripts choose a platform (which
  * decides length and style), other types a length; replies take the post to answer plus an optional
  * angle, all other types a brief (with an example that fits the type). With a book selected, it
  * generates from that book only and lists only that book's assets. The list shows the selected asset
@@ -49,11 +49,12 @@ export default function GroundedGenerator({ refresh, bookId, onChange }: {
   // The author's Facebook Page, for the Publish button on Facebook posts (403 for anyone but the admin: no button).
   const facebook = useApi("facebook-status", api.facebookStatus);
   const [assetType, setAssetType] = useState<AssetType>("blurb"); // decides which fields are shown
+  const [showInfo, setShowInfo] = useState(false); // the longer "what is it for" text under the asset type
   const [allTypes, setAllTypes] = useState(false); // list assets of every type, not only the selected one
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isReply = assetType === "social_reply";
-  const isReaderQuestion = assetType === "reader_question"; // always for Facebook: no platform, no length
+  const isReaderQuestion = assetType === "reader_question"; // its platform starts at Facebook (the Page)
 
   /** Form submit: request a grounded asset with the chosen type, options and brief (or post + angle). */
   async function submit(e: SubmitEvent<HTMLFormElement>) {
@@ -71,8 +72,7 @@ export default function GroundedGenerator({ refresh, bookId, onChange }: {
         audience: get("audience"),
         humanize: Number(get("humanize") || 60),
         ...(bookId ? { source_ids: [bookId] } : {}),
-        ...(usesPlatform(assetType) ? { platform: get("platform") as Platform }
-          : isReaderQuestion ? {} : { length: get("length") as Length }),
+        ...(usesPlatform(assetType) ? { platform: get("platform") as Platform } : { length: get("length") as Length }),
         ...(isReply ? { reply_to: get("reply_to") } : {}),
       });
       onChange();
@@ -91,60 +91,87 @@ export default function GroundedGenerator({ refresh, bookId, onChange }: {
   const shown = allTypes ? grounded : grounded.filter((a) => a.asset_type === assetType);
   const typeLabel = assetTypeLabel(assetType).replace(/\s*\(.*\)$/, ""); // "YouTube video page (titles · …)" → "YouTube video page"
 
+  /** Ctrl+Enter (Cmd+Enter on a Mac) in any field generates, like the button. */
+  function onKeyDown(e: KeyboardEvent<HTMLFormElement>) {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !pending) {
+      e.preventDefault();
+      e.currentTarget.requestSubmit();
+    }
+  }
+
+  // Two columns (bc-studio): the settings on the left stay in view; brief, button and results on the right.
   return (
-    <div className="bc-stack" style={{ gap: 16 }}>
-      <SectionHeading icon={Sparkles} title="Grounded asset generator" count={shown.length}>
-        {grounded.length > 0 && (
-          <Button size="sm" variant="ghost" onClick={() => setAllTypes(!allTypes)}
-            title={allTypes ? `List only ${typeLabel} assets` : "List the assets of every type"}>
-            {allTypes ? `Only ${typeLabel}` : `Show all types (${grounded.length})`}
-          </Button>
-        )}
-      </SectionHeading>
-      <Card>
-        <form className="bc-stack" onSubmit={submit}>
-          <Field name="asset_type" as="select" label="Asset type" options={[...ASSET_TYPES, ...PLANNED_ASSET_TYPES]}
-            onChange={(value) => setAssetType(value as AssetType)} />
-          <div className="bc-row" style={{ gap: 12, alignItems: "flex-start" }}>
-            <div style={{ flex: 1, minWidth: 140 }}>
+    <div className="bc-studio">
+      <form onSubmit={submit} onKeyDown={onKeyDown}>
+        <div className="bc-studio-side">
+          <Card>
+            <div className="bc-stack">
+              <div className="bc-stack" style={{ gap: 6 }}>
+                <Field name="asset_type" as="select" label="Asset type" groups={ASSET_TYPE_GROUPS}
+                  onChange={(value) => { setAssetType(value as AssetType); setShowInfo(false); }} />
+                <p className="bc-type-info">
+                  {ASSET_TYPE_INFO[assetType].short}{" "}
+                  <button type="button" className="bc-tip" aria-expanded={showInfo} onClick={() => setShowInfo(!showInfo)}
+                    title={showInfo ? "Less" : "What is it for?"} aria-label="What is it for?">
+                    <Info size={13} aria-hidden />
+                  </button>
+                </p>
+                {showInfo && <p className="bc-type-detail">{ASSET_TYPE_INFO[assetType].detail}</p>}
+              </div>
               {usesPlatform(assetType)
-                ? <Field name="platform" as="select" label="Platform" options={PLATFORMS} />
-                : isReaderQuestion
-                  ? <div className="bc-field"><span className="bc-label">Platform</span>
-                      <span className="bc-hint" style={{ margin: 0 }}>Your Facebook Page: 40-100 words, ends with the question.</span></div>
-                  : <Field name="length" as="select" label="Length" options={LENGTHS} defaultValue="standard" />}
-            </div>
-            <div style={{ flex: 1, minWidth: 140 }}>
+                ? <Field key={`platform-${isReaderQuestion}`} name="platform" as="select" label="Platform"
+                    options={PLATFORMS} defaultValue={isReaderQuestion ? "facebook" : undefined} />
+                : <Segmented name="length" label="Length" options={LENGTHS} defaultValue="standard" />}
               <Field name="tone" as="select" label="Tone" options={TONES} />
+              <Field name="audience" label="Target audience (optional)" placeholder="e.g. young urban planners" />
+              <RangeField name="humanize" label="How human?" defaultValue={60} describe={humanizeLabel}
+                ends={["Polished", "Casual"]}
+                tip="Higher = less typical AI wording. From 60 on, posts and replies always go through the humanizer; other formats when AI clichés are found." />
             </div>
-          </div>
-          <Field name="audience" label="Target audience (optional)" placeholder="e.g. young urban planners" />
-          <RangeField name="humanize" label="How human should it sound?" defaultValue={60} describe={humanizeLabel}
-            hint="Higher = less typical AI wording. From 60 on, posts and replies always go through the humanizer; other formats when AI clichés are found." />
-          {isReply && (
-            <Field name="reply_to" as="textarea" label="Their post" rows={5} required
-              placeholder="Paste the post you want to reply to" />
+          </Card>
+        </div>
+        <div className="bc-studio-brief">
+          <Card>
+            <div className="bc-stack">
+              {isReply && (
+                <Field name="reply_to" as="textarea" label="Their post" rows={5} required
+                  placeholder="Paste the post you want to reply to" />
+              )}
+              {/* key: a new asset type starts with an empty brief instead of the text written for the previous type. */}
+              <Field key={`brief-${assetType}`} name="brief" as="textarea" label={isReply ? "Your angle (optional)" : "Brief"}
+                rows={isReply ? 3 : 5} placeholder={BRIEF_EXAMPLES[assetType]} required={!isReply} />
+              <div className="bc-studio-actions">
+                <span className="bc-kbd">Ctrl + Enter</span>
+                <Button type="submit" icon={Sparkles} loading={pending}>
+                  {pending ? "Generating…" : isReply ? "Generate reply from sources" : "Generate from sources"}
+                </Button>
+              </div>
+              {error && <ErrorNote>{error}</ErrorNote>}
+            </div>
+          </Card>
+        </div>
+      </form>
+      <div className="bc-studio-results">
+        <SectionHeading icon={Sparkles} title="Grounded assets" count={shown.length}>
+          {grounded.length > 0 && (
+            <Button size="sm" variant="ghost" onClick={() => setAllTypes(!allTypes)}
+              title={allTypes ? `List only ${typeLabel} assets` : "List the assets of every type"}>
+              {allTypes ? `Only ${typeLabel}` : `Show all types (${grounded.length})`}
+            </Button>
           )}
-          {/* key: a new asset type starts with an empty brief instead of the text written for the previous type. */}
-          <Field key={`brief-${assetType}`} name="brief" as="textarea" label={isReply ? "Your angle (optional)" : "Brief"}
-            rows={3} placeholder={BRIEF_EXAMPLES[assetType]} required={!isReply} />
-          <Button type="submit" icon={Sparkles} loading={pending}>
-            {pending ? "Generating…" : isReply ? "Generate reply from sources" : "Generate from sources"}
-          </Button>
-          {error && <ErrorNote>{error}</ErrorNote>}
-        </form>
-      </Card>
-      {assets.error ? (
-        <ErrorNote>{assets.error}</ErrorNote>
-      ) : shown.length ? (
-        shown.map((a) => <AssetCard key={a.id} asset={a} onChange={onChange} facebook={facebook.data} />)
-      ) : (
-        <Placeholder icon={Sparkles}>
-          {assets.loading ? "Loading…"
-            : allTypes || !grounded.length ? "Grounded assets with citations will appear here."
-            : `No ${typeLabel} yet${bookId ? " for this book" : ""}. Generate one above, or show all types.`}
-        </Placeholder>
-      )}
+        </SectionHeading>
+        {assets.error ? (
+          <ErrorNote>{assets.error}</ErrorNote>
+        ) : shown.length ? (
+          shown.map((a) => <AssetCard key={a.id} asset={a} onChange={onChange} facebook={facebook.data} />)
+        ) : (
+          <Placeholder icon={Sparkles}>
+            {assets.loading ? "Loading…"
+              : allTypes || !grounded.length ? "Grounded assets with citations will appear here."
+              : `No ${typeLabel} yet${bookId ? " for this book" : ""}. Generate one, or show all types.`}
+          </Placeholder>
+        )}
+      </div>
     </div>
   );
 }

@@ -17,6 +17,7 @@ import { useApi } from "@/lib/useApi";
 import ContentStudio from "./phases/ContentStudio";
 import KnowledgeHub from "./phases/KnowledgeHub";
 import MarketIntelligence from "./phases/MarketIntelligence";
+import ExportDrawer from "./ExportDrawer";
 import KeysDrawer from "./KeysPanel";
 import UsageDrawer, { formatTokens, formatUsd } from "./UsagePanel";
 import { Badge, Button, Card, ErrorNote, Placeholder, SectionHeading, Sidebar, StatusRow, Tabs, type NavGroup, type TabItem } from "./ui";
@@ -154,6 +155,8 @@ export default function AppShell() {
   const closeUsage = useCallback(() => setUsageOpen(0), []);
   const [keysOpen, setKeysOpen] = useState(false); // the MCP keys panel
   const closeKeys = useCallback(() => setKeysOpen(false), []);
+  const [exportOpen, setExportOpen] = useState(false); // the asset export panel
+  const closeExport = useCallback(() => setExportOpen(false), []);
   const totals = usage.data?.totals;
   const p = project.data;
   const View = VIEWS[tab];
@@ -227,7 +230,8 @@ export default function AppShell() {
           </Button>
           <Button variant="secondary" size="sm" icon={KeyRound} onClick={() => setKeysOpen(true)}
             title="Personal API keys for the MCP servers (Claude Desktop and other tools)">Keys</Button>
-          <Button variant="secondary" size="sm" icon={FileText} disabled>Export</Button>
+          <Button variant="secondary" size="sm" icon={FileText} onClick={() => setExportOpen(true)}
+            title="Download your generated assets as CSV or Markdown">Export</Button>
           <Button variant="ghost" size="sm" icon={LogOut} onClick={signOut} title={me.data ? `Signed in as ${me.data.email}` : undefined}>
             Log out
           </Button>
@@ -243,6 +247,7 @@ export default function AppShell() {
       </main>
       {usageOpen > 0 && <UsageDrawer openCount={usageOpen} onClose={closeUsage} admin={me.data?.admin} />}
       {keysOpen && <KeysDrawer onClose={closeKeys} />}
+      {exportOpen && <ExportDrawer onClose={closeExport} />}
       <Button variant="secondary" size="sm" icon={theme === "dark" ? Sun : theme === "light" ? Moon : SunMoon}
         className="theme-toggle" onClick={toggleTheme} aria-label="Switch between light and dark theme">
         {theme === "dark" ? "Light mode" : theme === "light" ? "Dark mode" : "Theme"}

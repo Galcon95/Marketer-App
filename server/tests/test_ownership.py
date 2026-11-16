@@ -41,7 +41,7 @@ def app(monkeypatch):
         source_id="src_a", summary="s", themes=[], chapters=[], model="m", tokens=0, created_at=NOW)})
     monkeypatch.setattr(db, "assets", {"ast_a": Asset(
         id="ast_a", project_id=PROJECT, asset_type="blurb", grounded=False, brief="b", text="t", citations=[],
-        created_at=NOW)})
+        created_at=NOW, campaign_id="cmp_a")})
     monkeypatch.setattr(db, "conversations", {"cnv_a": Conversation(
         id="cnv_a", project_id=PROJECT, title="q", created_at=NOW, updated_at=NOW)})
     app = FastAPI()
@@ -67,6 +67,9 @@ OWNER_ROUTES = [
     ("post", f"/projects/{PROJECT}/ask", {"question": "What is a garden city?"}),
     ("post", f"/projects/{PROJECT}/generate", {"asset_type": "blurb", "brief": "A blurb"}),
     ("post", f"/projects/{PROJECT}/campaigns", {"title": "T", "premise": "P"}),
+    ("get", f"/projects/{PROJECT}/campaigns", None),
+    ("get", f"/projects/{PROJECT}/campaigns/cmp_a", None),
+    ("delete", f"/projects/{PROJECT}/campaigns/cmp_a", None),
     ("get", f"/projects/{PROJECT}/discussions", None),
     ("post", f"/projects/{PROJECT}/discussions", {"source_id": "src_a", "discussion": "Can AI run a city?"}),
     ("get", "/sources/src_a", None),
@@ -115,6 +118,20 @@ def test_the_owner_reaches_their_own_things(app):
     assert owner.get("/assets/ast_a").status_code == 200
     assert owner.get("/conversations/cnv_a").status_code == 200
     assert owner.delete("/assets/ast_a").status_code == 204
+
+
+def test_the_owner_deletes_a_whole_campaign_and_nothing_else(app):
+    other = db.assets["ast_a"].model_copy(update={"id": "ast_b", "campaign_id": "cmp_b"})
+    single = db.assets["ast_a"].model_copy(update={"id": "ast_c", "campaign_id": ""})
+    db.assets["ast_a2"] = db.assets["ast_a"].model_copy(update={"id": "ast_a2"})
+    db.assets.update({"ast_b": other, "ast_c": single})
+    records.save_assets(list(db.assets.values()))
+    owner = client_for(app, OWNER)
+    assert owner.delete(f"/projects/{PROJECT}/campaigns/cmp_a").status_code == 204
+    assert set(db.assets) == {"ast_b", "ast_c"}
+    assert {a.id for a in records.load_assets().values()} >= {"ast_b", "ast_c"}
+    assert not {"ast_a", "ast_a2"} & {a.id for a in records.load_assets().values()}
+    assert owner.delete(f"/projects/{PROJECT}/campaigns/cmp_a").status_code == 404  # already gone
 
 
 @pytest.mark.parametrize(("path", "body"), [

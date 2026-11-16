@@ -88,7 +88,7 @@ app.add_middleware(
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=[logs.HEADER],  # so the client can read a response's request id
+    expose_headers=[logs.HEADER, "Content-Disposition"],  # request id; the file name of downloads (asset export)
 )
 # Added last = outermost: every request (API and MCP) gets its id first, and the id is on every response.
 app.add_middleware(logs.RequestIdMiddleware)
