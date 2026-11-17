@@ -3,6 +3,7 @@
     channel_info()                    the channel: name, subscribers, link
     recent_threads(comments)          the latest comment threads on the channel's videos, grouped by video
                                       (answered = the channel replied)
+    open_items(comments)              what waits for an answer: viewers' comments the channel has not answered
     list_replies(comment_id)          all replies under a top comment
     reply_to_comment(id, message)     a reply as the channel under a comment          (writes)
 
@@ -34,7 +35,8 @@ from typing import Any
 
 import httpx
 
-from app.core.schemas import YouTubeChannel, YouTubeComment, YouTubePublished, YouTubeThread, YouTubeVideo
+from app.core.schemas import (YouTubeChannel, YouTubeComment, YouTubeInboxItem, YouTubePublished, YouTubeThread,
+                              YouTubeVideo)
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +150,29 @@ def recent_threads(comments: int = 50) -> list[YouTubeThread]:
     return [YouTubeThread(video=videos.get(video_id) or _video(video_id, {}),
                           comments=sorted(items, key=lambda c: c.created_time, reverse=True))
             for video_id, items in by_video.items()]
+
+
+def open_items(comments: int = 50) -> list[YouTubeInboxItem]:
+    """What under the channel's videos waits for an answer, oldest first: viewers' comments the channel has not
+    answered in their thread (recent_threads). Comments without text are left out. A follow-up inside a thread comes
+    with the thread before it.
+
+    Args:
+        comments: How many of the latest comment threads to look at (1-100).
+    """
+    items = []
+    for thread in recent_threads(comments):
+        for c in thread.comments:
+            if c.from_channel or c.answered or not c.message.strip():
+                continue
+            top = c.parent_id or c.id
+            earlier = sorted((o for o in thread.comments if c.parent_id and o.id != c.id
+                              and (o.id == top or o.parent_id == top) and o.created_time <= c.created_time),
+                             key=lambda o: o.created_time)
+            items.append(YouTubeInboxItem(
+                id=c.id, reply_to=top, video=thread.video, message=c.message, author=c.author,
+                created_time=c.created_time, permalink_url=c.permalink_url, thread=earlier))
+    return sorted(items, key=lambda i: i.created_time)
 
 
 def list_replies(comment_id: str, video_id: str = "") -> list[YouTubeComment]:

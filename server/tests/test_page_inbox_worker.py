@@ -9,7 +9,7 @@ import pytest
 
 from app.agents import page_inbox_worker as worker_module
 from app.core import config
-from app.core.schemas import FacebookInboxItem, FacebookPost, TelegramUpdate
+from app.core.schemas import FacebookInboxItem, FacebookPost, TelegramUpdate, YouTubeInboxItem, YouTubeVideo
 
 inbox = worker_module.inbox
 NOW = datetime(2026, 11, 12, tzinfo=timezone.utc)
@@ -33,7 +33,8 @@ def env(monkeypatch):
     """A worker with fakes: `env.waiting` is the waiting run (thread id, message id) or None; `env.open` the Page's
     open items; what the worker did is recorded."""
     e = SimpleNamespace(said=[], answered=[], removed=[], started=[], resumed=[], waiting=None, open=[_item()],
-                        decided=set(), resume_result="posted", start_error=None, open_error=None, withdrawn=[])
+                        decided=set(), resume_result="posted", start_error=None, open_error=None, withdrawn=[],
+                        channel=None, youtube_open=[], youtube_error=None)
     monkeypatch.setattr(worker_module.telegram, "send_message",
                         lambda text, buttons=None, reply_to=None: e.said.append((text, reply_to)) or 1)
     monkeypatch.setattr(worker_module.telegram, "answer_button", lambda cid, text=None: e.answered.append(text))
@@ -45,6 +46,19 @@ def env(monkeypatch):
         return e.open
 
     monkeypatch.setattr(worker_module.facebook, "open_items", open_items)
+    monkeypatch.setattr(worker_module.facebook, "is_configured", lambda: True)
+
+    def channel_for_inbox():
+        if e.youtube_error:
+            raise e.youtube_error
+        return e.channel
+
+    def youtube_open_items(comments):
+        assert worker_module.youtube.is_configured()  # read inside as_channel
+        return e.youtube_open
+
+    monkeypatch.setattr(inbox, "channel_for_inbox", channel_for_inbox)
+    monkeypatch.setattr(worker_module.youtube, "open_items", youtube_open_items)
     monkeypatch.setattr(inbox, "waiting_run", lambda: e.waiting)
     monkeypatch.setattr(inbox, "is_open", lambda item: item.id not in e.decided)
 
@@ -91,7 +105,7 @@ def test_next_proposes_the_oldest_open_item(env):
 def test_next_with_nothing_new(env):
     env.open = []
     env.worker.handle(_text("/next"))
-    assert env.started == [] and env.said == [("Nothing new on your Page.", None)]
+    assert env.started == [] and env.said == [("Nothing new on your Page or channel.", None)]
 
 
 def test_next_while_a_proposal_waits(env):
@@ -231,6 +245,16 @@ def test_the_schedule_reports_an_error_once(env):
 
 
 # ---------- start on server startup ----------
+def test_started_without_a_facebook_page_for_youtube_alone(monkeypatch):
+    monkeypatch.setattr(worker_module.telegram, "is_configured", lambda: True)
+    monkeypatch.setattr(worker_module.facebook, "is_configured", lambda: False)
+    monkeypatch.setattr(config, "FACEBOOK_INBOX_BOOKS", ["src_1"])
+    monkeypatch.setattr(inbox, "inbox_books", lambda: ("prj", ["src_1"]))
+    started = []
+    monkeypatch.setattr(worker_module.InboxWorker, "start", lambda self: started.append(self))
+    assert worker_module.start_if_configured() is not None and len(started) == 1
+
+
 def test_not_started_without_configuration(monkeypatch):
     monkeypatch.setattr(config, "FACEBOOK_INBOX_BOOKS", [])
     started = []
@@ -263,4 +287,49 @@ def test_next_takes_back_an_answered_proposal_too(env):
     env.waiting = ("thread", 101)
     env.open = []
     env.worker.handle(_text("/next"))
-    assert env.withdrawn == [("thread", 101)] and env.said == [("Nothing new on your Page.", None)]
+    assert env.withdrawn == [("thread", 101)] and env.said == [("Nothing new on your Page or channel.", None)]
+
+
+# ---------- YouTube comments in the same inbox ----------
+def _video_item(id="UgxCOMMENT0000000001", minute=0):
+    return YouTubeInboxItem(id=id, reply_to=id, video=YouTubeVideo(id="vid00000001", title="V", url="https://y/v"),
+                            message="Nice video", created_time=NOW.replace(minute=minute))
+
+
+def test_youtube_and_facebook_items_are_proposed_oldest_first(env):
+    env.channel = worker_module.youtube.ChannelAccess("UCx", "tok")
+    env.open = [_item("222_9")]  # created at NOW (minute 0)
+    env.youtube_open = [_video_item(minute=0)]
+    env.open[0] = env.open[0].model_copy(update={"created_time": NOW.replace(minute=5)})
+    env.worker.handle(_text("/next"))
+    assert env.started == ["UgxCOMMENT0000000001"]  # the older one, from YouTube
+
+
+def test_without_a_connected_channel_only_facebook_is_read(env):
+    env.youtube_open = [_video_item()]  # would be proposed if the channel were read
+    env.worker.handle(_text("/next"))
+    assert env.started == ["222_9"]
+
+
+def test_a_youtube_error_is_reported_and_facebook_still_proposed(env):
+    env.youtube_error = worker_module.youtube.YouTubeError(503, "connect it again")
+    env.worker.handle(_text("/next"))
+    assert any("YouTube channel" in text and "connect it again" in text for text, _ in env.said)
+    assert env.started == ["222_9"]
+
+
+def test_a_waiting_proposal_is_kept_when_a_source_cannot_be_read(env):
+    env.waiting = ("thread", 101)
+    env.open = []  # the waiting item seems answered on the Page ...
+    env.youtube_error = worker_module.youtube.YouTubeError(502, "Could not reach YouTube.")  # ... but YouTube failed
+    env.worker.handle(_text("/next"))
+    assert env.withdrawn == [] and env.started == []
+
+
+def test_no_facebook_page_reads_only_youtube(env, monkeypatch):
+    monkeypatch.setattr(worker_module.facebook, "is_configured", lambda: False)
+    monkeypatch.setattr(worker_module.facebook, "open_items", lambda posts: pytest.fail("no Page to read"))
+    env.channel = worker_module.youtube.ChannelAccess("UCx", "tok")
+    env.youtube_open = [_video_item()]
+    env.worker.handle(_text("/next"))
+    assert env.started == ["UgxCOMMENT0000000001"]

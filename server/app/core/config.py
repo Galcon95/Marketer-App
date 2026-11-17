@@ -45,7 +45,8 @@ Read once on import from environment variables (and server/.env, if present), fi
                           social/telegram.py): the agent sends proposed replies there and the author approves them;
                           messages from any other chat are ignored. Without both, Telegram is off
     FACEBOOK_INBOX_BOOKS → optional, comma-separated book ids (src_...) of one client: the Page inbox agent
-                          (agents/page_inbox.py) answers readers on the Facebook Page from the best fitting of them
+                          (agents/page_inbox.py) answers readers on the Facebook Page and viewers on the YouTube channel
+                          the books' owner connected in the app from the best fitting of them
     FACEBOOK_INBOX_INTERVAL → optional, minutes between the inbox worker's looks at the Page (default 30; 0 = only
                           when the author sends /next in Telegram)
     LANGSMITH_PROJECT   → optional, the LangSmith project the traces go to (default "marketer-app")

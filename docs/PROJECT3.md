@@ -111,7 +111,7 @@ again, until it is done. A chain or pipeline has fixed steps instead.
 `server/app/`: `agents/` (graph, tools, scan) · `rag/` (ingestion, retrieval, QA, generation) · `api/` (FastAPI
 routes, one file per area) · `core/` (LLM, guard, limits, auth, prompts, usage) · `db/` (SQLAlchemy tables,
 records) · `social/` (Facebook, YouTube, Telegram) · `market/` (MCP servers and client). `server/prompts/` (all prompts as Markdown),
-Alembic migrations, `tests/` (829), `eval/` as a separate project.
+Alembic migrations, `tests/` (844), `eval/` as a separate project.
 
 ### Security
 - Untrusted text (discussions, Reddit threads, Facebook comments, book passages, tool results) is only ever

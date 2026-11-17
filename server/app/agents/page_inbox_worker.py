@@ -1,9 +1,9 @@
-"""The Page inbox agent's worker: a background thread that connects Telegram, the Facebook Page and the graph
-(agents/page_inbox.py) while the server runs.
+"""The Page inbox agent's worker: a background thread that connects Telegram, the Facebook Page, the YouTube channel
+and the graph (agents/page_inbox.py) while the server runs.
 
     loop:  get_updates (long poll) ─► handle each update ─► every FACEBOOK_INBOX_INTERVAL min: propose_next()
 
-    /next             look at the Page now and propose the next open item
+    /next             look at the Page and the channel now and propose the next open item
     /start, /help     what the bot does and how to answer
     a button          "Make it so" / "Skip" under the current proposal
     a text            "make it so", "skip", or feedback for the current proposal (a Telegram "Reply" to an older
@@ -15,7 +15,12 @@ not block the newer comments. After a decision the next open item is proposed ri
 through the Page in one go. The schedule only proposes when something new is there; /next always answers (also
 "Nothing new").
 
-Started by server.py on startup when Telegram, the Facebook Page and FACEBOOK_INBOX_BOOKS are all configured; one
+Items come from the Facebook Page (when FACEBOOK_PAGE_* is set) and from the YouTube channel the books' owner
+connected in the app (page_inbox.channel_for_inbox), oldest first. When one of them cannot be read, the other is still
+proposed, and a waiting proposal is kept (it cannot be checked).
+
+Started by server.py on startup when Telegram and FACEBOOK_INBOX_BOOKS are configured (the Page and the channel are
+looked at when they are there); one
 worker per server process (Telegram allows only one long poll per bot: a second process gets "Conflict" and the
 worker waits and retries). Errors never end the loop: they are logged and, where the author asked for something,
 reported in Telegram.
@@ -29,17 +34,19 @@ from app.agents import page_inbox as inbox
 from app.core import config
 from app.core.llm import GenerationError
 from app.core.schemas import TelegramUpdate
-from app.social import facebook, telegram
+from app.social import facebook, telegram, youtube
 
 logger = logging.getLogger(__name__)
 
 POLL_WAIT = 25  # seconds a long poll waits for an update
 ERROR_PAUSE = 10  # seconds to wait after a failed poll
 SCAN_POSTS = 10  # latest posts looked at per scan
+SCAN_COMMENTS = 50  # latest YouTube comment threads looked at per scan (1-3 quota units)
 
-HELP = ("I watch your Facebook Page and propose replies to readers' comments and posts, drafted from your books.\n\n"
-        "Under a proposal: press ✅ Make it so (or write “make it so”) to post it as your Page, Skip to leave it, "
-        "or write what to change and I rewrite it.\n\n/next – look at the Page now")
+HELP = ("I watch your Facebook Page and your YouTube channel and propose replies to readers' comments, drafted from "
+        "your books.\n\n"
+        "Under a proposal: press ✅ Make it so (or write “make it so”) to post it as your Page or channel, Skip to "
+        "leave it, or write what to change and I rewrite it.\n\n/next – look at the Page and the channel now")
 
 
 class InboxWorker:
@@ -99,37 +106,62 @@ class InboxWorker:
             self._say("Something went wrong on my side; it is logged. Try again, or use the app.")
 
     def propose_next(self, asked: bool) -> bool:
-        """Look at the Page and start a run for the oldest open item. `asked`: the author sent /next (always answer).
+        """Look at the Page and the channel and start a run for the oldest open item. `asked`: the author sent /next
+        (always answer).
 
         Returns:
             True if a proposal was sent.
         """
         try:
-            items = facebook.open_items(posts=SCAN_POSTS)
+            items, failed = self._open_items(asked)
             if waiting := inbox.waiting_run():
-                # still unanswered on the Page: it keeps waiting; answered elsewhere: take it back and go on
-                if inbox.item_of(waiting[0]) in {i.id for i in items} or not inbox.withdraw(*waiting):
+                # still unanswered: it keeps waiting; answered elsewhere: take it back and go on (not when a source
+                # could not be read: then its item may only seem answered)
+                if failed or inbox.item_of(waiting[0]) in {i.id for i in items} or not inbox.withdraw(*waiting):
                     if asked:
                         self._say("A proposal is still waiting for your answer (above).", reply_to=waiting[1])
                     return False
             item = next((i for i in items if inbox.is_open(i)), None)
             if item is None:
-                if asked:
-                    self._say("Nothing new on your Page.")
+                if asked and not failed:
+                    self._say("Nothing new on your Page or channel.")
                 return False
             if asked:
                 self._say("Drafting a reply…")
             inbox.start(item)
             self.last_error = ""
             return True
-        except (facebook.FacebookError, telegram.TelegramError, GenerationError, inbox.InboxConfigError,
-                LookupError, OSError) as e:
-            logger.warning("Page inbox: proposing the next item failed: %s", e)
-            message = f"Could not prepare the next reply: {e}"
-            if asked or message != self.last_error:
-                self._say(message)
-            self.last_error = message
+        except (facebook.FacebookError, youtube.YouTubeError, telegram.TelegramError, GenerationError,
+                inbox.InboxConfigError, LookupError, OSError) as e:
+            self._report(f"Could not prepare the next reply: {e}", asked)
             return False
+
+    def _open_items(self, asked: bool) -> tuple[list, bool]:
+        """The open items of the Page and the channel, oldest first, and whether one of them could not be read (its
+        error is reported, like any scan error)."""
+        items, failed = [], False
+        if facebook.is_configured():
+            try:
+                items += facebook.open_items(posts=SCAN_POSTS)
+            except facebook.FacebookError as e:
+                self._report(f"Could not read your Facebook Page: {e}", asked)
+                failed = True
+        try:
+            channel = inbox.channel_for_inbox()
+            if channel:
+                with youtube.as_channel(channel):
+                    items += youtube.open_items(comments=SCAN_COMMENTS)
+        except (youtube.YouTubeError, OSError) as e:
+            self._report(f"Could not read your YouTube channel: {e}", asked)
+            failed = True
+        return sorted(items, key=lambda i: i.created_time), failed
+
+    def _report(self, message: str, asked: bool) -> None:
+        """Tell the author about an error: always when they asked (/next), else once until it changes."""
+        logger.warning("Page inbox: %s", message)
+        if asked or message != self.last_error:
+            self._say(message)
+        self.last_error = message
 
     # ----- helpers -----
     def _button(self, update: TelegramUpdate) -> None:
@@ -201,10 +233,10 @@ _worker: InboxWorker | None = None
 
 
 def start_if_configured() -> InboxWorker | None:
-    """Start the worker when Telegram, the Page and the inbox books are configured (logs why not, otherwise)."""
+    """Start the worker when Telegram and the inbox books are configured (logs why not, otherwise). The Facebook
+    Page (server/.env) and the YouTube channel (connected in the app) are each looked at when they are there."""
     global _worker
     missing = [name for name, ok in (("TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID", telegram.is_configured()),
-                                     ("FACEBOOK_PAGE_ID/FACEBOOK_PAGE_TOKEN", facebook.is_configured()),
                                      ("FACEBOOK_INBOX_BOOKS", bool(config.FACEBOOK_INBOX_BOOKS))) if not ok]
     if missing:
         logger.info("Page inbox worker off: %s not set", ", ".join(missing))

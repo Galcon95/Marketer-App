@@ -607,6 +607,7 @@ class FacebookInboxItem(BaseModel):
     """Something on the author's Page that waits for an answer from the Page (facebook.open_items): a visitor's
     comment the Page has not replied to, or a visitor's post on the Page it has not commented on. Untrusted text."""
 
+    platform: Literal["facebook"] = "facebook"  # tells it apart from a YouTubeInboxItem in the inbox agent
     kind: Literal["comment", "visitor_post"]
     id: str  # the comment or the visitor post
     reply_to: str  # where the Page's answer goes: the comment's thread (its top comment) or the visitor post
@@ -711,6 +712,24 @@ class YouTubeThread(BaseModel):
 
     video: YouTubeVideo
     comments: list[YouTubeComment] = []  # newest first, the channel's own replies included (from_channel)
+
+
+class YouTubeInboxItem(BaseModel):
+    """A viewer's comment under a video of the author's channel that the channel has not answered yet
+    (youtube.open_items), for the inbox agent. Untrusted text."""
+
+    platform: Literal["youtube"] = "youtube"
+    kind: Literal["comment"] = "comment"
+    id: str  # the comment (a reply's id is "<top comment id>.<reply id>")
+    reply_to: str  # where the channel's answer goes: the thread's top comment
+    video: YouTubeVideo
+    message: str
+    author: str | None = None
+    created_time: datetime
+    permalink_url: str | None = None
+    # For a follow-up inside a thread: the top comment and the replies before it, oldest first (the channel's own
+    # included). Empty for a top comment.
+    thread: list[YouTubeComment] = []
 
 
 class YouTubePublished(BaseModel):

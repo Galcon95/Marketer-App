@@ -249,6 +249,8 @@ marked for YouTube, so one cannot be replayed on the other.
   statuses (503 not connected / access removed, 404 comment gone or comments off, 429 quota or rate limit, 502, 504).
 - While the Google app's publishing status is "Testing", only its test users can sign in and Google ends a sign-in
   after 7 days: the page then says to connect again.
+- **In the Telegram inbox** too: the Page inbox agent also reads the channel the books' owner connected and proposes
+  replies to viewers' comments in the same Telegram chat ("make it so" posts as the channel). See `docs/PAGE_INBOX.md`.
 
 ### `mcp-book-knowledge` MCP server
 
@@ -390,7 +392,7 @@ Three layers, all in code and on every request (never left to the model):
   against naming the book even when a reader asked for a recommendation. Details in `docs/AGENT.md`.
 
 ### Tests
-- Backend: 829 pytest tests in `server/tests/`, among them: relevance floor and not-covered answer, chunk headers, BM25 and hybrid fusion, temperatures per task, format examples and section check, guardrails, timeouts and retries of model calls, request ids and log format, prompt versions, quoting of untrusted text, structured-output schemas and retries, platform check, citations, chapter detection, structured retrieval filters, uploads (wrong types, duplicates), deleting a book with what belongs only to it, sign-in on every route, ownership (another user's data → 404), limits and budgets, API keys and MCP sign-in, the database layer, the Discussion agent (graph routing, tool limits, schemas, API), the Reddit scan (Tavily and model faked) the Facebook client and endpoints (Graph API faked), the YouTube client, Google sign-in and the reply endpoint (YouTube and Google faked), and the prompt-injection scan of third-party text and the output guard, the prompt files and their loader, and the humanizer rule (AI sentence patterns, posts always rewritten). Run `uv run pytest` in `server/`.
+- Backend: 844 pytest tests in `server/tests/`, among them: relevance floor and not-covered answer, chunk headers, BM25 and hybrid fusion, temperatures per task, format examples and section check, guardrails, timeouts and retries of model calls, request ids and log format, prompt versions, quoting of untrusted text, structured-output schemas and retries, platform check, citations, chapter detection, structured retrieval filters, uploads (wrong types, duplicates), deleting a book with what belongs only to it, sign-in on every route, ownership (another user's data → 404), limits and budgets, API keys and MCP sign-in, the database layer, the Discussion agent (graph routing, tool limits, schemas, API), the Reddit scan (Tavily and model faked) the Facebook client and endpoints (Graph API faked), the YouTube client, Google sign-in and the reply endpoint (YouTube and Google faked), and the prompt-injection scan of third-party text and the output guard, the prompt files and their loader, and the humanizer rule (AI sentence patterns, posts always rewritten). Run `uv run pytest` in `server/`.
 - Frontend: 21 Vitest tests in `client/tests/` (helpers in `lib/api.ts` and the API client's error handling with a stubbed `fetch`). Run `npm test` in `client/`.
 - No model calls, no API key needed; answer quality is measured separately with RAGAs (`eval/`).
 - CI (GitHub Actions, `.github/workflows/ci.yml`): on every push to `main` and every pull request, ruff and pytest for

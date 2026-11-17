@@ -8,7 +8,8 @@ import pytest
 from app.agents import page_inbox as inbox
 from app.core import config
 from app.core import state as db
-from app.core.schemas import DiscussionAnalysis, FacebookInboxItem, FacebookPost, FacebookPublished
+from app.core.schemas import (DiscussionAnalysis, FacebookInboxItem, FacebookPost, FacebookPublished, YouTubeComment,
+                              YouTubeInboxItem, YouTubePublished, YouTubeVideo)
 
 PROJECT = "prj_test"
 VOL1, VOL2 = "src_vol1", "src_vol2"
@@ -49,9 +50,10 @@ def world(monkeypatch):
         reply = w.reply if w.recommendation == "contribute" else ""
         return DiscussionAnalysis(
             id=f"dsc_{len(w.analyze_calls)}", project_id=project_id, source_id=req.source_id,
-            discussion=req.discussion, platform="facebook", recommendation=w.recommendation,
+            discussion=req.discussion, platform=req.platform, recommendation=w.recommendation,
             reason="Fits chapter 3 [1].", suggested_reply=reply, reply=reply,
-            facebook_comment_id=req.facebook_comment_id, created_at=db.now(), updated_at=db.now())
+            facebook_comment_id=req.facebook_comment_id, youtube_comment_id=req.youtube_comment_id,
+            created_at=db.now(), updated_at=db.now())
 
     monkeypatch.setattr(inbox.discussion, "analyze_discussion", analyze)
     monkeypatch.setattr(inbox.records, "save_discussion", lambda a: w.analyses.__setitem__(a.id, a))
@@ -287,3 +289,112 @@ def test_an_item_replied_from_the_app_is_not_open(world):
         created_at=db.now(), updated_at=db.now())
     assert not inbox.is_open(_item())  # also when Facebook still lists the comment as unanswered
     assert inbox.is_open(_item(id="222_10"))
+
+
+# ---------- YouTube: a viewer's comment under a video of the author's channel ----------
+TOP = "UgxTOPCOMMENT00000001"
+
+
+def _video_item(id=TOP, thread=()):
+    return YouTubeInboxItem(id=id, reply_to=TOP, video=YouTubeVideo(id="vid00000001", title="New Atlantis One",
+                                                                   url="https://www.youtube.com/watch?v=vid00000001"),
+                            message="Will machines run our cities?", author="Ben",
+                            created_time="2026-11-12T11:00:00+0000",
+                            permalink_url=f"https://www.youtube.com/watch?v=vid00000001&lc={id}", thread=list(thread))
+
+
+@pytest.fixture
+def channel(world, monkeypatch):
+    """The owner's connected channel; youtube.reply_to_comment is recorded."""
+    monkeypatch.setitem(db.projects, PROJECT, SimpleNamespace(id=PROJECT, owner_id="user-1"))
+    access = inbox.youtube.ChannelAccess("UCchannel", "tok")
+    monkeypatch.setattr(inbox.channel_connections, "channel_for", lambda user_id: access if user_id == "user-1" else None)
+
+    def reply(comment_id, text, video_id=""):
+        assert inbox.youtube._channel.get() == access  # posted on the owner's channel
+        world.posted.append(("youtube", comment_id, text, video_id))
+        return YouTubePublished(id=f"{comment_id}.new", url=f"https://www.youtube.com/watch?v={video_id}&lc=new")
+
+    monkeypatch.setattr(inbox.youtube, "reply_to_comment", reply)
+    return access
+
+
+def test_a_youtube_comment_is_drafted_in_own_channel_mode(world, channel):
+    _start(_video_item())
+    request = world.analyze_calls[0]
+    assert request.youtube_comment_id == TOP and request.platform == "youtube" and not request.facebook_comment_id
+    assert "My video on my YouTube channel: New Atlantis One" in request.discussion
+    assert "Comment by Ben:" in request.discussion
+    text, buttons = world.sent[0]
+    assert "▶️ 💬 New comment by Ben under your YouTube video" in text and "Your video: New Atlantis One" in text
+    assert buttons == [inbox.BUTTON_GO, inbox.BUTTON_SKIP]
+
+
+def test_make_it_so_posts_the_reply_as_the_channel_once(world, channel):
+    thread_id, message_id = _start(_video_item())
+    assert inbox.resume(thread_id, message_id, "approve") == "posted"
+    assert world.posted == [("youtube", TOP, "Good point. In my book I argue that people decide, not the machine.",
+                             "vid00000001")]
+    analysis = next(iter(world.analyses.values()))
+    assert analysis.replied_id == f"{TOP}.new" and analysis.youtube_comment_id == TOP
+    assert world.sent[-1][0].startswith("Posted as your channel:")
+    assert not inbox.is_open(_video_item())
+    assert inbox.resume(thread_id, message_id, "approve") == "stale"
+
+
+def test_a_follow_up_is_answered_under_the_top_comment_with_the_thread(world, channel):
+    earlier = [YouTubeComment(id=TOP, video_id="vid00000001", message="First question", author="Ben",
+                              created_time="2026-11-12T10:00:00+0000"),
+               YouTubeComment(id=f"{TOP}.reply1", video_id="vid00000001", message="My first answer", from_channel=True,
+                              parent_id=TOP, created_time="2026-11-12T10:30:00+0000")]
+    thread_id, message_id = _start(_video_item(id=f"{TOP}.reply2", thread=earlier))
+    request = world.analyze_calls[0]
+    assert "Comment by Ben:\nFirst question" in request.discussion
+    assert "- Me (the author): My first answer" in request.discussion
+    assert "The follow-up to answer now, by Ben:" in request.discussion
+    assert "• You: My first answer" in world.sent[0][0]
+    inbox.resume(thread_id, message_id, "approve")
+    assert world.posted[0][1] == TOP  # YouTube keeps every reply under the top comment
+
+
+def test_without_a_connected_channel_nothing_is_posted(world, channel, monkeypatch):
+    thread_id, message_id = _start(_video_item())
+    monkeypatch.setattr(inbox.channel_connections, "channel_for", lambda user_id: None)
+    assert inbox.resume(thread_id, message_id, "approve") == "failed"
+    assert world.posted == [] and "no longer connected" in world.sent[-1][0]
+
+
+def test_a_youtube_error_is_reported_and_the_reply_kept(world, channel, monkeypatch):
+    thread_id, message_id = _start(_video_item())
+
+    def quota(*args, **kwargs):
+        raise inbox.youtube.YouTubeError(429, "Today's YouTube API quota is used up.")
+
+    monkeypatch.setattr(inbox.youtube, "reply_to_comment", quota)
+    assert inbox.resume(thread_id, message_id, "approve") == "failed"
+    assert "Not posted, YouTube said: Today's YouTube API quota" in world.sent[-1][0]
+
+
+def test_an_earlier_unposted_youtube_analysis_is_reused_not_a_facebook_one(world, channel):
+    world.analyses["dsc_fb"] = DiscussionAnalysis(
+        id="dsc_fb", project_id=PROJECT, source_id=VOL2, discussion="d", recommendation="contribute", reason="r",
+        reply="Facebook draft", facebook_comment_id=TOP, created_at=db.now(), updated_at=db.now())
+    world.analyses["dsc_yt"] = DiscussionAnalysis(
+        id="dsc_yt", project_id=PROJECT, source_id=VOL2, discussion="d", recommendation="contribute", reason="r",
+        reply="YouTube draft", youtube_comment_id=TOP, created_at=db.now(), updated_at=db.now())
+    _start(_video_item())
+    assert world.analyze_calls == [] and "YouTube draft" in world.sent[0][0]
+
+
+def test_feedback_on_a_youtube_reply_quotes_it_for_youtube(world, channel):
+    thread_id, message_id = _start(_video_item())
+    assert inbox.resume(thread_id, message_id, "feedback", "shorter") == "waiting"
+    assert 'platform="youtube"' in world.revise_calls[0]["discussion"]
+
+
+def test_channel_for_inbox_is_the_books_owners_channel(world, channel, monkeypatch):
+    assert inbox.channel_for_inbox() == channel
+    monkeypatch.setitem(db.projects, PROJECT, SimpleNamespace(id=PROJECT, owner_id=None))
+    assert inbox.channel_for_inbox() is None
+    monkeypatch.setattr(config, "FACEBOOK_INBOX_BOOKS", [])
+    assert inbox.channel_for_inbox() is None

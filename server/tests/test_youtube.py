@@ -280,3 +280,26 @@ def test_error_messages_never_contain_the_token(api):
     with pytest.raises(yt.YouTubeError) as e:
         yt.recent_threads()
     assert TOKEN not in str(e.value)
+
+
+# ---------- open items (for the inbox agent) ----------
+def test_open_items_are_the_unanswered_viewer_comments_oldest_first(api):
+    answered_top = "UgyANSWERED000000000000"
+    api.answers["commentThreads"] = {"items": [
+        _thread(_raw(TOP, "Great video", "2026-11-10T10:00:00Z"), [
+            _raw(f"{TOP}.reply1", "Thank you!", "2026-11-10T11:00:00Z", author=CHANNEL, parent=TOP),
+            _raw(f"{TOP}.reply2", "But what about X?", "2026-11-10T12:00:00Z", parent=TOP)]),
+        _thread(_raw("UgyOPEN000000000000000000", "A question", "2026-11-09T10:00:00Z")),
+        _thread(_raw(answered_top, "Thanks", "2026-11-08T10:00:00Z"), [
+            _raw(f"{answered_top}.reply1", "You are welcome", "2026-11-08T11:00:00Z", author=CHANNEL,
+                 parent=answered_top)]),
+        _thread(_raw("UgyMINE00000000000000000", "Pinned by me", "2026-11-07T10:00:00Z", author=CHANNEL)),
+        _thread(_raw("UgyEMPTY0000000000000000", "  ", "2026-11-06T10:00:00Z")),
+    ]}
+    api.answers["videos"] = {"items": [{"id": VIDEO, "snippet": {"title": "Volume I"}}]}
+    items = yt.open_items()
+    assert [i.message for i in items] == ["A question", "But what about X?"]
+    follow_up = items[1]
+    assert follow_up.reply_to == TOP and follow_up.video.title == "Volume I"
+    assert [c.message for c in follow_up.thread] == ["Great video", "Thank you!"]  # the thread before it
+    assert items[0].thread == [] and items[0].reply_to == items[0].id
