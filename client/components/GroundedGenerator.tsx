@@ -46,7 +46,7 @@ export default function GroundedGenerator({ refresh, bookId, onChange }: {
   refresh: number; bookId: string | null; onChange: () => void;
 }) {
   const assets = useApi(`assets:${refresh}`, api.listAssets);
-  // The author's Facebook Page, for the Publish button on Facebook posts (403 for anyone but the admin: no button).
+  // The user's own Facebook Page, for the Publish button on Facebook posts (disabled with a hint when none is connected).
   const facebook = useApi("facebook-status", api.facebookStatus);
   const [assetType, setAssetType] = useState<AssetType>("blurb"); // decides which fields are shown
   const [showInfo, setShowInfo] = useState(false); // the longer "what is it for" text under the asset type

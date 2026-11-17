@@ -22,6 +22,8 @@ approval in Telegram. One run per item (a visitor's comment or visitor post, fac
                  (facebook.reply_to_comment) or under the visitor post (facebook.comment_on_post); the analysis gets
                  replied_id/url/at; Telegram gets the link
     skip         nothing is posted; the item is not proposed again (until a restart: see below)
+    withdraw     the item was answered elsewhere while the proposal waited (in the app, or on Facebook): the buttons
+                 go, the author is told, nothing is posted (withdraw(), called by the worker before it proposes)
 
 Human in the loop: nothing is posted without the author's "make it so" (the button, or that text in the chat). A
 decision is applied once: resume() only accepts an answer to the run's current proposal while the run waits, under a
@@ -63,7 +65,10 @@ logger = logging.getLogger(__name__)
 
 HUMANIZE = 80  # "how human" the replies sound (as the Discussions default)
 MAX_DISCUSSION = 8000  # characters: the Discussion agent's limit (DiscussionRequest.discussion)
-EXCERPT = 600  # characters of the post and of the reader's text shown in Telegram
+EXCERPT = 600  # characters of the reader's text shown in Telegram
+POST_EXCERPT = 200  # characters of the Page's post shown above it
+THREAD_EXCERPT = 160  # characters of each earlier comment of the thread
+MAX_THREAD_LINES = 6  # earlier comments of the thread shown (the latest ones)
 MAX_REVISIONS = 5  # feedback rounds per item; then the author finishes the reply in the app
 BOOK_SEARCH_K = 3  # passages per book when choosing the book
 
@@ -81,8 +86,8 @@ class Revision(BaseModel):
 
 PROMPT_VERSION = prompts.register("page_inbox", REVISE_PROMPT, Revision, {"humanize": HUMANIZE})
 
-Decision = Literal["approve", "skip", "feedback"]
-Outcome = Literal["posted", "skipped", "failed", "blocked", "gave_up"]  # gave_up: too many revisions
+Decision = Literal["approve", "skip", "feedback", "answered"]  # answered: not the author's; see withdraw()
+Outcome = Literal["posted", "skipped", "failed", "blocked", "gave_up", "answered"]  # gave_up: too many revisions
 
 
 class InboxState(TypedDict, total=False):
@@ -171,7 +176,7 @@ def resume(thread_id: str, message_id: int, decision: Decision, feedback: str = 
             return "waiting"
         values = _graph().get_state(_config(thread_id)).values
         item_id = values["item"]["id"]
-        if values.get("outcome") in ("posted", "skipped", "blocked") or not values.get("outcome"):
+        if values.get("outcome") in ("posted", "skipped", "blocked", "answered") or not values.get("outcome"):
             _decided.add(item_id)
         _runs.pop(item_id, None)
         return values.get("outcome", "gave_up")
@@ -186,10 +191,32 @@ def waiting_run() -> tuple[str, int] | None:
     return None
 
 
+def item_of(thread_id: str) -> str:
+    """The id of the item a run is about (thread ids are "<item id>:<run id>")."""
+    return thread_id.rsplit(":", 1)[0]
+
+
+def withdraw(thread_id: str, message_id: int) -> bool:
+    """Take back a waiting proposal whose item was answered elsewhere in the meantime: its buttons go and the author
+    is told; nothing is posted and the item is not proposed again.
+
+    Returns:
+        True if the proposal was withdrawn, False if the run no longer waited for this proposal.
+    """
+    return resume(thread_id, message_id, "answered") == "answered"
+
+
 def is_open(item: FacebookInboxItem) -> bool:
-    """True if the item has neither been decided nor has a run yet."""
+    """True if the item has neither been decided nor has a run yet, and no reply to it was posted from the app
+    (also when Facebook still lists it as unanswered)."""
     with _lock:
-        return item.id not in _decided and item.id not in _runs
+        if item.id in _decided or item.id in _runs:
+            return False
+    try:
+        project_id, _ = inbox_books()
+    except InboxConfigError:
+        return True  # start() reports the configuration
+    return not any(a.facebook_comment_id == item.id and a.replied_id for a in records.list_discussions(project_id))
 
 
 def parse_answer(text: str) -> tuple[Decision, str]:
@@ -226,14 +253,16 @@ def _graph():
     builder.add_node("revise", _revise)
     builder.add_node("publish", _publish)
     builder.add_node("skip", _skip)
+    builder.add_node("withdraw", _withdraw)
     builder.add_edge(START, "choose_book")
     builder.add_edge("choose_book", "analyze")
     builder.add_edge("analyze", "propose")
     builder.add_edge("propose", "wait")
-    builder.add_conditional_edges("wait", _after_wait, ["publish", "skip", "revise", END])
+    builder.add_conditional_edges("wait", _after_wait, ["publish", "skip", "withdraw", "revise", END])
     builder.add_edge("revise", "propose")
     builder.add_edge("publish", END)
     builder.add_edge("skip", END)
+    builder.add_edge("withdraw", END)
     return builder.compile(checkpointer=_checkpointer)
 
 
@@ -295,6 +324,8 @@ def _after_wait(state: InboxState) -> str:
         return "publish"
     if decision == "skip":
         return "skip"
+    if decision == "answered":
+        return "withdraw"
     if state.get("revisions", 0) >= MAX_REVISIONS:  # ends without an outcome: handed to the app
         _quietly(telegram.remove_buttons, state["proposal_message_id"])
         _quietly(telegram.send_message, f"That was {MAX_REVISIONS} rounds of changes. Please finish this reply in the "
@@ -356,6 +387,16 @@ def _skip(state: InboxState) -> InboxState:
     return {"outcome": "skipped"}
 
 
+def _withdraw(state: InboxState) -> InboxState:
+    """The item was answered elsewhere while the proposal waited: the buttons go, nothing is posted."""
+    item = FacebookInboxItem.model_validate(state["item"])
+    _quietly(telegram.remove_buttons, state["proposal_message_id"])
+    _quietly(telegram.send_message,
+             f"☑️ Already answered on your Page: “{_excerpt(item.message, 80)}” by {item.author or 'a reader'}. "
+             "I took my proposal back; nothing was posted.", None, state["proposal_message_id"])
+    return {"outcome": "answered"}
+
+
 # ---------- helpers ----------
 def _config(thread_id: str) -> dict:
     return {"configurable": {"thread_id": thread_id}, "run_name": "page_inbox", "tags": ["page_inbox", "agent"],
@@ -380,20 +421,42 @@ def _as_discussion(item: FacebookInboxItem) -> str:
         text = f"A post by {item.author or 'a reader'} on my Facebook Page:\n{item.message}"
     else:
         post = item.post.message or "(a photo or video without text)"
-        text = f"My post on my Facebook Page:\n{post}\n\nComment by {item.author or 'a reader'}:\n{item.message}"
+        text = f"My post on my Facebook Page:\n{post}\n\n"
+        if item.thread:  # a follow-up: the thread before it, then the follow-up as what to answer
+            first, *replies = item.thread
+            text += f"Comment by {_name(first)}:\n{first.message}\n\n"
+            if replies:
+                text += "Replies to it:\n" + "\n".join(f"- {_name(r)}: {r.message}" for r in replies) + "\n\n"
+            text += f"The follow-up to answer now, by {item.author or 'a reader'}:\n{item.message}"
+        else:
+            text += f"Comment by {item.author or 'a reader'}:\n{item.message}"
     return clean_text(text)[:MAX_DISCUSSION]
+
+
+def _name(comment) -> str:
+    """Who wrote a comment, for the agent: the author's own replies as "Me"."""
+    return "Me (the author)" if comment.from_page else comment.author or "A reader"
 
 
 def _proposal_text(item: FacebookInboxItem, analysis: DiscussionAnalysis, reply: str, blocked: bool,
                    state: InboxState) -> str:
     """The Telegram message: what was written, the book, the agent's view and the reply, and how to answer."""
     who = item.author or "A reader"
-    head = (f"💬 New comment by {who} on your Page" if item.kind == "comment"
-            else f"📝 New post by {who} on your Page")
+    if item.kind != "comment":
+        head = f"📝 New post by {who} on your Page"
+    elif item.thread:
+        head = f"↪️ Follow-up by {who} in a thread on your Page"
+    else:
+        head = f"💬 New comment by {who} on your Page"
     lines = [head]
     if item.kind == "comment" and item.post.message:
-        lines.append(f"Your post: {_excerpt(item.post.message)}")
-    lines += [f"{who}: {_excerpt(item.message)}"]
+        lines.append(f"Your post: {_excerpt(item.post.message, POST_EXCERPT)}")
+    if item.thread:  # so the author sees what this answers: the thread so far, shortened
+        lines += ["", "The thread so far:"]
+        lines += [f"• {'You' if c.from_page else c.author or 'A reader'}: {_excerpt(c.message, THREAD_EXCERPT)}"
+                  for c in item.thread[-MAX_THREAD_LINES:]]
+        lines.append("")
+    lines += [f"➡️ {who}: {_excerpt(item.message)}"]
     if item.permalink_url:
         lines.append(item.permalink_url)
     lines += ["", f"📖 {source_name(analysis.source_id) or analysis.source_id}",
@@ -411,9 +474,9 @@ def _proposal_text(item: FacebookInboxItem, analysis: DiscussionAnalysis, reply:
     return "\n".join(lines)
 
 
-def _excerpt(text: str) -> str:
+def _excerpt(text: str, limit: int = EXCERPT) -> str:
     text = " ".join(text.split())
-    return text if len(text) <= EXCERPT else text[:EXCERPT].rsplit(" ", 1)[0] + " …"
+    return text if len(text) <= limit else text[:limit].rsplit(" ", 1)[0] + " …"
 
 
 def _quietly(fn, *args) -> None:

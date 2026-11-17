@@ -243,3 +243,47 @@ def test_button_decision():
     assert inbox.button_decision("go") == "approve"
     assert inbox.button_decision("skip") == "skip"
     assert inbox.button_decision("test:go") is None
+
+
+# ---------- follow-ups, answered elsewhere ----------
+def _follow_up():
+    from app.core.schemas import FacebookComment
+    def c(id, minute, message, from_page=False):
+        return FacebookComment(id=id, post_id="111_222", message=message, from_page=from_page,
+                               created_time=f"2026-11-12T11:{minute:02d}:00+0000", author=None if from_page else "Ana")
+    item = _item(id="222_11", message="Give us some examples.", reply_to="222_9")
+    return item.model_copy(update={"thread": [c("222_9", 0, "How can AI support decisions?"),
+                                              c("222_10", 5, "By analysing data.", from_page=True)]})
+
+
+def test_a_follow_up_comes_with_its_thread(world):
+    _start(_follow_up())
+    discussion = world.analyze_calls[0].discussion
+    assert discussion.index("Comment by Ana:\nHow can AI support decisions?") < discussion.index(
+        "- Me (the author): By analysing data.") < discussion.index(
+        "The follow-up to answer now, by Ana:\nGive us some examples.")
+    text, _ = world.sent[0]
+    assert text.startswith("↪️ Follow-up by Ana in a thread on your Page")
+    assert "• Ana: How can AI support decisions?" in text and "• You: By analysing data." in text
+    assert "➡️ Ana: Give us some examples." in text
+
+
+def test_withdraw_takes_back_a_proposal_answered_elsewhere(world):
+    thread_id, message_id = _start()
+    assert inbox.item_of(thread_id) == "222_9"
+    assert inbox.withdraw(thread_id, message_id)
+    assert world.posted == [] and world.removed == [message_id]
+    assert world.sent[-1][0].startswith("☑️ Already answered on your Page")
+    assert inbox.waiting_run() is None and not inbox.is_open(_item())  # not proposed again
+    assert not inbox.withdraw(thread_id, message_id)  # only once
+
+
+def test_an_item_replied_from_the_app_is_not_open(world):
+    assert inbox.is_open(_item())
+    world.analyses["dsc_app"] = DiscussionAnalysis(
+        id="dsc_app", project_id=PROJECT, source_id=VOL1, discussion="d", platform="facebook",
+        recommendation="contribute", reason="r", suggested_reply="x", reply="x", facebook_comment_id="222_9",
+        replied_id="222_9_reply", replied_url="https://www.facebook.com/r", replied_at=db.now(),
+        created_at=db.now(), updated_at=db.now())
+    assert not inbox.is_open(_item())  # also when Facebook still lists the comment as unanswered
+    assert inbox.is_open(_item(id="222_10"))

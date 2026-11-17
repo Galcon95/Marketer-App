@@ -84,7 +84,7 @@ def test_every_tone_platform_and_asset_type_has_its_text():
     assert set(generation.ASSET_INSTRUCTIONS) == set(get_args(AssetType))
     from app.agents import discussion
     assert set(discussion.REPLY_RULES) == set(get_args(DiscussionPlatform))
-    assert set(discussion.SITUATION) == set(discussion.ROLE) == {"discussion", "own_page"}
+    assert set(discussion.SITUATION) == set(discussion.ROLE) == {"discussion", "own_page", "own_channel"}
 
 
 def test_style_levels_are_ascending_and_start_at_zero():

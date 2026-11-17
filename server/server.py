@@ -29,9 +29,9 @@ from app.core import logs
 logs.setup()  # first, so the imports below already log through it (JSON lines with the request id)
 
 from app.api import (  # noqa: E402
-    assets, campaigns, discussions, facebook, health, keys, knowledge, mcp_console, projects, sources,
+    assets, campaigns, discussions, facebook, health, keys, knowledge, mcp_console, projects, sources, youtube,
 )
-from app.core import api_keys, auth, state, usage  # noqa: E402
+from app.core import api_keys, auth, config, state, usage  # noqa: E402
 from app.agents import page_inbox_worker  # noqa: E402
 from app.db import records  # noqa: E402
 from app.core.mcp_auth import RequireMcpAuth  # noqa: E402
@@ -85,7 +85,7 @@ app = FastAPI(title="Marketer App API", lifespan=lifespan)
 # Allow the Next.js dev client (port 3000) to call the API from the browser.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=config.CLIENT_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=[logs.HEADER, "Content-Disposition"],  # request id; the file name of downloads (asset export)
@@ -95,8 +95,12 @@ app.add_middleware(logs.RequestIdMiddleware)
 
 # Include the API routers. /health is open; every other endpoint needs a signed-in user (auth.py → 401 otherwise).
 app.include_router(health.router)
-for module in (projects, sources, knowledge, assets, campaigns, discussions, facebook, mcp_console, keys):
+for module in (projects, sources, knowledge, assets, campaigns, discussions, facebook, youtube, mcp_console, keys):
     app.include_router(module.router, dependencies=[Depends(auth.current_user)])
+# Facebook Login and Google sign-in send the browser back here without a sign-in token; the signed `state` names the
+# user.
+app.include_router(facebook.callback_router)
+app.include_router(youtube.callback_router)
 
 # Last, so the API routes match first. /guardrails before the catch-all "/", which only serves POST/GET /mcp.
 # Both need a personal API key or a sign-in token (mcp_auth.py → 401 otherwise).

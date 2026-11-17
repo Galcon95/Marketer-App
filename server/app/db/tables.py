@@ -96,6 +96,34 @@ class ApiKeyRow(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
 
 
+class FacebookConnectionRow(Base):
+    """A user's own Facebook Page, connected with Facebook Login: its Page token only encrypted (secret_box.py);
+    see schemas.FacebookConnection. One Page per user."""
+
+    __tablename__ = "facebook_connections"
+    __table_args__ = {"schema": PRIVATE}
+
+    user_id: Mapped[str] = mapped_column(Text, primary_key=True)  # Supabase user id
+    page_id: Mapped[str] = mapped_column(Text)
+    page_name: Mapped[str] = mapped_column(Text)
+    token: Mapped[str] = mapped_column(Text)  # the Page access token, encrypted (Fernet)
+    connected_at: Mapped[datetime] = mapped_column(UtcDateTime)
+
+
+class YouTubeConnectionRow(Base):
+    """A user's own YouTube channel, connected with Google sign-in: its refresh token only encrypted (secret_box.py);
+    see schemas.YouTubeConnection. One channel per user."""
+
+    __tablename__ = "youtube_connections"
+    __table_args__ = {"schema": PRIVATE}
+
+    user_id: Mapped[str] = mapped_column(Text, primary_key=True)  # Supabase user id
+    channel_id: Mapped[str] = mapped_column(Text)
+    channel_name: Mapped[str] = mapped_column(Text)
+    token: Mapped[str] = mapped_column(Text)  # Google's refresh token, encrypted (Fernet)
+    connected_at: Mapped[datetime] = mapped_column(UtcDateTime)
+
+
 class AssetRow(Base):
     """A generated marketing asset; one column per field of schemas.Asset (a test checks they match)."""
 
@@ -176,6 +204,7 @@ class DiscussionRow(Base):
     humanize: Mapped[int] = mapped_column(Integer, server_default="70")  # 0-100 (since migration 0009)
     tone: Mapped[str] = mapped_column(Text, server_default="neutral")  # schemas.Tone (since migration 0010)
     facebook_comment_id: Mapped[str] = mapped_column(Text, server_default="")  # since migration 0012
+    youtube_comment_id: Mapped[str] = mapped_column(Text, server_default="")  # since migration 0017
     replied_id: Mapped[str] = mapped_column(Text, server_default="")
     replied_url: Mapped[str] = mapped_column(Text, server_default="")
     replied_at: Mapped[datetime | None] = mapped_column(UtcDateTime)

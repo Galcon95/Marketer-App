@@ -9,9 +9,11 @@
     a text            "make it so", "skip", or feedback for the current proposal (a Telegram "Reply" to an older
                       proposal is refused: only the current one counts)
 
-One proposal at a time: nothing new is proposed while one waits for the author. After a decision the next open item
-is proposed right away, so the author can work through the Page in one go. The schedule only proposes when something
-new is there; /next always answers (also "Nothing new").
+One proposal at a time: nothing new is proposed while one waits for the author. A waiting proposal whose comment was
+answered elsewhere in the meantime (in the app, or on Facebook) is taken back on the next look at the Page, so it does
+not block the newer comments. After a decision the next open item is proposed right away, so the author can work
+through the Page in one go. The schedule only proposes when something new is there; /next always answers (also
+"Nothing new").
 
 Started by server.py on startup when Telegram, the Facebook Page and FACEBOOK_INBOX_BOOKS are all configured; one
 worker per server process (Telegram allows only one long poll per bot: a second process gets "Conflict" and the
@@ -78,12 +80,12 @@ class InboxWorker:
 
     # ----- one step -----
     def tick(self, now: float) -> None:
-        """The schedule: propose the next open item when the interval has passed and nothing waits."""
+        """The schedule: when the interval has passed, look at the Page: take back a waiting proposal that was
+        answered elsewhere, and propose the next open item when nothing waits."""
         if not self.interval or now - self.last_scan < self.interval:
             return
         self.last_scan = now
-        if inbox.waiting_run() is None:
-            self.propose_next(asked=False)
+        self.propose_next(asked=False)
 
     def handle(self, update: TelegramUpdate) -> None:
         """One text or button press from the author."""
@@ -102,12 +104,15 @@ class InboxWorker:
         Returns:
             True if a proposal was sent.
         """
-        if waiting := inbox.waiting_run():
-            if asked:
-                self._say("A proposal is still waiting for your answer (above).", reply_to=waiting[1])
-            return False
         try:
-            item = next((i for i in facebook.open_items(posts=SCAN_POSTS) if inbox.is_open(i)), None)
+            items = facebook.open_items(posts=SCAN_POSTS)
+            if waiting := inbox.waiting_run():
+                # still unanswered on the Page: it keeps waiting; answered elsewhere: take it back and go on
+                if inbox.item_of(waiting[0]) in {i.id for i in items} or not inbox.withdraw(*waiting):
+                    if asked:
+                        self._say("A proposal is still waiting for your answer (above).", reply_to=waiting[1])
+                    return False
+            item = next((i for i in items if inbox.is_open(i)), None)
             if item is None:
                 if asked:
                     self._say("Nothing new on your Page.")

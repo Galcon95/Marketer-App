@@ -1,6 +1,6 @@
-"""Facebook API (api/facebook.py) and the "Question for my readers" format: admin only, status, publishing a
-generated post once, the Page's comments, replying to a comment as the Page once, and how both are recorded. The
-Facebook client is faked; nothing is posted."""
+"""Facebook API (api/facebook.py) and the "Question for my readers" format: status, publishing a generated post
+once, the Page's comments, replying to a comment as the Page once, and how both are recorded; the admin works on the
+Page in server/.env, nobody else does. The Facebook client is faked; nothing is posted."""
 
 from datetime import datetime, timezone
 
@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import facebook as fb_api
-from app.core import accounts
+from app.core import accounts, config
 from app.core import state as db
 from app.core.schemas import (
     Asset, DiscussionAnalysis, DiscussionRequest, FacebookComment, FacebookPage, FacebookPost, FacebookPublished,
@@ -32,9 +32,10 @@ def _asset(asset_id="ast_q1", asset_type="reader_question", platform="facebook",
 
 @pytest.fixture
 def published(monkeypatch):
-    """Admin = OWNER, Facebook configured; publish_post is recorded instead of sent."""
+    """Admin = OWNER, the admin's Page in server/.env; publish_post is recorded instead of sent."""
     monkeypatch.setattr(accounts, "DEFAULT_CLIENT_OWNER", OWNER.email)
-    monkeypatch.setattr(facebook, "is_configured", lambda: True)
+    monkeypatch.setattr(config, "FACEBOOK_PAGE_ID", "123")
+    monkeypatch.setattr(config, "FACEBOOK_PAGE_TOKEN", "admin-token")
     monkeypatch.setattr(db, "assets", {})
     sent: list[str] = []
 
@@ -102,10 +103,17 @@ def test_facebook_errors_keep_their_status_and_nothing_is_recorded(published, mo
     assert db.assets["ast_q1"].published_id == ""
 
 
-def test_publish_is_for_the_admin_only(published):
+def test_other_users_never_get_the_admins_page(published, monkeypatch):
     _store(_asset())
-    assert _client(STRANGER).post("/assets/ast_q1/publish/facebook").status_code == 403
-    assert _client(STRANGER).get("/facebook/status").status_code == 403
+    # The stranger cannot even see the admin's asset; on their own asset, without their own Page: 503.
+    assert _client(STRANGER).post("/assets/ast_q1/publish/facebook").status_code == 404
+    own = db.projects[PROJECT].model_copy(update={"id": "prj_s", "owner_id": STRANGER.id})
+    records.save_project(own)
+    monkeypatch.setitem(db.projects, own.id, own)
+    _store(_asset("ast_s").model_copy(update={"project_id": "prj_s"}))
+    r = _client(STRANGER).post("/assets/ast_s/publish/facebook")
+    assert r.status_code == 503 and "Integrations" in r.json()["detail"]
+    assert _client(STRANGER).get("/facebook/status").json()["connected"] is False
     assert published == []
 
 
@@ -115,14 +123,16 @@ def test_unknown_asset_is_404(published):
 
 # ---------- status ----------
 def test_status_not_configured(published, monkeypatch):
-    monkeypatch.setattr(facebook, "is_configured", lambda: False)
-    assert _client().get("/facebook/status").json() == {"connected": False, "page": None, "error": ""}
+    monkeypatch.setattr(config, "FACEBOOK_PAGE_TOKEN", "")
+    monkeypatch.setattr(config, "FACEBOOK_APP_ID", "")  # no Facebook Login either (the local .env may set it up)
+    assert _client().get("/facebook/status").json() == {"connected": False, "page": None, "error": "", "source": "",
+                                                        "login_available": False}
 
 
 def test_status_connected_and_unreachable(published, monkeypatch):
     monkeypatch.setattr(facebook, "page_info", lambda: FacebookPage(id="1", name="HAIC", followers=3))
     body = _client().get("/facebook/status").json()
-    assert body["connected"] and body["page"]["name"] == "HAIC"
+    assert body["connected"] and body["page"]["name"] == "HAIC" and body["source"] == "server"
 
     def expired():
         raise facebook.FacebookError(503, "token expired")
@@ -190,10 +200,10 @@ def test_reply_needs_a_page_comment_and_a_reply(replied, extra):
     assert replied == []
 
 
-def test_reply_is_for_the_admin_only(replied):
+def test_other_users_cannot_reply_or_read_on_the_admins_page(replied):
     records.save_discussion(_analysis())
-    assert _client(STRANGER).post("/discussions/dsc_fb1/reply/facebook").status_code == 403
-    assert _client(STRANGER).get("/facebook/comments").status_code == 403
+    assert _client(STRANGER).post("/discussions/dsc_fb1/reply/facebook").status_code == 404  # not their analysis
+    assert _client(STRANGER).get("/facebook/comments").status_code == 503  # no Page of their own
     assert replied == []
 
 

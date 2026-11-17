@@ -1,49 +1,165 @@
-"""The author's own Facebook Page (social/facebook.py): connection status and publishing a generated post.
+"""The user's own Facebook Page (social/facebook.py): connecting it, its status, publishing a generated post and
+replying to comments.
 
-    GET  /facebook/status                    is the Page connected? its name and followers
-    GET  /facebook/comments                  the latest posts that have comments, with them (for the agent)
-    POST /assets/{id}/publish/facebook       publish a generated post on the Page (on the author's click)
-    POST /discussions/{id}/reply/facebook    post an analysis's reply as the Page under the comment (on the click)
+    GET    /facebook/status                    is a Page connected? its name and followers, where it comes from
+    POST   /facebook/connect                   start Facebook Login: the URL to send the browser to
+    GET    /facebook/oauth/callback            Facebook sends the browser back here (no sign-in token: signed state)
+    GET    /facebook/connect/pages             after a login with several Pages: the Pages to choose from
+    POST   /facebook/connect/pages/{page_id}   connect one of them
+    DELETE /facebook/connection                forget the user's Page
+    GET    /facebook/comments                  the latest posts that have comments, with them (for the agent)
+    POST   /assets/{id}/publish/facebook       publish a generated post on the Page (on the author's click)
+    POST   /discussions/{id}/reply/facebook    post an analysis's reply as the Page under the comment (on the click)
 
-Admin only: the Page in server/.env belongs to the app's administrator (DEFAULT_CLIENT_OWNER), so no other user may
-publish to it. An asset is published once, a reply posted once; the id, link and time are saved with it.
+Every user works on their own Page, connected with Facebook Login (social/page_connections.py); the admin without one
+works on the Page in server/.env. Nobody else ever reaches the admin's Page: without a Page of their own, reading and
+posting answer 503. An asset is published once, a reply posted once; the id, link and time are saved with it.
 """
 
 import logging
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse
 
-from app.api.deps import admin_only, owned_asset, owned_discussion
+from app.api.deps import owned_asset, owned_discussion
 from app.core import state as db
+from app.core.auth import User, current_user
 from app.core.guard import output_blocked, scan_third_party
-from app.core.schemas import Asset, DiscussionAnalysis, FacebookStatus, FacebookThread
+from app.core.schemas import (Asset, DiscussionAnalysis, FacebookConnectRequest, FacebookLoginUrl, FacebookPageChoice,
+                              FacebookStatus, FacebookThread)
 from app.db import records
-from app.social import facebook
+from app.social import facebook, page_connections
+from app.social.page_connections import LoginError
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[Depends(admin_only)])
+router = APIRouter()
+callback_router = APIRouter()  # included without sign-in: Facebook redirects the browser, the state names the user
+
+
+def page_of(user: User = Depends(current_user)) -> facebook.PageAccess:
+    """FastAPI dependency: the Page this user works on (their own; the admin's from server/.env for the admin).
+
+    Raises:
+        HTTPException: 503 if the user has no Page (connect one first) or the database cannot be read.
+    """
+    try:
+        page, _ = page_connections.page_for(user)
+    except OSError as e:  # DatabaseError
+        raise HTTPException(503, "Your Facebook connection cannot be read right now, please try again.") from e
+    if not page:
+        raise HTTPException(503, "No Facebook Page connected: connect yours under Integrations → Facebook Page.")
+    return page
 
 # Asset types that are posts for a Page: reader questions always, social posts written for Facebook.
 PUBLISHABLE = {"reader_question", "social_post"}
 
 
 @router.get("/facebook/status", response_model=FacebookStatus)
-def status():
-    """Whether the Facebook Page is configured and reachable, with its name and followers.
+def status(user: User = Depends(current_user)):
+    """Whether the user has a Facebook Page and it is reachable, with its name and followers; `source` says whether
+    the user connected it ("user") or it is the admin's Page in server/.env ("server"); `login_available` whether the
+    user can connect one.
 
-    Never fails: a missing configuration or an unreachable Page is reported in the answer (connected false, error).
+    Never fails: no Page or an unreachable one is reported in the answer (connected false, error).
     """
-    if not facebook.is_configured():
-        return FacebookStatus(connected=False)
+    login = page_connections.login_available()
     try:
-        return FacebookStatus(connected=True, page=facebook.page_info())
+        page, source = page_connections.page_for(user)
+    except OSError:  # DatabaseError
+        return FacebookStatus(connected=False, error="Your Facebook connection cannot be read right now.",
+                              login_available=login)
+    if not page:
+        return FacebookStatus(connected=False, login_available=login)
+    try:
+        with facebook.as_page(page):
+            return FacebookStatus(connected=True, page=facebook.page_info(), source=source, login_available=login)
     except facebook.FacebookError as e:
-        return FacebookStatus(connected=False, error=str(e))
+        return FacebookStatus(connected=False, error=str(e), source=source, login_available=login)
+
+
+@router.post("/facebook/connect", response_model=FacebookLoginUrl)
+def connect(body: FacebookConnectRequest, user: User = Depends(current_user)):
+    """Start Facebook Login: the URL of Facebook's dialog, where the user picks their Page and allows the app to read
+    and post on it. Facebook then sends the browser to GET /facebook/oauth/callback.
+
+    Raises:
+        HTTPException: 503 if Facebook Login is not set up on the server; 422 if return_to is not the client's origin.
+    """
+    if not page_connections.login_available():
+        raise HTTPException(503, "Facebook Login is not set up on the server (FACEBOOK_APP_ID, FACEBOOK_APP_SECRET, "
+                                 "TOKEN_ENCRYPTION_KEY in server/.env).")
+    try:
+        return FacebookLoginUrl(url=page_connections.login_url(user.id, body.return_to))
+    except LoginError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+@callback_router.get("/facebook/oauth/callback", include_in_schema=False)
+def oauth_callback(state: str = "", code: str = "", error: str = ""):
+    """Facebook sends the browser here after the login dialog. Connects the Page (or keeps several for the user's
+    choice) and sends the browser back to the app with ?facebook=connected|choose|cancelled|error (and a message).
+    A forged, expired or replayed state is refused without a redirect to an address from the request."""
+    try:
+        user_id, return_to = page_connections.read_state(state)
+    except LoginError as e:
+        raise HTTPException(400, str(e)) from e
+    if error or not code:  # the user cancelled or refused the permissions
+        return _back(return_to, "cancelled")
+    try:
+        result = page_connections.finish_login(code, user_id)
+    except LoginError as e:
+        return _back(return_to, "error", str(e))
+    except OSError:  # DatabaseError
+        return _back(return_to, "error", "The connection could not be saved. Try again.")
+    return _back(return_to, result)
+
+
+def _back(return_to: str, result: str, message: str = "") -> RedirectResponse:
+    """Redirect to the app (an allowed origin from the verified state) with the login's result."""
+    query = urlencode({"facebook": result, **({"message": message} if message else {})})
+    return RedirectResponse(f"{return_to}/?{query}", status_code=303)
+
+
+@router.get("/facebook/connect/pages", response_model=list[FacebookPageChoice])
+def pages_to_choose(user: User = Depends(current_user)):
+    """The Pages to choose from after a login that found several (empty after 10 minutes or once one was chosen)."""
+    return page_connections.choices(user.id)
+
+
+@router.post("/facebook/connect/pages/{page_id}", response_model=FacebookStatus)
+def choose_page(page_id: str, user: User = Depends(current_user)):
+    """Connect one of the Pages found by the last login.
+
+    Raises:
+        HTTPException: 409 if no such Page is waiting (connect again); 503 if it cannot be saved.
+    """
+    try:
+        page_connections.choose(user.id, page_id)
+    except LoginError as e:
+        raise HTTPException(409, str(e)) from e
+    except OSError as e:  # DatabaseError
+        raise HTTPException(503, "The connection could not be saved. Try again.") from e
+    return status(user)
+
+
+@router.delete("/facebook/connection", status_code=204)
+def disconnect(user: User = Depends(current_user)):
+    """Forget the user's Page: its token is deleted from the app. (Facebook still lists the app under the user's
+    Business integrations until they remove it there.)
+
+    Raises:
+        HTTPException: 503 if the database cannot be written.
+    """
+    try:
+        page_connections.disconnect(user.id)
+    except OSError as e:  # DatabaseError
+        raise HTTPException(503, "Could not disconnect right now, please try again.") from e
 
 
 @router.post("/assets/{asset_id}/publish/facebook", response_model=Asset)
-def publish(asset: Asset = Depends(owned_asset)):
+def publish(asset: Asset = Depends(owned_asset), page: facebook.PageAccess = Depends(page_of)):
     """Publish the asset's text (without citation markers) as a post on the author's Facebook Page.
 
     Args:
@@ -53,9 +169,9 @@ def publish(asset: Asset = Depends(owned_asset)):
         The asset with published_id, published_url and published_at set.
 
     Raises:
-        HTTPException: 403 for anyone but the administrator; 404 when no asset of the user has this id; 409 if it
-            was published already; 422 if it is not a Facebook post or its text is empty or too long; 503 if
-            Facebook is not connected or the token is invalid; 429, 502 or 504 if Facebook fails; 500 if it was
+        HTTPException: 404 when no asset of the user has this id; 409 if it was published already; 422 if it is
+            not a Facebook post or its text is empty or too long; 503 if the user has no Page or its token is
+            invalid; 429, 502 or 504 if Facebook fails; 500 if it was
             published but the record could not be saved; 422 also if the text looks like a prompt injection got
             into it (output guard).
     """
@@ -67,7 +183,8 @@ def publish(asset: Asset = Depends(owned_asset)):
     text = facebook.publishable_text(asset.text)
     _refuse_injection(text, "post")
     try:
-        post = facebook.publish_post(text)
+        with facebook.as_page(page):
+            post = facebook.publish_post(text)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     except facebook.FacebookError as e:
@@ -82,7 +199,7 @@ def publish(asset: Asset = Depends(owned_asset)):
 
 
 @router.get("/facebook/comments", response_model=list[FacebookThread])
-def comments(posts: int = Query(default=10, ge=1, le=25)):
+def comments(posts: int = Query(default=10, ge=1, le=25), page: facebook.PageAccess = Depends(page_of)):
     """The latest posts on the Page that have comments, each with its comments, newest first. A comment is
     `answered` when the Page has replied under it. The comments are other people's text: shown to the author, and
     given to the agent only through POST /discussions (guard, quoted as data).
@@ -91,11 +208,11 @@ def comments(posts: int = Query(default=10, ge=1, le=25)):
         posts: How many of the latest posts to look at (1-25, default 10).
 
     Raises:
-        HTTPException: 403 for anyone but the administrator; 503 if Facebook is not connected or the token is
-            invalid; 429, 502 or 504 if Facebook fails.
+        HTTPException: 503 if the user has no Page or its token is invalid; 429, 502 or 504 if Facebook fails.
     """
     try:
-        threads = facebook.recent_threads(posts)
+        with facebook.as_page(page):
+            threads = facebook.recent_threads(posts)
     except facebook.FacebookError as e:
         raise HTTPException(e.status_code, str(e)) from e
     return [_scanned(thread) for thread in threads]
@@ -123,7 +240,7 @@ def _refuse_injection(text: str, what: str) -> None:
 
 
 @router.post("/discussions/{discussion_id}/reply/facebook", response_model=DiscussionAnalysis)
-def reply(analysis: DiscussionAnalysis = Depends(owned_discussion)):
+def reply(analysis: DiscussionAnalysis = Depends(owned_discussion), page: facebook.PageAccess = Depends(page_of)):
     """Post the analysis's reply (as the author edited it, without citation markers) as the Page under the comment it
     answers.
 
@@ -134,9 +251,9 @@ def reply(analysis: DiscussionAnalysis = Depends(owned_discussion)):
         The analysis with replied_id, replied_url and replied_at set.
 
     Raises:
-        HTTPException: 403 for anyone but the administrator; 404 when no analysis of the user has this id; 409 if the
-            reply was posted already; 422 if the analysis is not about a comment on the Page or has no reply; 503 if
-            Facebook is not connected or the token is invalid; 404, 429, 502 or 504 if Facebook fails (404: the
+        HTTPException: 404 when no analysis of the user has this id; 409 if the reply was posted already; 422 if
+            the analysis is not about a comment on the Page or has no reply; 503 if the user has no Page or its
+            token is invalid; 404, 429, 502 or 504 if Facebook fails (404: the
             comment was deleted); 500 if it was posted but the record could not be saved; 422 also if the reply
             looks like a prompt injection got into it (output guard).
     """
@@ -149,7 +266,8 @@ def reply(analysis: DiscussionAnalysis = Depends(owned_discussion)):
         raise HTTPException(422, "There is no reply to post.")
     _refuse_injection(text, "reply")
     try:
-        posted = facebook.reply_to_comment(analysis.facebook_comment_id, text)
+        with facebook.as_page(page):
+            posted = facebook.reply_to_comment(analysis.facebook_comment_id, text)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     except facebook.FacebookError as e:

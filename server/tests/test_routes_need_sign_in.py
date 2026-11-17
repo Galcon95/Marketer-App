@@ -20,8 +20,12 @@ from tests.conftest import OWNER
 
 # Open on purpose: the health check (the login page shows whether the API is up), two fixed greetings to see that
 # the server runs (health.py: "/" and "/test"), and FastAPI's own API docs. None of them shows or changes any data.
+# The Facebook Login and Google sign-in callbacks have no sign-in token (the provider redirects the browser); they
+# only act on a signed, single-use state that names the user (test_facebook_connect.py and test_youtube_connect.py
+# check forged and replayed ones).
 OPEN = {("GET", "/health"), ("GET", "/"), ("GET", "/test"), ("GET", "/openapi.json"), ("GET", "/docs"),
-        ("GET", "/docs/oauth2-redirect"), ("GET", "/redoc")}
+        ("GET", "/docs/oauth2-redirect"), ("GET", "/redoc"), ("GET", "/facebook/oauth/callback"),
+        ("GET", "/youtube/oauth/callback")}
 
 def endpoints(routes, prefix: str = ""):
     """(method, path) of every endpoint, also inside included routers. FastAPI 0.143+ keeps an included router as

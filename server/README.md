@@ -54,9 +54,9 @@ server/
 │   │   ├── book_server.py  mcp-book-knowledge: the books as MCP tools (mounted at /mcp)
 │   │   └── guard_server.py mcp-guardrails: input validation and prompt-injection checks (/guardrails/mcp)
 │   ├── agents/         Discussion Relevance Agent (LangGraph), its tools, the Reddit scan, the Page inbox agent
-│   ├── social/         the author's Facebook Page (Graph API), the Telegram bot (Bot API)
+│   ├── social/         the author's Facebook Page (Graph API), YouTube channel (Data API v3), the Telegram bot
 │   └── api/            FastAPI routers: health, projects, keys, sources, knowledge, assets, campaigns,
-│                       discussions, facebook, mcp_console (+ deps.py: ownership, input checks, limits)
+│                       discussions, facebook, youtube, mcp_console (+ deps.py: ownership, input checks, limits)
 ├── prompts/            every prompt as a Markdown file (see prompts/README.md)
 ├── migrations/         Alembic migrations of the database (alembic.ini next to server.py)
 └── assets/books/       sample books for trying the app (not committed)
@@ -147,12 +147,12 @@ uvx ruff check .     # lint (rules pinned in pyproject.toml)
 Both run in GitHub Actions on every push to `main` and every pull request (`.github/workflows/ci.yml`).
 
 `tests/` needs no model, no API key and no network: the chat model, the vector search, Tavily and the Facebook Graph
-API are faked, and Storage is an in-memory store. Among them:
+API, YouTube and Google sign-in are faked, and Storage is an in-memory store. Among them:
 
 - guardrails, the injection scan of third-party text and the output guard (`test_guard*.py`), the platform check,
   citations, chapter detection, structured retrieval filters, the prompt files and their loader (`test_prompt_files.py`)
-- the Discussion Relevance Agent (graph routing, tool limits, schemas, API), the Reddit scan, the Facebook client and
-  endpoints (`test_discussion_*.py`, `test_api_discussions.py`, `test_*facebook.py`)
+- the Discussion Relevance Agent (graph routing, tool limits, schemas, API), the Reddit scan, the Facebook and YouTube clients and
+  endpoints (`test_discussion_*.py`, `test_api_discussions.py`, `test_*facebook.py`, `test_youtube*.py`)
 - sign-in on every route, ownership (another user's data answers 404), limits and budgets, API keys and MCP sign-in,
   uploads (types, duplicates, the 50 MB limit, larger books on the server's disk), deleting a book with what belongs only to it, the database layer
 - API tests showing that bad requests are rejected before any model call (`test_api_guardrails.py`)

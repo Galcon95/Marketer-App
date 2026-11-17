@@ -6,25 +6,30 @@
  * (contribute, more context, skip) and drafts a reply grounded in the book's passages (POST /discussions).
  * Layout as in the Content Studio: how to find a discussion and the settings on the left, the found threads or the
  * discussion text on the right, and below them the saved analyses, newest first, to edit, copy and post.
- * "Scan Reddit" (RedditScan.tsx) finds threads to analyse. For the admin (the owner of the Facebook Page) a
- * third tab lists the comments on the Page (FacebookComments.tsx): one goes into the form, and the agent answers it as
+ * "Scan Reddit" (RedditScan.tsx) finds threads to analyse. "Facebook Page" (every user; their own Facebook Page, connected
+ * under Integrations → Facebook Page) lists the comments on the Page (FacebookComments.tsx): one goes into the form, and the agent answers it as
  * the author ("own Page" mode); the reply can then be posted as the Page. Above the comments, "Write a new post"
  * (FacebookNewPost.tsx) writes a post or reader question from the book and publishes it on the Page. When the Page is
  * not configured or not reachable (e.g. an expired token), the tab stays and says why instead of disappearing.
+ * "YouTube channel" works the same way for the comments under the videos of the user's own channel (connected under
+ * Integrations → YouTube channel; YouTubeComments.tsx, "own channel" mode, "Reply as channel").
  * Other people's text is scanned for prompt injection on the server and flagged, not blocked (InjectionBadge.tsx).
  */
 
 import { useState, type SubmitEvent } from "react";
-import { Bot, ChevronDown, ClipboardPaste, MessageCircle, MessagesSquare, Radar, X } from "lucide-react";
+import { Bot, ChevronDown, CircleHelp, ClipboardPaste, MessageCircle, MessagesSquare, Radar, SquarePlay, X } from "lucide-react";
 import {
   api, bookTitle, DISCUSSION_PLATFORMS, errorMessage, humanizeLabel, platformFromUrl, TONES, type DiscussionPlatform,
   type FacebookComment, type FacebookThread, type ScanResult, type ScannedThread, type Source, type Tone,
+  type YouTubeComment, type YouTubeThread,
 } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import DiscussionCard from "./DiscussionCard";
 import FacebookComments, { commentAsDiscussion } from "./FacebookComments";
 import FacebookNewPost from "./FacebookNewPost";
+import FacebookSetupGuide from "./FacebookSetupGuide";
 import RedditScan, { ScanResults, threadAsDiscussion } from "./RedditScan";
+import YouTubeComments, { videoCommentAsDiscussion } from "./YouTubeComments";
 import { Button, Card, ErrorNote, Field, Placeholder, RangeField, SectionHeading } from "./ui";
 
 const MAX_DISCUSSION = 8000; // as the server's DiscussionRequest
@@ -48,14 +53,18 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
   const [platform, setPlatform] = useState<DiscussionPlatform>("reddit");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<"scan" | "facebook" | "paste">("scan");
+  const [mode, setMode] = useState<"scan" | "facebook" | "youtube" | "paste">("scan");
   const [fromScan, setFromScan] = useState<ScannedThread | null>(null); // the scanned thread loaded into the form
   const [fromPage, setFromPage] = useState<FacebookComment | null>(null); // the Page comment loaded into the form
+  const [fromChannel, setFromChannel] = useState<YouTubeComment | null>(null); // the video comment loaded into the form
   const [scan, setScan] = useState<ScanResult | null>(null); // the last Reddit scan (kept across modes)
-  // The author's Facebook Page (403 for anyone but the admin: no Facebook tab).
+  // The user's own Facebook Page (connected under Integrations → Facebook Page; the admin may use the one in .env).
   const facebook = useApi("facebook-status", api.facebookStatus);
-  const isPageAdmin = facebook.data !== undefined; // the status call succeeded: the admin, connected or not
   const pageConnected = facebook.data?.connected === true;
+  const [showGuide, setShowGuide] = useState(false); // the "How to connect your Page" guide, opened by a button
+  // The user's own YouTube channel (connected under Integrations → YouTube channel).
+  const youtube = useApi("youtube-status", api.youtubeStatus);
+  const channelConnected = youtube.data?.connected === true;
 
   const book = books.find((b) => b.id === bookId) ?? (books.length === 1 ? books[0] : undefined);
   const titles = new Map(books.map((b) => [b.id, bookTitle(b.filename)]));
@@ -64,7 +73,13 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
     const [title, author = b.author] = bookTitle(b.filename).split(" — ");
     return [b.id, author ? `"${title}" by ${author}` : `"${title}"`];
   }));
-  const shown = (discussions.data ?? []).filter((d) => !bookId || d.source_id === bookId);
+  // The analyses of the open mode only: Scan Reddit → Reddit, Facebook Page → Facebook, Paste → the platform chosen
+  // in the form (a thread loaded from the scan or the Page keeps its platform, so its new analysis shows up there).
+  const listPlatform: DiscussionPlatform =
+    mode === "scan" ? "reddit" : mode === "facebook" ? "facebook" : mode === "youtube" ? "youtube" : platform;
+  const platformLabel = DISCUSSION_PLATFORMS.find((p) => p.value === listPlatform)?.label ?? listPlatform;
+  const shown = (discussions.data ?? [])
+    .filter((d) => (!bookId || d.source_id === bookId) && d.platform === listPlatform);
   const tooLong = discussion.length > MAX_DISCUSSION;
 
   /** A new link: take over its platform when the site is known. */
@@ -81,6 +96,7 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
     setPlatform("reddit");
     setFromScan(t);
     setFromPage(null);
+    setFromChannel(null);
     setMode("paste");
   }
 
@@ -90,6 +106,18 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
     setUrl(comment.permalink_url ?? thread.post.permalink_url ?? "");
     setPlatform("facebook");
     setFromPage(comment);
+    setFromScan(null);
+    setFromChannel(null);
+    setMode("paste");
+  }
+
+  /** A comment picked on the YouTube channel: the video, the comment and its replies go into the form. */
+  function analyseVideoComment(thread: YouTubeThread, comment: YouTubeComment) {
+    setDiscussion(videoCommentAsDiscussion(thread, comment));
+    setUrl(comment.permalink_url ?? thread.video.url);
+    setPlatform("youtube");
+    setFromChannel(comment);
+    setFromPage(null);
     setFromScan(null);
     setMode("paste");
   }
@@ -108,6 +136,7 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
       await api.analyzeDiscussion({
         source_id: book.id, discussion: discussion.trim(), url: url.trim(), platform, angle, humanize, tone,
         ...(fromPage ? { facebook_comment_id: fromPage.id } : {}),
+        ...(fromChannel ? { youtube_comment_id: fromChannel.id } : {}),
       });
       onChange();
     } catch (err) {
@@ -127,9 +156,13 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
             <div className="bc-row" role="group" aria-label="How to find a discussion" style={{ gap: 6 }}>
               <Button size="sm" icon={Radar} variant={mode === "scan" ? "secondary" : "ghost"} aria-pressed={mode === "scan"}
                 onClick={() => setMode("scan")}>Scan Reddit</Button>
-              {isPageAdmin && (
+              {facebook.data && (
                 <Button size="sm" icon={MessageCircle} variant={mode === "facebook" ? "secondary" : "ghost"}
-                  aria-pressed={mode === "facebook"} onClick={() => setMode("facebook")}>My Page</Button>
+                  aria-pressed={mode === "facebook"} onClick={() => setMode("facebook")}>Facebook Page</Button>
+              )}
+              {youtube.data && (
+                <Button size="sm" icon={SquarePlay} variant={mode === "youtube" ? "secondary" : "ghost"}
+                  aria-pressed={mode === "youtube"} onClick={() => setMode("youtube")}>YouTube channel</Button>
               )}
               <Button size="sm" icon={ClipboardPaste} variant={mode === "paste" ? "secondary" : "ghost"} aria-pressed={mode === "paste"}
                 onClick={() => setMode("paste")}>Paste</Button>
@@ -142,6 +175,12 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
               <span className="bc-hint">
                 Write a new post for your Facebook Page from the book, or pick a reader&apos;s comment: the agent
                 answers it as you, and you can post the reply as your Page.
+              </span>
+            )}
+            {mode === "youtube" && (
+              <span className="bc-hint">
+                Pick a viewer&apos;s comment under one of your videos: the agent answers it as you, from the book, and
+                you can post the reply as your channel.
               </span>
             )}
             {mode === "paste" && (
@@ -185,16 +224,22 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
           <div className="bc-stack" style={{ gap: 12 }}>
             <ErrorNote>
               {facebook.data.error
-                ? <>Facebook Page not reachable: {facebook.data.error}. Renew FACEBOOK_PAGE_TOKEN (and
-                  FACEBOOK_USER_TOKEN) in server/.env and restart the server.</>
-                : <>Facebook Page not configured: set FACEBOOK_PAGE_ID and FACEBOOK_PAGE_TOKEN in server/.env and
-                  restart the server.</>}
+                ? <>Facebook Page not reachable: {facebook.data.error}</>
+                : <>No Facebook Page connected yet: connect yours under <strong>Integrations → Facebook Page</strong>
+                  in the sidebar.</>}
             </ErrorNote>
-            <div>
+            <div className="bc-row" style={{ gap: 6 }}>
               <Button size="sm" variant="ghost" disabled={facebook.loading} onClick={facebook.reload}>
                 {facebook.loading ? "Checking…" : "Check again"}
               </Button>
+              {!facebook.data.error && (
+                <Button size="sm" variant={showGuide ? "secondary" : "ghost"} icon={CircleHelp} aria-expanded={showGuide}
+                  onClick={() => setShowGuide((v) => !v)}>
+                  {showGuide ? "Hide the guide" : "How to connect your Page"}
+                </Button>
+              )}
             </div>
+            {showGuide && !facebook.data.error && <Card><FacebookSetupGuide /></Card>}
           </div>
         )}
         {mode === "facebook" && pageConnected && facebook.data && (
@@ -203,6 +248,26 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
               <FacebookNewPost bookId={book?.id ?? null} facebook={facebook.data} onChange={onChange} />
               <FacebookComments pageName={facebook.data.page?.name ?? "your Page"} onAnalyse={analyseComment} />
             </div>
+          </Card>
+        )}
+        {mode === "youtube" && youtube.data && !channelConnected && (
+          <div className="bc-stack" style={{ gap: 12 }}>
+            <ErrorNote>
+              {youtube.data.error
+                ? <>YouTube channel not reachable: {youtube.data.error}</>
+                : <>No YouTube channel connected yet: connect yours under <strong>Integrations → YouTube channel</strong>
+                  in the sidebar.</>}
+            </ErrorNote>
+            <div>
+              <Button size="sm" variant="ghost" disabled={youtube.loading} onClick={youtube.reload}>
+                {youtube.loading ? "Checking…" : "Check again"}
+              </Button>
+            </div>
+          </div>
+        )}
+        {mode === "youtube" && channelConnected && youtube.data && (
+          <Card>
+            <YouTubeComments channelName={youtube.data.channel?.name ?? "your channel"} onAnalyse={analyseVideoComment} />
           </Card>
         )}
         {mode === "paste" && (
@@ -216,6 +281,16 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
                   </span>
                   <Button size="sm" variant="ghost" icon={X} onClick={() => setFromPage(null)}
                     title="Analyse the text as an ordinary discussion instead">Not a Page comment</Button>
+                </span>
+              )}
+              {fromChannel && (
+                <span className="bc-hint" style={{ color: "var(--accent-text)", display: "flex", gap: 8, alignItems: "baseline" }}>
+                  <span style={{ flex: 1 }}>
+                    A comment under your YouTube video by <strong>{fromChannel.author ?? "a viewer"}</strong>. The agent
+                    answers it as you, the author; after checking the reply you can post it as your channel.
+                  </span>
+                  <Button size="sm" variant="ghost" icon={X} onClick={() => setFromChannel(null)}
+                    title="Analyse the text as an ordinary discussion instead">Not a channel comment</Button>
                 </span>
               )}
               {fromScan && (
@@ -250,17 +325,18 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
       </div>
 
       <div className="bc-studio-results">
-        <SectionHeading icon={Bot} title="Discussion analyses" count={shown.length} />
+        <SectionHeading icon={Bot} title={`Discussion analyses · ${platformLabel}`} count={shown.length} />
         {discussions.error ? (
           <ErrorNote>{discussions.error}</ErrorNote>
         ) : shown.length ? (
-          shown.map((d) => (
+          // The newest two open; older ones collapsed to their header and first line (click to open).
+          shown.map((d, i) => (
             <DiscussionCard key={d.id} analysis={d} book={bookId ? undefined : titles.get(d.source_id)}
-              bookRef={refs.get(d.source_id)} onChange={onChange} />
+              bookRef={refs.get(d.source_id)} onChange={onChange} defaultOpen={i < 2} />
           ))
         ) : (
           <Placeholder icon={MessagesSquare}>
-            {discussions.loading ? "Loading…" : `Analysed discussions${bookId ? " for this book" : ""} will appear here.`}
+            {discussions.loading ? "Loading…" : `Analysed ${platformLabel} discussions${bookId ? " for this book" : ""} will appear here.`}
           </Placeholder>
         )}
       </div>

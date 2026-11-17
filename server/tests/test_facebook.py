@@ -310,3 +310,28 @@ def test_open_items_reply_goes_to_the_top_comment(graph, monkeypatch):
         _c("top", 0), _c("page", 5, from_page=True, parent="top"), _c("follow", 7, parent="top")]))
     [item] = fb.open_items()
     assert item.id == "follow" and item.reply_to == "top"
+
+
+def test_mark_answered_counts_a_page_reply_anywhere_in_the_thread():
+    comments = fb._mark_answered([
+        _c("top", 0),
+        _c("page1", 5, from_page=True, parent="top"),
+        _c("follow", 7, parent="page1"),                  # a follow-up hanging under the Page's reply
+        _c("page2", 9, from_page=True, parent="follow"),  # the Page's answer hanging under the follow-up
+        _c("again", 11, parent="page2"),                  # asked after it: open
+    ])
+    answered = {c.id: c.answered for c in comments}
+    assert answered == {"top": True, "page1": False, "follow": True, "page2": False, "again": False}
+
+
+def test_open_items_gives_a_follow_up_its_thread(graph, monkeypatch):
+    from app.core.schemas import FacebookComments, FacebookPost, FacebookPosts
+    post = FacebookPost(id=f"{PAGE}_1", created_time="2026-11-10T07:00:00+0000", comment_count=4)
+    monkeypatch.setattr(fb, "list_posts", lambda limit=10, after=None: FacebookPosts(items=[post]))
+    monkeypatch.setattr(fb, "list_comments", lambda post_id, limit=25, after=None: FacebookComments(items=[
+        _c("follow", 7, parent="page"), _c("page", 5, from_page=True, parent="top"), _c("top", 0),
+        _c("elsewhere", 1)]))  # newest first, as Facebook sends them
+    items = {i.id: i for i in fb.open_items()}
+    assert set(items) == {"follow", "elsewhere"}
+    assert [c.id for c in items["follow"].thread] == ["top", "page"]  # oldest first, only its own thread
+    assert items["elsewhere"].thread == []

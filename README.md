@@ -15,7 +15,7 @@ every drafted reply and reached a RAGAs faithfulness of 0.83
 ([eval results](docs/AGENT.md#8-quality-how-it-is-measured)).
 
 Around the agent, the app also writes summaries, posts and campaign kits from the book with citations, answers
-readers on a Facebook Page with approval in Telegram, and offers the book and the guardrails as two MCP servers.
+readers on a Facebook Page (with approval in Telegram) and under the videos of a YouTube channel, and offers the book and the guardrails as two MCP servers.
 
 - Features: [FEATURES.md](FEATURES.md)
 - The agent (purpose, use cases, how it works, technical decisions, evaluation): [docs/AGENT.md](docs/AGENT.md)
@@ -42,8 +42,14 @@ You need **3 terminals**: server, client, and (optionally) the MCP Inspector.
   update that brings a new migration).
 - Optional: a [Tavily](https://tavily.com) API key (free plan) for the **Reddit scan**: `TAVILY_API_KEY=tvly-...` in
   `server/.env`. Without it the scan answers 503; pasting a discussion still works.
-- Optional: your own **Facebook Page** (`FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_TOKEN`, `FACEBOOK_APP_SECRET`), for
-  answering readers' comments and publishing posts. Setup steps are in the comments in `server/.env.example`.
+- Optional: **Facebook Pages**, for answering readers' comments and publishing posts. With a Meta app
+  (`FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`) and `TOKEN_ENCRYPTION_KEY`, every user connects their own Page under
+  **Integrations → Facebook Page** (Facebook Login). The admin can instead set one Page directly (`FACEBOOK_PAGE_ID`,
+  `FACEBOOK_PAGE_TOKEN`). Setup steps are in the comments in `server/.env.example`.
+- Optional: **YouTube channels**, for answering comments under the videos. With a Google Cloud OAuth client
+  (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, YouTube Data API v3 enabled) and `TOKEN_ENCRYPTION_KEY`, every user
+  connects their own channel under **Integrations → YouTube channel** (Google sign-in). Setup steps are in the comments
+  in `server/.env.example`.
 - Optional: LangSmith tracing, see the comments in `server/.env.example`.
 
 ### 1. Start the server (terminal 1)

@@ -6,13 +6,14 @@
  * collapsed, the discussion itself and the agent's trace (searches and tool calls).
  * Security: a "possible prompt injection" badge and notice when the discussion's scan found one, and the output
  * guard's warnings on the reply (injection phrases, links not from the book). For a comment on the author's Facebook
- * Page, "Reply on Facebook" posts the reply as the Page (once; the server refuses a reply with a likely injection).
+ * Page, "Reply on Facebook" posts the reply as the Page (once; the server refuses a reply with a likely injection);
+ * for a comment on their YouTube channel, "Reply as channel" does the same on YouTube.
  */
 
 import { useState, type ReactNode } from "react";
 import {
-  AlertTriangle, BookMarked, Check, CircleSlash, Copy, ExternalLink, MessageCircle, MessageSquarePlus, Pencil, Send,
-  ShieldAlert, ThumbsUp, Trash2, UserCheck, X,
+  AlertTriangle, BookMarked, Check, ChevronDown, ChevronRight, CircleSlash, Copy, ExternalLink, MessageCircle, MessageSquarePlus, Pencil, Send,
+  ShieldAlert, SquarePlay, ThumbsUp, Trash2, UserCheck, X,
 } from "lucide-react";
 import {
   api, cleanText, DISCUSSION_PLATFORMS, errorMessage, humanizeLabel, locationLabel, TONES, type DiscussionAnalysis, type Recommendation,
@@ -39,6 +40,11 @@ function Boxed({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+/** The first non-empty line of the discussion (e.g. "Title: …"), shown when the card is collapsed. */
+function firstLine(text: string) {
+  return text.split(/\r?\n/).map((l) => l.trim()).find(Boolean) ?? "";
+}
+
 /**
  * One analysis with its actions: Copy (the reply without citation markers), Edit (save the author's version),
  * Open discussion (the pasted link, in a new tab) and Delete. For a comment on the author's Facebook Page also
@@ -47,10 +53,12 @@ function Boxed({ label, children }: { label: string; children: ReactNode }) {
  * @param book Readable title of its book, shown when the list is not limited to one book.
  * @param bookRef The book as a reference ("Title by Author"), for "Copy source": the reply itself names neither.
  * @param onChange Called after the reply was saved or the analysis deleted, to reload the list.
+ * @param defaultOpen Show the whole analysis at first (true) or only its header and the discussion's first line.
  */
-export default function DiscussionCard({ analysis: a, book, bookRef, onChange }: {
-  analysis: DiscussionAnalysis; book?: string; bookRef?: string; onChange: () => void;
+export default function DiscussionCard({ analysis: a, book, bookRef, onChange, defaultOpen = true }: {
+  analysis: DiscussionAnalysis; book?: string; bookRef?: string; onChange: () => void; defaultOpen?: boolean;
 }) {
+  const [open, setOpen] = useState(defaultOpen); // collapsed: header and the discussion's first line only
   const [draft, setDraft] = useState<string | null>(null); // reply being edited; null = not editing
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -113,13 +121,14 @@ export default function DiscussionCard({ analysis: a, book, bookRef, onChange }:
     }
   }
 
-  /** After a confirmation showing the exact text, post the reply as the Page under the comment. */
+  /** After a confirmation showing the exact text, post the reply as the Page or channel under the comment. */
   async function replyAsPage() {
-    if (!window.confirm(`Post this reply as your Facebook Page now? Everyone can see it.\n\n${publishable}`)) return;
+    const where = a.youtube_comment_id ? "your YouTube channel" : "your Facebook Page";
+    if (!window.confirm(`Post this reply as ${where} now? Everyone can see it.\n\n${publishable}`)) return;
     setReplying(true);
     setError(null);
     try {
-      await api.replyOnFacebook(a.id);
+      await (a.youtube_comment_id ? api.replyOnYouTube(a.id) : api.replyOnFacebook(a.id));
       onChange();
     } catch (e) {
       setError(errorMessage(e));
@@ -142,10 +151,14 @@ export default function DiscussionCard({ analysis: a, book, bookRef, onChange }:
   return (
     <article className="bc-out">
       <div className="bc-out-h" style={{ flexWrap: "wrap" }}>
-        <strong>{book ?? "Discussion analysis"}</strong>
+        <Button variant="ghost" size="sm" icon={open ? ChevronDown : ChevronRight} aria-expanded={open}
+          aria-label={open ? "Collapse this analysis" : "Expand this analysis"} onClick={() => setOpen(!open)} />
+        <strong style={{ cursor: "pointer" }} onClick={() => setOpen(!open)}>{book ?? "Discussion analysis"}</strong>
         <Badge tone={rec.tone} icon={rec.icon}>{rec.label}</Badge>
-        {a.facebook_comment_id ? <Badge tone="accent" icon={MessageCircle}>Your Facebook Page</Badge> : platform && <Badge>{platform.label}</Badge>}
-        {a.replied_url && <Badge tone="success" icon={Send}>replied</Badge>}
+        {a.facebook_comment_id ? <Badge tone="accent" icon={MessageCircle}>Your Facebook Page</Badge>
+          : a.youtube_comment_id ? <Badge tone="accent" icon={SquarePlay}>Your YouTube channel</Badge>
+          : platform && <Badge>{platform.label}</Badge>}
+        {(a.replied_url || a.replied_id) && <Badge tone="success" icon={Send}>replied</Badge>}
         {a.tone && a.tone !== "neutral" && <Badge>{TONES.find((t) => t.value === a.tone)?.label ?? a.tone}</Badge>}
         {a.edited && <Badge tone="warning" icon={Pencil}>edited</Badge>}
         <InjectionBadge risk={a.injection_risk} findings={a.injection_findings} />
@@ -158,6 +171,14 @@ export default function DiscussionCard({ analysis: a, book, bookRef, onChange }:
         <Button variant="ghost" size="sm" icon={Trash2} onClick={remove} title="Delete this analysis">Delete</Button>
       </div>
 
+      {!open && (
+        <button type="button" className="bc-hint" onClick={() => setOpen(true)} title="Show the whole analysis"
+          style={{ all: "unset", cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {firstLine(a.discussion)}
+        </button>
+      )}
+
+      {open && (<>
       {a.injection_risk === "high" && (
         <span className="bc-hint" role="alert" style={{ color: "var(--danger-text)", display: "flex", gap: 6 }}>
           <ShieldAlert size={14} className="bc-ico" aria-hidden style={{ flex: "none", marginTop: 2 }} />
@@ -200,16 +221,21 @@ export default function DiscussionCard({ analysis: a, book, bookRef, onChange }:
                   <Button size="sm" icon={Send} loading={replying} onClick={replyAsPage} disabled={overLimit}
                     title="Post the reply (without citation markers) under the comment, as your Page">Reply as Page</Button>
                 )}
+                {a.youtube_comment_id && !a.replied_id && (
+                  <Button size="sm" icon={Send} loading={replying} onClick={replyAsPage} disabled={overLimit}
+                    title="Post the reply (without citation markers) under the comment, as your YouTube channel">Reply as channel</Button>
+                )}
                 {openLink}
                 <Button variant="ghost" size="sm" icon={Pencil} onClick={() => setDraft(a.reply)}>Edit</Button>
               </>
             )}
           </div>
-          {a.replied_url && draft === null && (
+          {(a.replied_url || a.replied_id) && draft === null && (
             <span className="bc-hint">
-              Posted as your Page{a.replied_at ? ` on ${new Date(a.replied_at).toLocaleString()}` : ""}:{" "}
-              <a href={a.replied_url} target="_blank" rel="noopener noreferrer">open the reply <ExternalLink size={12} aria-hidden /></a>
-              {" "}Later edits here do not change it on Facebook.
+              Posted as your {a.youtube_comment_id ? "channel" : "Page"}{a.replied_at ? ` on ${new Date(a.replied_at).toLocaleString()}` : ""}
+              {a.replied_url ? <>:{" "}
+                <a href={a.replied_url} target="_blank" rel="noopener noreferrer">open the reply <ExternalLink size={12} aria-hidden /></a></> : "."}
+              {" "}Later edits here do not change it on {a.youtube_comment_id ? "YouTube" : "Facebook"}.
             </span>
           )}
           {draft === null ? (
@@ -251,7 +277,7 @@ export default function DiscussionCard({ analysis: a, book, bookRef, onChange }:
             </Badge>
           </span>
           <span className="bc-hint" style={{ flex: 1 }}>{a.book_mention.reason}</span>
-          {bookRef && !a.facebook_comment_id && (
+          {bookRef && !a.facebook_comment_id && !a.youtube_comment_id && (
             <Button size="sm" variant={sourceCopied ? "success" : "ghost"} icon={sourceCopied ? Check : BookMarked}
               onClick={copySource} title={`If someone asks for the source: copies "The source is ${bookRef}…" with the chapters and pages`}>
               {sourceCopied ? "Copied" : "Copy source"}
@@ -290,6 +316,7 @@ export default function DiscussionCard({ analysis: a, book, bookRef, onChange }:
         <span style={{ flex: 1 }} />
         {!hasReply && openLink}
       </div>
+      </>)}
     </article>
   );
 }

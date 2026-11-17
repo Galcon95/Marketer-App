@@ -13,10 +13,10 @@ from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy import inspect as sa_inspect
 
 from app.core.schemas import (ApiKey, Asset, BookSummary, Chunk, ChunkLocation, Conversation, DiscussionAnalysis,
-                              Project, Source, UsageRecord, UsageTotals)
+                              FacebookConnection, Project, Source, UsageRecord, UsageTotals, YouTubeConnection)
 from app.db.database import session
-from app.db.tables import (ApiKeyRow, AssetRow, Base, ChunkRow, ConversationRow, DiscussionRow, ProjectRow, SourceRow,
-                           SummaryRow, UsageRow)
+from app.db.tables import (ApiKeyRow, AssetRow, Base, ChunkRow, ConversationRow, DiscussionRow, FacebookConnectionRow,
+                           ProjectRow, SourceRow, SummaryRow, UsageRow, YouTubeConnectionRow)
 
 # Fields saved in a JSON column (nested models, lists): written in JSON mode, so datetimes inside become strings.
 ASSET_JSON_FIELDS = {"citations", "source_ids", "ai_tells"}
@@ -90,6 +90,48 @@ def set_api_key_last_used(key_id: str, when: datetime) -> None:
     """Note when a key was last used."""
     with session() as s:
         s.execute(update(ApiKeyRow).where(ApiKeyRow.id == key_id).values(last_used_at=when))
+
+
+# ---------- Facebook Pages connected by users ----------
+def get_facebook_connection(user_id: str) -> FacebookConnection | None:
+    """The user's connected Facebook Page (token encrypted), or None."""
+    with session() as s:
+        row = s.get(FacebookConnectionRow, user_id)
+        return FacebookConnection(user_id=row.user_id, page_id=row.page_id, page_name=row.page_name, token=row.token,
+                                  connected_at=row.connected_at) if row else None
+
+
+def save_facebook_connection(connection: FacebookConnection) -> None:
+    """Save the user's Page (replaces the one connected before)."""
+    with session() as s:
+        s.merge(FacebookConnectionRow(**connection.model_dump()))
+
+
+def delete_facebook_connection(user_id: str) -> None:
+    """Forget the user's Page; nothing happens if there is none."""
+    with session() as s:
+        s.execute(delete(FacebookConnectionRow).where(FacebookConnectionRow.user_id == user_id))
+
+
+# ---------- YouTube channels connected by users ----------
+def get_youtube_connection(user_id: str) -> YouTubeConnection | None:
+    """The user's connected YouTube channel (refresh token encrypted), or None."""
+    with session() as s:
+        row = s.get(YouTubeConnectionRow, user_id)
+        return YouTubeConnection(user_id=row.user_id, channel_id=row.channel_id, channel_name=row.channel_name,
+                                 token=row.token, connected_at=row.connected_at) if row else None
+
+
+def save_youtube_connection(connection: YouTubeConnection) -> None:
+    """Save the user's channel (replaces the one connected before)."""
+    with session() as s:
+        s.merge(YouTubeConnectionRow(**connection.model_dump()))
+
+
+def delete_youtube_connection(user_id: str) -> None:
+    """Forget the user's channel; nothing happens if there is none."""
+    with session() as s:
+        s.execute(delete(YouTubeConnectionRow).where(YouTubeConnectionRow.user_id == user_id))
 
 
 # ---------- Generated assets ----------

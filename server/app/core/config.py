@@ -20,12 +20,27 @@ Read once on import from environment variables (and server/.env, if present), fi
                           see tracing.py). Default off; keep it off for customers and in production
     TAVILY_API_KEY      → optional, key of the Tavily search API ("tvly-..."): the Reddit scan finds threads with it
                           (agents/discussion_scan.py); without it the scan answers 503, everything else works
-    FACEBOOK_PAGE_ID, FACEBOOK_PAGE_TOKEN → optional, the author's own Facebook Page and its Page access token
+    FACEBOOK_PAGE_ID, FACEBOOK_PAGE_TOKEN → optional, the admin's own Facebook Page and its Page access token
                           (Graph API, see social/facebook.py): read its posts and comments, publish a post, reply to a
-                          comment; without them the Facebook features answer 503
+                          comment. Only for the admin (DEFAULT_CLIENT_OWNER) and the Page inbox agent; every other
+                          user connects their own Page (FACEBOOK_APP_ID below)
+    FACEBOOK_APP_ID     → optional, id of the Meta app: with it, FACEBOOK_APP_SECRET and TOKEN_ENCRYPTION_KEY every
+                          user can connect their own Page with Facebook Login (social/page_connections.py)
+    TOKEN_ENCRYPTION_KEY → optional, a Fernet key (44 characters; make one with `uv run python -c "from
+                          cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`): the users' Page
+                          tokens are saved encrypted with it (core/secret_box.py). Changing it disconnects every Page
+    PUBLIC_API_URL      → optional, the address under which browsers reach this server (default
+                          "http://localhost:8000"): Facebook sends the user back to PUBLIC_API_URL/facebook/oauth/callback,
+                          which must be a "Valid OAuth Redirect URI" of the Meta app
+    CLIENT_ORIGINS      → optional, comma-separated origins of the web client (default "http://localhost:3000,
+                          http://127.0.0.1:3000"): CORS, and where the Facebook Login may send the user back to
     FACEBOOK_APP_SECRET → optional, secret of the Meta app the token belongs to: every Graph request then carries an
                           appsecret_proof (Meta's protection against a stolen token being used elsewhere)
     FACEBOOK_GRAPH_VERSION → optional, the Graph API version (default "v27.0")
+    GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET → optional, the OAuth client ("Web application") of a Google Cloud project
+                          with the YouTube Data API v3: with them and TOKEN_ENCRYPTION_KEY every user can connect their
+                          own YouTube channel with Google sign-in (social/channel_connections.py). Its authorized
+                          redirect URI must be PUBLIC_API_URL/youtube/oauth/callback
     TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID → optional, the author's Telegram bot and their chat with it (Bot API, see
                           social/telegram.py): the agent sends proposed replies there and the author approves them;
                           messages from any other chat are ignored. Without both, Telegram is off
@@ -82,6 +97,14 @@ FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID", "").strip()
 FACEBOOK_PAGE_TOKEN = os.getenv("FACEBOOK_PAGE_TOKEN", "").strip()
 FACEBOOK_APP_SECRET = os.getenv("FACEBOOK_APP_SECRET", "").strip()
 FACEBOOK_GRAPH_VERSION = os.getenv("FACEBOOK_GRAPH_VERSION", "v27.0").strip() or "v27.0"
+FACEBOOK_APP_ID = os.getenv("FACEBOOK_APP_ID", "").strip()
+TOKEN_ENCRYPTION_KEY = os.getenv("TOKEN_ENCRYPTION_KEY", "").strip()
+PUBLIC_API_URL = (os.getenv("PUBLIC_API_URL", "").strip() or "http://localhost:8000").rstrip("/")
+CLIENT_ORIGINS = [o.strip().rstrip("/") for o in (os.getenv("CLIENT_ORIGINS", "").strip()
+                  or "http://localhost:3000,http://127.0.0.1:3000").split(",") if o.strip()]
+
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 _chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()

@@ -1,4 +1,4 @@
-"""The author's own Facebook Page through Meta's Graph API: read posts and comments, publish a post, reply to a comment.
+"""A Facebook Page through Meta's Graph API: read posts and comments, publish a post, reply to a comment.
 
     page_info()                      the Page: name, followers, link
     list_posts(limit, after)         the Page's feed (its own posts and visitors' posts), newest first
@@ -9,14 +9,17 @@
     reply_to_comment(id, message)    a reply as the Page under a comment         (writes)
     comment_on_post(id, message)     a comment as the Page under a (visitor's) post (writes)
 
-Only the Page in FACEBOOK_PAGE_ID, with its Page access token FACEBOOK_PAGE_TOKEN (server/.env; a Page token made from a
-long-lived user token does not expire). The token goes in the Authorization header, never in a URL, and is never
-logged; with FACEBOOK_APP_SECRET set every request also carries an appsecret_proof. The writing functions only run on
+Which Page: the one set with `as_page(page)` for the current request (a user's own Page, connected with Facebook
+Login: page_connections.py), else the admin's Page in server/.env (FACEBOOK_PAGE_ID, FACEBOOK_PAGE_TOKEN; used by the
+Page inbox agent). The API always sets the Page explicitly, so a user never falls back to the admin's Page. A Page token
+made from a long-lived user token does not expire. The token goes in the Authorization header, never in a URL, and is
+never logged; with FACEBOOK_APP_SECRET set every request also carries an appsecret_proof. The writing functions only run on
 the author's decision (a button in the app, or "make it so" in Telegram): nothing here posts by itself.
 
 Visitor posts are found in the Page's feed by their author (the visitor_posts edge needs more permissions than the
-Page token has). Facebook keeps replies one level deep: a reply to a reply lands under the top comment, so a comment
-counts as answered when the Page wrote in its thread at or after it.
+Page token has). A thread is a top comment with everything under it (a reply to a reply may hang under the top
+comment or under that reply, depending on Facebook): a comment counts as answered when the Page wrote anywhere in its
+thread at or after it.
 
 Comments and visitor posts are other people's text: whoever passes them to a model quotes them as untrusted data
 (guard.py).
@@ -30,6 +33,10 @@ import hashlib
 import hmac
 import logging
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -57,6 +64,40 @@ _RATE_CODES = {4, 17, 32, 613, 80001}  # app, user or Page rate limit
 _NOT_FOUND_CODES = {100, 803}  # unknown object or bad parameter
 
 
+@dataclass(frozen=True)
+class PageAccess:
+    """A Page and its access token (never shown in logs or reprs)."""
+
+    page_id: str
+    token: str = field(repr=False)
+    from_env: bool = False  # the admin's Page from server/.env (not a user's connection)
+
+
+_page: ContextVar[PageAccess | None] = ContextVar("facebook_page", default=None)
+
+
+def env_page() -> PageAccess | None:
+    """The admin's Page from server/.env, or None if it is not configured."""
+    if config.FACEBOOK_PAGE_ID and config.FACEBOOK_PAGE_TOKEN:
+        return PageAccess(config.FACEBOOK_PAGE_ID, config.FACEBOOK_PAGE_TOKEN, from_env=True)
+    return None
+
+
+@contextmanager
+def as_page(page: PageAccess) -> Iterator[PageAccess]:
+    """Every call in the block works on this Page."""
+    reset = _page.set(page)
+    try:
+        yield page
+    finally:
+        _page.reset(reset)
+
+
+def _current() -> PageAccess | None:
+    """The Page of the current block (as_page), else the admin's Page from server/.env."""
+    return _page.get() or env_page()
+
+
 class FacebookError(Exception):
     """A Facebook request failed; status_code is the HTTP status the API should return."""
 
@@ -66,13 +107,13 @@ class FacebookError(Exception):
 
 
 def is_configured() -> bool:
-    """True if a Page and its token are set in the configuration."""
-    return bool(config.FACEBOOK_PAGE_ID and config.FACEBOOK_PAGE_TOKEN)
+    """True if there is a Page to work on (as_page, or the admin's Page in server/.env)."""
+    return _current() is not None
 
 
 def page_info() -> FacebookPage:
-    """The configured Page's name, followers and link."""
-    data = _request("GET", config.FACEBOOK_PAGE_ID, {"fields": "id,name,followers_count,fan_count,link"})
+    """The Page's name, followers and link."""
+    data = _request("GET", _page_id(), {"fields": "id,name,followers_count,fan_count,link"})
     return FacebookPage(id=data["id"], name=data.get("name", ""),
                         followers=data.get("followers_count", data.get("fan_count")), link=data.get("link"))
 
@@ -84,7 +125,7 @@ def list_posts(limit: int = 10, after: str | None = None) -> FacebookPosts:
         limit: Posts per page (1-100).
         after: The `after` of the previous page, for the next one.
     """
-    data = _request("GET", f"{config.FACEBOOK_PAGE_ID}/feed", _paging(limit, after, fields=POST_FIELDS))
+    data = _request("GET", f"{_page_id()}/feed", _paging(limit, after, fields=POST_FIELDS))
     return FacebookPosts(items=[_post(p) for p in data.get("data", [])], after=_after(data))
 
 
@@ -133,11 +174,15 @@ def open_items(posts: int = 10) -> list[FacebookInboxItem]:
             items.append(FacebookInboxItem(
                 kind="visitor_post", id=post.id, reply_to=post.id, post=post, message=post.message,
                 author=post.author, created_time=post.created_time, permalink_url=post.permalink_url))
+        roots = _roots(comments)
         for c in comments:
             if not c.from_page and not c.answered and c.message.strip():
+                # a follow-up inside a thread comes with what was written in the thread before it, oldest first
+                earlier = sorted((o for o in comments if c.parent_id and o.id != c.id and roots[o.id] == roots[c.id]
+                                  and o.created_time <= c.created_time), key=lambda o: o.created_time)
                 items.append(FacebookInboxItem(
                     kind="comment", id=c.id, reply_to=c.parent_id or c.id, post=post, message=c.message,
-                    author=c.author, created_time=c.created_time, permalink_url=c.permalink_url))
+                    author=c.author, created_time=c.created_time, permalink_url=c.permalink_url, thread=earlier))
     return sorted(items, key=lambda i: i.created_time)
 
 
@@ -153,7 +198,7 @@ def publish_post(message: str, link: str | None = None) -> FacebookPublished:
         if not re.match(r"^https?://\S+$", link):
             raise ValueError("The link must be an http(s) URL.")
         body["link"] = link
-    data = _request("POST", f"{config.FACEBOOK_PAGE_ID}/feed", data=body)
+    data = _request("POST", f"{_page_id()}/feed", data=body)
     return FacebookPublished(id=data["id"], url=f"https://www.facebook.com/{data['id']}")
 
 
@@ -195,18 +240,25 @@ def _client() -> httpx.Client:
 def _request(method: str, path: str, params: dict[str, Any] | None = None,
              data: dict[str, Any] | None = None) -> dict[str, Any]:
     """One Graph request with the Page token; the JSON answer, or FacebookError."""
-    if not is_configured():
-        raise FacebookError(503, "Facebook is not connected: set FACEBOOK_PAGE_ID and FACEBOOK_PAGE_TOKEN in "
-                                 "server/.env and restart the server.")
-    token = config.FACEBOOK_PAGE_TOKEN
+    page = _current()
+    if not page:
+        raise FacebookError(503, "No Facebook Page is connected: connect yours under Integrations → Facebook Page.")
+    return graph_request(method, path, page.token, params, data, from_env=page.from_env)
+
+
+def graph_request(method: str, path: str, token: str | None, params: dict[str, Any] | None = None,
+                  data: dict[str, Any] | None = None, from_env: bool = False) -> dict[str, Any]:
+    """One Graph request, with `token` in the Authorization header (None: no token, e.g. the Facebook Login code
+    exchange, whose app secret is in the parameters); the JSON answer, or FacebookError. `from_env` only changes the
+    advice when the token is invalid."""
     params = dict(params or {})
-    if config.FACEBOOK_APP_SECRET:
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    if token and config.FACEBOOK_APP_SECRET:
         params["appsecret_proof"] = hmac.new(config.FACEBOOK_APP_SECRET.encode(), token.encode(),
                                              hashlib.sha256).hexdigest()
     try:
         with _client() as client:
-            response = client.request(method, path, params=params, data=data,
-                                      headers={"Authorization": f"Bearer {token}"})
+            response = client.request(method, path, params=params, data=data, headers=headers)
     except httpx.TimeoutException as e:
         raise FacebookError(504, "Facebook did not answer in time. Try again.") from e
     except httpx.HTTPError as e:  # no str(e): keep request details out of messages
@@ -218,16 +270,19 @@ def _request(method: str, path: str, params: dict[str, Any] | None = None,
         body = {}
     if response.is_success and "error" not in body:
         return body
-    raise _error(body.get("error") or {}, response.status_code, method, path)
+    raise _error(body.get("error") or {}, response.status_code, method, path, from_env)
 
 
-def _error(error: dict[str, Any], http_status: int, method: str, path: str) -> FacebookError:
+def _error(error: dict[str, Any], http_status: int, method: str, path: str, from_env: bool = False) -> FacebookError:
     """FacebookError for a Graph error answer, with a status and a message the author can act on."""
     code, message = error.get("code"), error.get("message") or f"HTTP {http_status}"
     logger.warning("Facebook %s /%s: Graph error %s (%s): %s", method, path, code, error.get("type"), message)
     if code in _TOKEN_CODES:
-        return FacebookError(503, "The Facebook Page token is invalid or expired: create a new one (see "
-                                  "server/.env.example) and restart the server.")
+        if from_env:
+            return FacebookError(503, "The Facebook Page token is invalid or expired: create a new one (see "
+                                      "server/.env.example) and restart the server.")
+        return FacebookError(503, "Facebook no longer accepts the connection to your Page (e.g. you changed your "
+                                  "password or removed the app): connect it again under Integrations → Facebook Page.")
     if code in _PERMISSION_CODES:
         return FacebookError(503, f"The Facebook token lacks a permission for this: {message}")
     if code in _RATE_CODES:
@@ -235,6 +290,12 @@ def _error(error: dict[str, Any], http_status: int, method: str, path: str) -> F
     if code in _NOT_FOUND_CODES:
         return FacebookError(404, f"Facebook could not find this post or comment: {message}")
     return FacebookError(502, f"Facebook answered with an error: {message}")
+
+
+def _page_id() -> str:
+    """Id of the current Page ("" if there is none; _request refuses then)."""
+    page = _current()
+    return page.page_id if page else ""
 
 
 def _paging(limit: int, after: str | None, **params: Any) -> dict[str, Any]:
@@ -259,7 +320,7 @@ def _post(p: dict[str, Any]) -> FacebookPost:
         id=p["id"], message=p.get("message", ""), created_time=p["created_time"],
         permalink_url=p.get("permalink_url"), picture=p.get("full_picture"),
         comment_count=((p.get("comments") or {}).get("summary") or {}).get("total_count", 0),
-        author=author.get("name"), from_page=not author or author.get("id") == config.FACEBOOK_PAGE_ID,
+        author=author.get("name"), from_page=not author or author.get("id") == _page_id(),
     )
 
 
@@ -268,22 +329,39 @@ def _comment(c: dict[str, Any], post_id: str) -> FacebookComment:
     author = c.get("from") or {}
     return FacebookComment(
         id=c["id"], post_id=post_id, message=c.get("message", ""), created_time=c["created_time"],
-        author=author.get("name"), from_page=author.get("id") == config.FACEBOOK_PAGE_ID,
+        author=author.get("name"), from_page=author.get("id") == _page_id(),
         parent_id=(c.get("parent") or {}).get("id"), reply_count=c.get("comment_count", 0),
         permalink_url=c.get("permalink_url"),
     )
 
 
+def _roots(comments: list[FacebookComment]) -> dict[str, str]:
+    """For each comment the id of its thread: the top comment it hangs under, however deep (a parent that is not in
+    the list counts as the top)."""
+    parents = {c.id: c.parent_id for c in comments}
+
+    def root(comment_id: str) -> str:
+        for _ in range(20):  # threads are shallow; the bound only guards against a loop in bad data
+            parent = parents.get(comment_id)
+            if not parent:
+                break
+            comment_id = parent
+        return comment_id
+
+    return {c.id: root(c.id) for c in comments}
+
+
 def _mark_answered(comments: list[FacebookComment]) -> list[FacebookComment]:
-    """The comments with `answered` set: a visitor's comment is answered when the Page wrote in its thread (a reply
-    under the top comment) at or after it. Replies to replies land under the top comment, so a visitor's follow-up
-    after the Page's reply is open again."""
+    """The comments with `answered` set: a visitor's comment is answered when the Page replied anywhere in its thread
+    at or after it (wherever Facebook hangs the reply: under the top comment, under the comment itself or under an
+    earlier reply). A visitor's follow-up after the Page's last reply is open again."""
+    roots = _roots(comments)
     page_replies: dict[str, list] = {}
     for c in comments:
         if c.from_page and c.parent_id:
-            page_replies.setdefault(c.parent_id, []).append(c.created_time)
+            page_replies.setdefault(roots[c.id], []).append(c.created_time)
     return [c.model_copy(update={"answered": not c.from_page and any(
-        t >= c.created_time for t in page_replies.get(c.parent_id or c.id, []))}) for c in comments]
+        t >= c.created_time for t in page_replies.get(roots[c.id], []))}) for c in comments]
 
 
 def _check_id(value: str, what: str) -> None:

@@ -33,7 +33,7 @@ def env(monkeypatch):
     """A worker with fakes: `env.waiting` is the waiting run (thread id, message id) or None; `env.open` the Page's
     open items; what the worker did is recorded."""
     e = SimpleNamespace(said=[], answered=[], removed=[], started=[], resumed=[], waiting=None, open=[_item()],
-                        decided=set(), resume_result="posted", start_error=None, open_error=None)
+                        decided=set(), resume_result="posted", start_error=None, open_error=None, withdrawn=[])
     monkeypatch.setattr(worker_module.telegram, "send_message",
                         lambda text, buttons=None, reply_to=None: e.said.append((text, reply_to)) or 1)
     monkeypatch.setattr(worker_module.telegram, "answer_button", lambda cid, text=None: e.answered.append(text))
@@ -60,8 +60,15 @@ def env(monkeypatch):
         e.waiting = None if e.resume_result != "waiting" else ("thread", 102)
         return e.resume_result
 
+    def withdraw(thread_id, message_id):
+        e.withdrawn.append((thread_id, message_id))
+        e.waiting = None
+        return True
+
     monkeypatch.setattr(inbox, "start", start)
     monkeypatch.setattr(inbox, "resume", resume)
+    monkeypatch.setattr(inbox, "withdraw", withdraw)
+    monkeypatch.setattr(inbox, "item_of", lambda thread_id: "222_9")  # the waiting run is about the default item
     e.worker = worker_module.InboxWorker(interval_minutes=30)
     return e
 
@@ -242,3 +249,18 @@ def test_started_when_everything_is_configured(monkeypatch):
     monkeypatch.setattr(worker_module.InboxWorker, "start", lambda self: started.append(self))
     worker = worker_module.start_if_configured()
     assert started == [worker] and worker.interval == 15 * 60
+
+
+# ---------- a waiting proposal answered elsewhere ----------
+def test_a_waiting_proposal_answered_elsewhere_is_taken_back_and_the_next_proposed(env):
+    env.waiting = ("thread", 101)
+    env.open = [_item("222_12")]  # the waiting item (222_9) is no longer open on the Page; a newer one is
+    env.worker.tick(10_000_000.0)
+    assert env.withdrawn == [("thread", 101)] and env.started == ["222_12"]
+
+
+def test_next_takes_back_an_answered_proposal_too(env):
+    env.waiting = ("thread", 101)
+    env.open = []
+    env.worker.handle(_text("/next"))
+    assert env.withdrawn == [("thread", 101)] and env.said == [("Nothing new on your Page.", None)]

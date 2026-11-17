@@ -71,7 +71,7 @@ export function TextWithMarkers({ text }: { text: string }) {
  * (admin only); once published, the card links to the post instead.
  * @param asset The asset to display.
  * @param onChange Called after the asset was edited, deleted or published, to reload the asset list.
- * @param facebook The Facebook Page status (undefined = not available to this user: no Publish button).
+ * @param facebook The user's Facebook Page status (undefined = not loaded: no Publish button).
  */
 export default function AssetCard({ asset, onChange, facebook }: {
   asset: Asset; onChange: () => void; facebook?: FacebookStatus;
@@ -244,7 +244,7 @@ export default function AssetCard({ asset, onChange, facebook }: {
           </Button>
           <span className="bc-hint" style={{ margin: 0 }}>
             {!facebook.connected
-              ? (facebook.error || "Facebook is not connected: set FACEBOOK_PAGE_ID and FACEBOOK_PAGE_TOKEN in server/.env.")
+              ? (facebook.error || "Connect your Facebook Page first: Integrations → Facebook Page in the sidebar.")
               : draft !== null ? "Save or cancel the edit first."
               : `Posts on ${facebook.page?.name} right away, after you confirm. Check the text first.`}
           </span>

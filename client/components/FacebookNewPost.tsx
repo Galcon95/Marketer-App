@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * "Write a new post" in the "My Facebook Page" tab (Discussion Relevance Agent; admin only): a post or a question for
+ * "Write a new post" in the "My Facebook Page" tab (Discussion Relevance Agent; the user's own Page): a post or a question for
  * the readers, written from the book (POST /generate, grounded, platform Facebook) and published on the Page from the
  * same place, without going to the Content Studio. Below the form: the posts written here in this visit (also once
  * published, with their link) and older drafts that were never published. Each is an AssetCard, so Edit, Verify,

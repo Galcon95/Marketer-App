@@ -7,10 +7,10 @@
  * views share (refresh counter, the book being worked on) and the Agent Workspace (Phase 4) placeholder.
  */
 
-import { useCallback, useState, useSyncExternalStore, type JSX } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore, type JSX } from "react";
 import {
   Bot, Brain, Cpu, Database, FileText, Info, KeyRound, LogOut, Menu, MessagesSquare, Moon, Network, Plug, Server, Settings,
-  Sparkles, Sun, SunMoon, Target, Terminal, Users, UserCheck,
+  Sparkles, SquarePlay, Sun, SunMoon, Target, Terminal, ThumbsUp, Users, UserCheck,
 } from "lucide-react";
 import { api, API_URL } from "@/lib/api";
 import { signOut } from "@/lib/supabase";
@@ -20,6 +20,8 @@ import KnowledgeHub from "./phases/KnowledgeHub";
 import Community from "./phases/Community";
 import McpServers from "./phases/McpServers";
 import ExportDrawer from "./ExportDrawer";
+import FacebookConnection, { type LoginResult } from "./FacebookConnection";
+import YouTubeConnection from "./YouTubeConnection";
 import KeysDrawer from "./KeysPanel";
 import UsageDrawer, { formatTokens, formatUsd } from "./UsagePanel";
 import { Badge, Button, Card, ErrorNote, Placeholder, SectionHeading, Sidebar, StatusRow, Tabs, type NavGroup, type TabItem } from "./ui";
@@ -46,7 +48,7 @@ function useTheme(): "light" | "dark" | null {
 /** Id of one of the four pipeline phases (tabs). */
 type PhaseId = "p1" | "p2" | "p3" | "p4";
 /** Id of a view: a phase, or a page opened from the sidebar only (no phase tab). */
-type ViewId = PhaseId | "mcp";
+type ViewId = PhaseId | "mcp" | "facebook" | "youtube";
 /**
  * Props passed to every phase view: `refresh` reloads its data, `onChange` triggers a global refresh, `bookId` is
  * the book being worked on (null = all books; shared, so a choice in the Knowledge Hub carries over to the
@@ -69,6 +71,8 @@ const TITLES: Record<ViewId, [title: string, crumb: string]> = {
   p3: ["Community", "Discussions worth joining · replies grounded in your books"],
   p4: ["Agent workspace", "Planned · Strategist → Copywriter → Auditor → You"],
   mcp: ["MCP servers", "Integrations · live tool calls via Model Context Protocol"],
+  facebook: ["Facebook Page", "Integrations · your own Page, connected with Facebook Login"],
+  youtube: ["YouTube channel", "Integrations · your own channel, connected with Google sign-in"],
 };
 
 /** Display label and icon for each service name reported by GET /health. */
@@ -132,6 +136,8 @@ const VIEWS: Record<ViewId, (props: PhaseProps) => JSX.Element> = {
   p3: Community,
   p4: AgentWorkspace,
   mcp: McpServers,
+  facebook: () => <></>, // rendered by AppShell itself (it needs the login result)
+  youtube: () => <></>, // the same
 };
 
 /* ---------- Shell ---------- */
@@ -163,6 +169,8 @@ export default function AppShell() {
   const closeKeys = useCallback(() => setKeysOpen(false), []);
   const [exportOpen, setExportOpen] = useState(false); // the asset export panel
   const closeExport = useCallback(() => setExportOpen(false), []);
+  const [login, setLogin] = useState<LoginResult>(null); // result of a Facebook Login that just sent the user back
+  const [googleLogin, setGoogleLogin] = useState<LoginResult>(null); // the same for Google sign-in (YouTube)
   const totals = usage.data?.totals;
   const p = project.data;
   const View = VIEWS[tab];
@@ -183,7 +191,11 @@ export default function AppShell() {
     },
     {
       title: "Integrations",
-      items: [{ id: "mcp", icon: Plug, label: "MCP servers" }],
+      items: [
+        { id: "facebook", icon: ThumbsUp, label: "Facebook Page" },
+        { id: "youtube", icon: SquarePlay, label: "YouTube channel" },
+        { id: "mcp", icon: Plug, label: "MCP servers" },
+      ],
     },
   ];
 
@@ -196,6 +208,27 @@ export default function AppShell() {
     if (id in TITLES) setTab(id as ViewId);
     setNavOpen(false);
   }
+
+  // Back from Facebook Login (?facebook=...) or Google sign-in (?youtube=...): open that view with the result, and
+  // clean the address bar.
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    const facebook = query.get("facebook");
+    const youtube = query.get("youtube");
+    if (!facebook && !youtube) return;
+    window.history.replaceState(null, "", window.location.pathname);
+    const message = query.get("message") ?? "";
+    // Deferred: the result comes from the address bar, which only exists in the browser (not during rendering).
+    queueMicrotask(() => {
+      if (facebook) {
+        setLogin({ result: facebook, message });
+        setTab("facebook");
+      } else if (youtube) {
+        setGoogleLogin({ result: youtube, message });
+        setTab("youtube");
+      }
+    });
+  }, []);
 
   /** Switch between light and dark theme via the data-theme attribute on <html>, and remember the choice
    * (the theme-init script in app/layout.tsx applies it on the next visit). */
@@ -252,7 +285,11 @@ export default function AppShell() {
         {/* key={tab} remounts the view on tab change, resetting its local state. */}
         <div className="bc-view" key={tab}>
           {health.error && <ErrorNote>Backend unreachable at {API_URL}. Start it with “uv run fastapi dev server.py” in server/.</ErrorNote>}
-          <View refresh={refresh} onChange={onChange} bookId={bookId} onSelectBook={setBookId} />
+          {tab === "facebook"
+            ? <FacebookConnection key={login?.result ?? "none"} login={login} onChange={onChange} />
+            : tab === "youtube"
+              ? <YouTubeConnection key={googleLogin?.result ?? "none"} login={googleLogin} onChange={onChange} />
+              : <View refresh={refresh} onChange={onChange} bookId={bookId} onSelectBook={setBookId} />}
         </div>
       </main>
       {usageOpen > 0 && <UsageDrawer openCount={usageOpen} onClose={closeUsage} admin={me.data?.admin} />}

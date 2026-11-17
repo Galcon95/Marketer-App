@@ -151,8 +151,33 @@ export interface FacebookComment {
 }
 /** A post with its comments, newest first (GET /facebook/comments). */
 export interface FacebookThread { post: FacebookPost; comments: FacebookComment[] }
-/** Response of GET /facebook/status (admin only): is the Page connected; `error` says why not when it is set up. */
-export interface FacebookStatus { connected: boolean; page: FacebookPage | null; error: string }
+/**
+ * Response of GET /facebook/status: does the user have a Page to work on; `error` says why it is not reachable.
+ * `source`: "user" = connected by this user with Facebook Login, "server" = the admin's Page from server/.env, "" = none.
+ * `login_available`: the server is set up for Facebook Login.
+ */
+export interface FacebookStatus {
+  connected: boolean; page: FacebookPage | null; error: string; source: "user" | "server" | ""; login_available: boolean;
+}
+/** A Page the user manages, to choose after a Facebook Login that found several. */
+export interface FacebookPageChoice { id: string; name: string }
+/** The author's own YouTube channel. `subscribers` is null when the channel hides the number. */
+export interface YouTubeChannel { id: string; name: string; subscribers: number | null; link: string | null }
+/** A video of the channel. `title` is "" when YouTube did not return it (deleted, private). */
+export interface YouTubeVideo { id: string; title: string; url: string; thumbnail: string | null }
+/** A comment under a video, or a reply to one (parent_id set). Someone else's text, except from_channel ones. */
+export interface YouTubeComment {
+  id: string; video_id: string; message: string; created_time: string;
+  author: string | null;
+  from_channel: boolean; // written by the channel (your own comments and replies)
+  parent_id: string | null; reply_count: number; permalink_url: string | null;
+  answered: boolean; // the channel replied in its thread at or after it
+  injection_risk: InjectionRisk; injection_findings: string[];
+}
+/** A video with its latest comments, newest first (GET /youtube/comments). */
+export interface YouTubeThread { video: YouTubeVideo; comments: YouTubeComment[] }
+/** Response of GET /youtube/status; `error` says why the channel is not reachable (e.g. connect again). */
+export interface YouTubeStatus { connected: boolean; channel: YouTubeChannel | null; error: string; login_available: boolean }
 /** Body of POST /generate. `k` = number of chunks to retrieve as context (server default 5). */
 /**
  * Body of POST /generate. For "social_reply", reply_to (the post) is required and brief is an optional
@@ -247,6 +272,7 @@ export interface DiscussionRequest {
   humanize?: number; // how human the reply should sound, 0-100 (server default 80); AI clichés are rewritten from 60
   tone?: Tone; // the reply's tone (default neutral)
   facebook_comment_id?: string; // a comment on the author's own Facebook Page: answered as the author ("own Page")
+  youtube_comment_id?: string; // a comment on the author's own YouTube channel: answered as the author ("own channel")
 }
 /** How far back a Reddit scan looks. */
 export type ScanTime = "day" | "week" | "month" | "year";
@@ -311,6 +337,7 @@ export interface DiscussionAnalysis {
   humanize: number; // the "how human" setting the reply was written with
   tone: Tone;
   facebook_comment_id?: string; // the comment on the author's Facebook Page it answers; "" = a discussion elsewhere
+  youtube_comment_id?: string; // the comment on the author's YouTube channel it answers; "" = none
   replied_id?: string; // the reply posted as the Page from the app; "" = not posted
   replied_url?: string;
   replied_at?: string | null;
@@ -900,9 +927,26 @@ export const api = {
   /** PATCH /assets/{assetId}: replace an asset's text with the user's edited version. */
   updateAsset: (assetId: string, text: string) =>
     request<Asset>(`/assets/${assetId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }),
-  /** GET /facebook/status (admin only): whether the author's Facebook Page is connected, with its name. */
+  /** GET /facebook/status: whether the user has a Facebook Page to work on, with its name. */
   facebookStatus: () => request<FacebookStatus>("/facebook/status"),
-  /** POST /assets/{assetId}/publish/facebook (admin only): publish the asset on the Facebook Page, once. */
+  /** POST /facebook/connect: the Facebook Login URL; Facebook sends the browser back to `returnTo` (this app's origin). */
+  facebookConnect: (returnTo: string) => request<{ url: string }>("/facebook/connect", postJson({ return_to: returnTo })),
+  /** GET /facebook/connect/pages: the Pages to choose from after a login that found several. */
+  facebookPagesToChoose: () => request<FacebookPageChoice[]>("/facebook/connect/pages"),
+  /** POST /facebook/connect/pages/{pageId}: connect one of them. */
+  facebookChoosePage: (pageId: string) =>
+    request<FacebookStatus>(`/facebook/connect/pages/${encodeURIComponent(pageId)}`, { method: "POST" }),
+  /** DELETE /facebook/connection: forget the user's Page. */
+  facebookDisconnect: () => request<void>("/facebook/connection", { method: "DELETE" }),
+  /** GET /youtube/status: whether the user has connected a YouTube channel, with its name. */
+  youtubeStatus: () => request<YouTubeStatus>("/youtube/status"),
+  /** POST /youtube/connect: Google's sign-in URL; Google sends the browser back to `returnTo` (this app's origin). */
+  youtubeConnect: (returnTo: string) => request<{ url: string }>("/youtube/connect", postJson({ return_to: returnTo })),
+  /** DELETE /youtube/connection: forget the user's channel. */
+  youtubeDisconnect: () => request<void>("/youtube/connection", { method: "DELETE" }),
+  /** GET /youtube/comments: the latest comments on the channel's videos, grouped by video. */
+  youtubeComments: (comments = 50) => request<YouTubeThread[]>(`/youtube/comments?comments=${comments}`),
+  /** POST /assets/{assetId}/publish/facebook: publish the asset on the user's Facebook Page, once. */
   publishToFacebook: (assetId: string) =>
     request<Asset>(`/assets/${assetId}/publish/facebook`, { method: "POST" }),
   /** DELETE /assets/{assetId}: delete a generated asset. */
@@ -941,6 +985,9 @@ export const api = {
     request<DiscussionAnalysis>(`/discussions/${discussionId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reply }) }),
   /** GET /facebook/comments (admin only): the latest Page posts that have comments, with them. */
   facebookComments: (posts = 10) => request<FacebookThread[]>(`/facebook/comments?posts=${posts}`),
+  /** POST /discussions/{id}/reply/youtube: post the analysis's reply as the user's YouTube channel, once. */
+  replyOnYouTube: (discussionId: string) =>
+    request<DiscussionAnalysis>(`/discussions/${discussionId}/reply/youtube`, { method: "POST" }),
   /** POST /discussions/{id}/reply/facebook (admin only): post the analysis's reply as the Page, once. */
   replyOnFacebook: (discussionId: string) =>
     request<DiscussionAnalysis>(`/discussions/${discussionId}/reply/facebook`, { method: "POST" }),

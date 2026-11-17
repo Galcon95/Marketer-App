@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The comments on the author's own Facebook Page (Discussion Relevance Agent, "My Facebook Page" tab; admin only):
+ * The comments on the author's own Facebook Page (Discussion Relevance Agent, "Facebook Page" mode; the user's own Page):
  * the latest posts that have comments, each comment with who wrote it and whether the Page has answered it. A comment
  * can be handed to the agent: the post, the comment and the replies under it go into the paste form, and the agent
  * answers it as the author (GET /facebook/comments; nothing is posted from here).
@@ -14,14 +14,47 @@ import { useApi } from "@/lib/useApi";
 import InjectionBadge from "./InjectionBadge";
 import { Badge, Button, ErrorNote, Placeholder } from "./ui";
 
-/** The comment as text for the agent: the Page post, the comment, then the replies under it (yours as "Me"). */
+/** The top-level comment a comment belongs to (itself when it is one), following parent_id up the thread. */
+function rootOf(thread: FacebookThread, comment: FacebookComment): FacebookComment {
+  let c = comment;
+  for (let i = 0; i < 10 && c.parent_id; i++) {
+    const parent = thread.comments.find((x) => x.id === c.parent_id);
+    if (!parent) break;
+    c = parent;
+  }
+  return c;
+}
+
+/** All replies in the thread of a top-level comment (at any depth), oldest first. */
+function threadReplies(thread: FacebookThread, root: FacebookComment): FacebookComment[] {
+  return thread.comments.filter((c) => c.id !== root.id && rootOf(thread, c).id === root.id).reverse();
+}
+
+/**
+ * The comment as text for the agent: the Page post, the comment, then the replies under it (yours as "Me"). For a
+ * follow-up inside a thread: the thread's first comment and the replies before the follow-up, then the follow-up as
+ * the comment to answer.
+ */
 export function commentAsDiscussion(thread: FacebookThread, comment: FacebookComment): string {
   const name = (c: FacebookComment) => (c.from_page ? "Me (the author)" : c.author ?? "A reader");
-  const replies = thread.comments.filter((c) => c.parent_id === comment.id).reverse(); // oldest first
+  const post = `My post on my Facebook Page:\n${thread.post.message || "(a photo or video without text)"}`;
+  const list = (cs: FacebookComment[]) => cs.map((r) => `- ${name(r)}: ${r.message}`).join("\n");
+  if (comment.parent_id) {
+    const root = rootOf(thread, comment);
+    const before = threadReplies(thread, root)
+      .filter((r) => r.id !== comment.id && r.created_time <= comment.created_time);
+    return [
+      post,
+      `Comment by ${name(root)}:\n${root.message}`,
+      ...(before.length ? [`Replies to it:\n${list(before)}`] : []),
+      `The follow-up to answer now, by ${name(comment)}:\n${comment.message}`,
+    ].join("\n\n");
+  }
+  const replies = threadReplies(thread, comment);
   return [
-    `My post on my Facebook Page:\n${thread.post.message || "(a photo or video without text)"}`,
+    post,
     `Comment by ${name(comment)}:\n${comment.message}`,
-    ...(replies.length ? [`Replies to it:\n${replies.map((r) => `- ${name(r)}: ${r.message}`).join("\n")}`] : []),
+    ...(replies.length ? [`Replies to it:\n${list(replies)}`] : []),
   ].join("\n\n");
 }
 
@@ -40,8 +73,9 @@ export default function FacebookComments({ pageName, onAnalyse }: {
   const [showAnswered, setShowAnswered] = useState(false);
 
   const all = threads.data ?? [];
-  // Readers' top-level comments (replies under a comment come with it); answered ones only on request.
-  const open = (t: FacebookThread) => t.comments.filter((c) => !c.from_page && !c.parent_id && (showAnswered || !c.answered));
+  // Readers' unanswered comments, top-level ones and follow-ups inside a thread (e.g. a new question after the Page's
+  // reply); answered top-level comments only on request (their replies come with them).
+  const open = (t: FacebookThread) => t.comments.filter((c) => !c.from_page && (!c.answered || (showAnswered && !c.parent_id)));
   const answeredCount = all.reduce((n, t) => n + t.comments.filter((c) => !c.from_page && !c.parent_id && c.answered).length, 0);
   const shown = all.filter((t) => open(t).length > 0);
 
@@ -52,7 +86,7 @@ export default function FacebookComments({ pageName, onAnalyse }: {
           Comments on the latest posts of <strong>{pageName}</strong>. Pick one: the agent answers it as you, from the
           book. You check the reply and post it as your Page with one click, or copy it.
         </span>
-        <Button size="sm" variant="ghost" icon={RefreshCw} loading={threads.loading} onClick={() => setNonce((n) => n + 1)}>
+        <Button size="sm" variant="success" icon={RefreshCw} loading={threads.loading} onClick={() => setNonce((n) => n + 1)}>
           Refresh
         </Button>
       </div>
@@ -72,7 +106,8 @@ export default function FacebookComments({ pageName, onAnalyse }: {
           }}>{t.post.message || "(a photo or video without text)"}</p>
           <div className="bc-stack" style={{ gap: 8 }}>
             {open(t).map((c) => {
-              const replies = t.comments.filter((r) => r.parent_id === c.id).length;
+              const replies = c.parent_id ? 0 : threadReplies(t, c).length;
+              const root = c.parent_id ? rootOf(t, c) : null; // set for a follow-up inside a thread
               return (
                 <div key={c.id} style={{ borderTop: "1px solid var(--border)", paddingTop: 8 }}>
                   <div className="bc-row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -81,7 +116,14 @@ export default function FacebookComments({ pageName, onAnalyse }: {
                     {c.answered && <Badge tone="success" icon={CheckCheck}>answered</Badge>}
                     <InjectionBadge risk={c.injection_risk} findings={c.injection_findings} />
                     {replies > 0 && <Badge>{replies} repl{replies > 1 ? "ies" : "y"}</Badge>}
+                    {root && <Badge tone="accent">follow-up</Badge>}
                   </div>
+                  {root && (
+                    <span className="bc-hint" style={{ display: "block", margin: "4px 0 0" }}>
+                      In the thread of {root.from_page ? "your Page" : root.author ?? "a reader"}: &ldquo;
+                      {root.message.length > 90 ? `${root.message.slice(0, 90)}…` : root.message}&rdquo;
+                    </span>
+                  )}
                   <p style={{ margin: "4px 0 8px", whiteSpace: "pre-wrap" }}>{c.message || "(no text: a sticker or picture)"}</p>
                   <Button size="sm" icon={Bot} variant={c.answered ? "secondary" : "primary"} onClick={() => onAnalyse(t, c)}
                     disabled={!c.message.trim()}>Analyse with agent</Button>

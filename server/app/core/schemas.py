@@ -409,16 +409,23 @@ class DiscussionRequest(BaseModel):
     # A comment on the author's own Facebook Page (social/facebook.py): the agent answers it as the author ("own Page"
     # mode: naming the book is fine) and the reply can be posted under it as the Page. "" = a discussion elsewhere.
     facebook_comment_id: str = Field(default="", pattern=r"^(\d+(_\d+)?)?$")
+    # A comment under a video of the author's own YouTube channel (social/youtube.py): answered as the author ("own
+    # channel" mode) and the reply can be posted under it as the channel. "" = not one.
+    youtube_comment_id: str = Field(default="", pattern=r"^([A-Za-z0-9_-]{10,64}(\.[A-Za-z0-9_-]{5,64})?)?$")
 
     @model_validator(mode="after")
     def _check_url(self) -> "DiscussionRequest":
         """Accept an empty URL or a web address (http or https), nothing else (no javascript: links in the GUI).
-        A comment on the author's Facebook Page is always on Facebook."""
+        A comment on the author's Facebook Page is always on Facebook, one on their YouTube channel on YouTube."""
         self.url = self.url.strip()
         if self.url and not self.url.lower().startswith(("http://", "https://")):
             raise ValueError("The URL must start with http:// or https://.")
+        if self.facebook_comment_id and self.youtube_comment_id:
+            raise ValueError("A discussion is a comment on Facebook or on YouTube, not both.")
         if self.facebook_comment_id:
             self.platform = "facebook"
+        if self.youtube_comment_id:
+            self.platform = "youtube"
         return self
 
 
@@ -458,7 +465,8 @@ class DiscussionAnalysis(BaseModel):
     humanize: int = 70  # the "how human" setting the reply was written with (analyses before it was a setting: 70)
     tone: Tone = "neutral"  # the tone the reply was written in
     facebook_comment_id: str = ""  # the comment on the author's Facebook Page it answers ("own Page" mode); "" = none
-    replied_id: str = ""  # the reply posted as the Page under that comment; "" = not posted from the app
+    youtube_comment_id: str = ""  # the comment on the author's YouTube channel it answers ("own channel"); "" = none
+    replied_id: str = ""  # the reply posted as the Page or channel under that comment; "" = not posted from the app
     replied_url: str = ""
     replied_at: datetime | None = None
     model: str | None = None  # chat model that ran the agent
@@ -607,14 +615,52 @@ class FacebookInboxItem(BaseModel):
     author: str | None = None
     created_time: datetime
     permalink_url: str | None = None
+    # For a follow-up inside a thread: what was written in the thread before it, oldest first (the first comment and
+    # the replies, the Page's own included). Empty for a top comment and a visitor post.
+    thread: list[FacebookComment] = []
 
 
 class FacebookStatus(BaseModel):
-    """Response of GET /facebook/status: whether the author's Page is connected (FACEBOOK_PAGE_* in server/.env)."""
+    """Response of GET /facebook/status: whether the user has a Facebook Page to work with, and which."""
 
     connected: bool
     page: FacebookPage | None = None
-    error: str = ""  # why the configured Page could not be reached (e.g. token expired)
+    error: str = ""  # why the Page could not be reached (e.g. token expired)
+    # Where the Page comes from: "user" = connected by this user with Facebook Login, "server" = the admin's Page in
+    # server/.env (FACEBOOK_PAGE_*), "" = none.
+    source: Literal["user", "server", ""] = ""
+    login_available: bool = False  # the server is set up for Facebook Login (the user can connect a Page)
+
+
+class FacebookConnection(BaseModel):
+    """A user's own Facebook Page, connected with Facebook Login (private.facebook_connections). `token` is the Page
+    access token encrypted (secret_box.py), never in plain text outside the request that uses it."""
+
+    user_id: str
+    page_id: str
+    page_name: str
+    token: str
+    connected_at: datetime
+
+
+class FacebookPageChoice(BaseModel):
+    """A Page the user manages, offered after Facebook Login when there are several (GET /facebook/connect/pages)."""
+
+    id: str
+    name: str
+
+
+class FacebookConnectRequest(BaseModel):
+    """Body of POST /facebook/connect: where the browser goes back to after Facebook Login (the client's origin,
+    one of CLIENT_ORIGINS)."""
+
+    return_to: str = Field(max_length=200)
+
+
+class FacebookLoginUrl(BaseModel):
+    """Response of POST /facebook/connect: the Facebook Login page to send the browser to."""
+
+    url: str
 
 
 class FacebookPublished(BaseModel):
@@ -622,6 +668,76 @@ class FacebookPublished(BaseModel):
 
     id: str
     url: str
+
+
+# ---------- YouTube channel (social/youtube.py) ----------
+class YouTubeChannel(BaseModel):
+    """The author's own YouTube channel."""
+
+    id: str
+    name: str
+    subscribers: int | None = None  # None when the channel hides the number
+    link: str | None = None
+
+
+class YouTubeVideo(BaseModel):
+    """A video on the author's channel."""
+
+    id: str
+    title: str = ""  # "" when YouTube did not return the video (deleted, private)
+    url: str
+    thumbnail: str | None = None
+
+
+class YouTubeComment(BaseModel):
+    """A comment under a video of the channel, or a reply to one (parent_id set). Someone else's text: untrusted."""
+
+    id: str  # a reply's id is "<top comment id>.<reply id>"
+    video_id: str
+    message: str = ""
+    created_time: datetime
+    author: str | None = None  # the commenter's display name
+    from_channel: bool = False  # written by the channel itself (the author's own comments and replies)
+    parent_id: str | None = None  # the top comment this one replies to (YouTube threads are two levels deep)
+    reply_count: int = 0
+    permalink_url: str | None = None
+    answered: bool = False  # the channel has replied in its thread at or after it (set by recent_threads)
+    injection_risk: InjectionRisk = "none"  # prompt-injection scan of the message (set by GET /youtube/comments)
+    injection_findings: list[str] = []
+
+
+class YouTubeThread(BaseModel):
+    """A video of the author's channel with its latest comments (GET /youtube/comments)."""
+
+    video: YouTubeVideo
+    comments: list[YouTubeComment] = []  # newest first, the channel's own replies included (from_channel)
+
+
+class YouTubePublished(BaseModel):
+    """What reply_to_comment created."""
+
+    id: str
+    url: str = ""
+
+
+class YouTubeStatus(BaseModel):
+    """Response of GET /youtube/status: whether the user has connected a YouTube channel, and which."""
+
+    connected: bool
+    channel: YouTubeChannel | None = None
+    error: str = ""  # why the channel could not be reached (e.g. access removed: connect again)
+    login_available: bool = False  # the server is set up for Google sign-in (the user can connect a channel)
+
+
+class YouTubeConnection(BaseModel):
+    """A user's own YouTube channel, connected with Google sign-in (private.youtube_connections). `token` is Google's
+    refresh token encrypted (secret_box.py); access tokens are made from it when needed and kept only in memory."""
+
+    user_id: str
+    channel_id: str
+    channel_name: str
+    token: str
+    connected_at: datetime
 
 
 # ---------- Telegram (social/telegram.py) ----------

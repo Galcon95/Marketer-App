@@ -32,7 +32,9 @@ the author to contribute from one book, and if so, a reply grounded in that book
 
 "Own Page" mode (DiscussionRequest.facebook_comment_id set: a reader's comment on the author's Facebook Page): the same
 graph, but the assess prompt knows that answering readers there is welcome (SITUATION) and the draft is written as the
-author in the first person, where naming the book is natural (ROLE).
+author in the first person, where naming the book is natural (ROLE). "Own channel" mode
+(DiscussionRequest.youtube_comment_id set: a viewer's comment under a video of the author's YouTube channel) works the
+same way with its own SITUATION and ROLE.
 
 The tone (DiscussionRequest.tone, style.TONES) is added to the reply rules of the draft prompt. The "how human"
 setting (DiscussionRequest.humanize, 0-100) works as in the generator: style guidance in the draft
@@ -153,6 +155,7 @@ class DiscussionState(TypedDict, total=False):
     humanize: int  # how human the reply should sound (0-100)
     tone: str  # the reply's tone (schemas.Tone)
     own_page: bool  # a reader's comment on the author's own Facebook Page: answered as the author
+    own_channel: bool  # a viewer's comment under a video of the author's own YouTube channel: the same
     research: Research  # the book and every passage found, numbered for citations
     messages: list[BaseMessage]  # the research prompt, the model's tool calls and their results
     tool_calls: list[ToolCallRecord]  # every tool call of the run, for the GUI
@@ -208,12 +211,13 @@ def analyze_discussion(project_id: str, req: DiscussionRequest) -> DiscussionAna
             state = _graph().invoke(
                 {"project_id": project_id, "discussion": req.discussion, "platform": req.platform, "angle": req.angle,
                  "humanize": req.humanize, "tone": req.tone, "own_page": bool(req.facebook_comment_id),
-                 "research": research, "injection_findings": findings if risk == "high" else []},
+                 "own_channel": bool(req.youtube_comment_id), "research": research, "injection_findings": findings if risk == "high" else []},
                 config={"run_name": "analyze_discussion", "tags": ["discussion", "agent"],
                         "metadata": {"request_id": current_request_id(), "prompt_version": PROMPT_VERSION,
                                      "project_id": project_id, "source_id": req.source_id, "llm_model": LLM_MODEL,
                                      "platform": req.platform, "humanize": req.humanize, "tone": req.tone,
-                                     "own_page": bool(req.facebook_comment_id)}},
+                                     "own_page": bool(req.facebook_comment_id),
+                                     "own_channel": bool(req.youtube_comment_id)}},
             )
     except GenerationError:
         raise
@@ -233,7 +237,7 @@ def analyze_discussion(project_id: str, req: DiscussionRequest) -> DiscussionAna
         citations=state["citations"], search_queries=list(research.queries), tool_calls=state.get("tool_calls", []),
         platform_issues=state.get("platform_issues", []), injection_risk=risk, injection_findings=findings,
         output_issues=state.get("output_issues", []), humanize=req.humanize, tone=req.tone,
-        facebook_comment_id=req.facebook_comment_id, model=LLM_MODEL, prompt_version=PROMPT_VERSION,
+        facebook_comment_id=req.facebook_comment_id, youtube_comment_id=req.youtube_comment_id, model=LLM_MODEL, prompt_version=PROMPT_VERSION,
         tokens=state.get("tokens", 0), created_at=now, updated_at=now)
 
 
@@ -343,7 +347,7 @@ def _check(state: DiscussionState) -> DiscussionState:
         issues.append(f"Too long for {rules.label}: {len(text)} characters, the limit is {rules.max_chars}.")
     if tells := find_ai_tells(text, emojis_expected=platform in ("instagram", "tiktok")):
         issues.append("Sounds AI-written: " + ", ".join(tells) + ".")
-    # Outside the author's own Page the reply names neither the book nor its author (ROLE); one that does is
+    # Outside the author's own Page or channel the reply names neither the book nor its author (ROLE); one that does is
     # rewritten once without the names, and the author is told if any remain.
     research = state.get("research")
     names = named_in(text, research.source_id) if research and _mode(state) == "discussion" else []
@@ -418,7 +422,10 @@ def _humanize(state: DiscussionState) -> int:
 
 
 def _mode(state: DiscussionState) -> str:
-    """The prompt mode: "own_page" for a reader's comment on the author's Facebook Page, else "discussion"."""
+    """The prompt mode: "own_page" for a reader's comment on the author's Facebook Page, "own_channel" for a viewer's
+    comment on the author's YouTube channel, else "discussion"."""
+    if state.get("own_channel"):
+        return "own_channel"
     return "own_page" if state.get("own_page") else "discussion"
 
 

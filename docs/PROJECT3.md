@@ -12,9 +12,9 @@ Details: [AGENT.md](AGENT.md) (the agent) · [PAGE_INBOX.md](PAGE_INBOX.md) (the
 | **Clear purpose** | ✅ | The Discussion Relevance Agent decides whether an online discussion is worth joining with one book (`contribute` / `more_context` / `skip`) and drafts a cited reply. [AGENT.md §1](AGENT.md#1-purpose) |
 | **Why it's useful** | ✅ | Authors are told to "join the conversation", but most threads are a poor fit and promotional replies backfire. The agent filters and writes from the book. |
 | **Target users** | ✅ | Indie and self-published authors, small publishers and book marketers, mainly non-fiction. |
-| **Main features** | ✅ | Research tool loop, decision, grounded draft, platform and AI-cliché check, humanizer rewrite, citations. Reddit scan to find threads. Answering readers on the author's own Facebook Page and writing new posts for it from the book. A second agent, the **Page inbox agent**, watches the Page, drafts replies with the Discussion agent and waits for the author's approval in Telegram. |
-| **User interactions** | ✅ | Book, platform, angle, tone, "how human" slider; edit the reply, copy for posting, delete; tool trace; Reply / Publish on Facebook on click; "Write a new post" (post or reader question) on the Facebook tab. In Telegram: `/next`, **Make it so**, **Skip**, or feedback text that has the reply rewritten. |
-| **User interface** | ✅ | Next.js app, Community (Phase 3: Scan Reddit / My Page / Paste). Telegram chat with buttons for the Page inbox agent. Phase 4 is clearly marked as planned. |
+| **Main features** | ✅ | Research tool loop, decision, grounded draft, platform and AI-cliché check, humanizer rewrite, citations. Reddit scan to find threads. Answering readers on the author's own Facebook Page and writing new posts for it from the book; answering viewers' comments under the author's own YouTube videos. A second agent, the **Page inbox agent**, watches the Page, drafts replies with the Discussion agent and waits for the author's approval in Telegram. |
+| **User interactions** | ✅ | Book, platform, angle, tone, "how human" slider; edit the reply, copy for posting, delete; tool trace; Reply / Publish on Facebook and Reply as channel (YouTube) on click; "Write a new post" (post or reader question) on the Facebook tab. In Telegram: `/next`, **Make it so**, **Skip**, or feedback text that has the reply rewritten. |
+| **User interface** | ✅ | Next.js app, Community (Phase 3: Scan Reddit / Facebook Page / YouTube channel / Paste). Telegram chat with buttons for the Page inbox agent. Phase 4 is clearly marked as planned. |
 | **Tools and libraries** | ✅ | LangGraph (incl. `interrupt()` + checkpointer for the human in the loop), LangChain (`bind_tools`, structured output), LangSmith, OpenRouter, Tavily, Telegram Bot API, pgvector, FastAPI, Supabase. |
 | **Error handling** | ✅ | Tool errors returned to the model, loop limits, retries and timeouts, schema validation, budgets, clear HTTP errors. [AGENT.md §7](AGENT.md#7-error-handling-and-edge-cases) |
 | **Real-world usage** | ✅ | Sign-in, one library per user, per-user budgets and rate limits, data in Supabase, 675 server tests, eval on 12 labelled cases. |
@@ -51,7 +51,7 @@ Details: [AGENT.md](AGENT.md) (the agent) · [PAGE_INBOX.md](PAGE_INBOX.md) (the
 | Agentic RAG | ✅ | The agent decides what to search in the book, how often, and when to stop (`search_book_material` in a loop). |
 | LLM observability | ✅ | LangSmith traces of every graph run, with prompt version and request id (debug mode). |
 | Evaluation report (RAGAs) | ✅ | RAG eval (13 questions, 5 runs) and agent eval (12 discussions: decisions, checks, RAGAs faithfulness, LLM judge), HTML reports. |
-| External data sources | ✅ | Reddit threads via Tavily; comments and visitor posts from the author's Facebook Page via the Graph API. |
+| External data sources | ✅ | Reddit threads via Tavily; comments and visitor posts from the author's Facebook Page via the Graph API; comments under the author's YouTube videos via the YouTube Data API. |
 | Agent that learns from feedback | ❌ | |
 
 **Bonus requirement (≥ 2 medium + 1 hard): met.** 4 medium (plus 3 partial) and 4 hard.
@@ -110,8 +110,8 @@ again, until it is done. A chain or pipeline has fixed steps instead.
 ### Code organisation
 `server/app/`: `agents/` (graph, tools, scan) · `rag/` (ingestion, retrieval, QA, generation) · `api/` (FastAPI
 routes, one file per area) · `core/` (LLM, guard, limits, auth, prompts, usage) · `db/` (SQLAlchemy tables,
-records) · `social/` (Facebook) · `market/` (MCP servers and client). `server/prompts/` (all prompts as Markdown),
-Alembic migrations, `tests/` (675), `eval/` as a separate project.
+records) · `social/` (Facebook, YouTube, Telegram) · `market/` (MCP servers and client). `server/prompts/` (all prompts as Markdown),
+Alembic migrations, `tests/` (829), `eval/` as a separate project.
 
 ### Security
 - Untrusted text (discussions, Reddit threads, Facebook comments, book passages, tool results) is only ever
@@ -123,7 +123,7 @@ Alembic migrations, `tests/` (675), `eval/` as a separate project.
   refuses an injected text (defence in depth: input scan → quoting → output check → human click).
 - Sign-in on every route and MCP server; another user's data answers 404; API keys stored only as hashes.
 - Per-user rate limit and budgets ($1/day, $10/month), app-wide $20/day.
-- Nothing posts by itself: Facebook writes only on a click or on "make it so" in Telegram, admin only, once.
+- Nothing posts by itself: Facebook writes only on a click or on "make it so" in Telegram, on the user's own Page, once.
 - The Telegram bot obeys only the author's chat; other chats are dropped, the bot token never appears in logs.
 - The agent's tools have no book argument, so the model can't reach another library.
 

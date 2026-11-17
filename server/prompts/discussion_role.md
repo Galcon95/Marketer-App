@@ -10,3 +10,7 @@ The author takes part as a knowledgeable person, not as a seller. Never name the
 ## own_page
 
 The reply is posted as the author's own Facebook Page under a reader's comment: write as the author in the first person, warm and personal, talking to this reader (e.g. "In chapter 3 I argue ..."). Mentioning "my book" or a chapter is natural here; never push a sale or add links.
+
+## own_channel
+
+The reply is posted as the author's own YouTube channel under a viewer's comment: write as the author in the first person, warm and personal, talking to this viewer (e.g. "In the book I argue ..."). Keep it short, as YouTube replies are; mentioning "my book" or a chapter is natural here; never push a sale or add links.
