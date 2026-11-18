@@ -12,12 +12,13 @@ from pydantic import BaseModel
 from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy import inspect as sa_inspect
 
-from app.core.schemas import (ApiKey, Asset, AutomationSettings, BookSummary, Chunk, ChunkLocation, Conversation,
-                              DiscussionAnalysis, FacebookConnection, Project, Source, UsageRecord, UsageTotals,
-                              YouTubeConnection)
+from app.core.schemas import (ApiKey, Asset, AutomationCycle, AutomationSettings, BookSummary, Chunk, ChunkLocation,
+                              Conversation, DiscussionAnalysis, FacebookConnection, Project, Source, UsageRecord,
+                              UsageTotals, YouTubeConnection)
 from app.db.database import session
-from app.db.tables import (ApiKeyRow, AssetRow, AutomationSettingsRow, Base, ChunkRow, ConversationRow, DiscussionRow,
-                           FacebookConnectionRow, ProjectRow, SourceRow, SummaryRow, UsageRow, YouTubeConnectionRow)
+from app.db.tables import (ApiKeyRow, AssetRow, AutomationCycleRow, AutomationSettingsRow, Base, ChunkRow,
+                           ConversationRow, DiscussionRow, FacebookConnectionRow, ProjectRow, SourceRow, SummaryRow,
+                           UsageRow, YouTubeConnectionRow)
 
 # Fields saved in a JSON column (nested models, lists): written in JSON mode, so datetimes inside become strings.
 ASSET_JSON_FIELDS = {"citations", "source_ids", "ai_tells"}
@@ -25,6 +26,7 @@ CONVERSATION_JSON_FIELDS = {"turns"}
 DISCUSSION_JSON_FIELDS = {"book_mention", "citations", "search_queries", "tool_calls", "platform_issues",
                           "injection_findings", "output_issues"}
 SUMMARY_JSON_FIELDS = {"themes", "chapters"}
+CYCLE_JSON_FIELDS = {"entries"}
 
 
 def to_row(row_class: type[Base], record: BaseModel, json_fields: set[str]) -> Base:
@@ -147,6 +149,32 @@ def save_automation_settings(settings: AutomationSettings) -> None:
     """Save the user's schedule (replaces the one saved before)."""
     with session() as s:
         s.merge(AutomationSettingsRow(**settings.model_dump()))
+
+
+def save_cycle(cycle: AutomationCycle) -> None:
+    """Insert or update a cycle of the marketing agent."""
+    with session() as s:
+        s.merge(to_row(AutomationCycleRow, cycle, CYCLE_JSON_FIELDS))
+
+
+def list_cycles(user_id: str, limit: int = 20) -> list[AutomationCycle]:
+    """The user's latest cycles, newest first."""
+    with session() as s:
+        rows = s.scalars(select(AutomationCycleRow).where(AutomationCycleRow.user_id == user_id)
+                         .order_by(AutomationCycleRow.started_at.desc()).limit(limit))
+        return [_record(AutomationCycle, row) for row in rows]
+
+
+def interrupt_running_cycles(ended_at: datetime) -> int:
+    """Mark every cycle still "running" as interrupted (on server start: waiting proposals were in memory only).
+
+    Returns:
+        How many were marked.
+    """
+    with session() as s:
+        result = s.execute(update(AutomationCycleRow).where(AutomationCycleRow.status == "running")
+                           .values(status="interrupted", ended_at=ended_at))
+        return result.rowcount or 0
 
 
 # ---------- Generated assets ----------

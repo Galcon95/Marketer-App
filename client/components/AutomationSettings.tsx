@@ -1,15 +1,17 @@
 "use client";
 
 /**
- * The "Automation" page (sidebar, Integrations): when the marketing agent looks at the Facebook Page and the YouTube
- * channel on its own and proposes replies in Telegram. Manual (only /next in Telegram or "Run now" here), or
+ * Phase 4 · Agent Workspace: the marketing agent, which looks at the Facebook Page and the YouTube channel and proposes
+ * replies in Telegram; its schedule and its recent cycles. Manual (only /next in Telegram or "Run now" here), or
  * scheduled: at times of day or every few hours, on chosen days, in the user's time zone. Nothing is posted without
  * the author's "Make it so" in Telegram.
  */
 
 import { useMemo, useState } from "react";
-import { Bot, Check, Clock, Play, Plus, Save, X } from "lucide-react";
-import { api, errorMessage, type AutomationSchedule, type AutomationStatus } from "@/lib/api";
+import { Bot, Check, Clock, ExternalLink, History, Pause, Play, Plus, RefreshCw, Save, X } from "lucide-react";
+import {
+  api, errorMessage, type AutomationCycle, type AutomationSchedule, type AutomationStatus, type CycleOutcome,
+} from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { Badge, Button, Card, ErrorNote, Placeholder } from "./ui";
 
@@ -54,13 +56,73 @@ function when(iso: string | null, zone: string): string {
   }
 }
 
+/** How each outcome is shown in the cycle list. */
+const OUTCOMES: Record<CycleOutcome, { label: string; tone: "success" | "neutral" | "warning" | "danger" }> = {
+  waiting: { label: "waiting", tone: "warning" },
+  posted: { label: "posted", tone: "success" },
+  skipped: { label: "skipped", tone: "neutral" },
+  answered: { label: "answered elsewhere", tone: "neutral" },
+  blocked: { label: "blocked by guard", tone: "danger" },
+  failed: { label: "failed", tone: "danger" },
+  gave_up: { label: "finish in app", tone: "warning" },
+};
+const TRIGGERS: Record<AutomationCycle["trigger"], string> = { schedule: "schedule", app: "Run now", telegram: "Telegram" };
+const STATUSES: Record<AutomationCycle["status"], string> = {
+  running: "running", done: "done", error: "error", interrupted: "interrupted (server restart)",
+};
+
+/** The latest cycles: when, what started them, what was proposed and decided. */
+function RecentCycles({ refresh, zone }: { refresh: number; zone: string }) {
+  const cycles = useApi(`automation-cycles:${refresh}`, () => api.automationCycles(20));
+  return (
+    <Card title="Recent cycles" icon={History} actions={
+      <Button variant="success" size="sm" icon={RefreshCw} loading={cycles.loading} onClick={cycles.reload}>
+        Refresh
+      </Button>}>
+      <div className="bc-stack">
+        {cycles.error && <ErrorNote>{cycles.error}</ErrorNote>}
+        {!cycles.data?.length ? (
+          <Placeholder icon={History}>
+            {cycles.loading ? "Loading…" : "No cycles yet. Scheduled looks that found nothing new are not listed."}
+          </Placeholder>
+        ) : cycles.data.map((c) => (
+          <div key={c.id} className="bc-stack" style={{ gap: 6, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+            <div className="bc-row" style={{ gap: 8 }}>
+              <strong>{when(c.started_at, zone)}</strong>
+              <span className="bc-hint" style={{ margin: 0 }}>via {TRIGGERS[c.trigger]}</span>
+              <Badge tone={c.status === "done" ? "success" : c.status === "running" ? "warning" : c.status === "error" ? "danger" : "neutral"}>
+                {STATUSES[c.status]}
+              </Badge>
+            </div>
+            {c.note && <span className="bc-hint" style={{ margin: 0 }}>{c.note}</span>}
+            {c.entries.map((e) => (
+              <div key={e.thread_id} className="bc-row" style={{ gap: 8, alignItems: "baseline" }}>
+                <Badge tone={OUTCOMES[e.outcome].tone}>{OUTCOMES[e.outcome].label}</Badge>
+                <span className="bc-hint" style={{ margin: 0, flex: 1, minWidth: 200 }}>
+                  {e.platform === "youtube" ? "▶️ " : ""}{e.author || "A reader"}: “{e.excerpt}”
+                  {e.revisions > 0 && ` · rewritten ${e.revisions}×`}
+                </span>
+                {e.url && (
+                  <a href={e.url} target="_blank" rel="noopener noreferrer" className="bc-hint" style={{ margin: 0 }}>
+                    open <ExternalLink size={12} aria-hidden />
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 /** The page. */
 export default function AutomationSettings() {
   const [nonce, setNonce] = useState(0);
   const status = useApi(`automation:${nonce}`, api.automationStatus);
   const [edited, setEdited] = useState<AutomationSchedule | null>(null); // the form, once the user changed it
   const [saved, setSaved] = useState<AutomationStatus | null>(null); // the answer of the last save
-  const [pending, setPending] = useState<"save" | "run" | null>(null);
+  const [pending, setPending] = useState<"save" | "run" | "pause" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
@@ -105,6 +167,22 @@ export default function AutomationSettings() {
     }
   }
 
+  /** Pause the schedule or resume it (the schedule itself is kept). */
+  async function togglePause() {
+    if (!s) return;
+    setPending("pause");
+    setError(null);
+    try {
+      const answer = await api.automationPause(!s.paused);
+      setSaved(answer);
+      setNote(answer.paused ? "Paused: the agent runs only when you ask." : "Resumed.");
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setPending(null);
+    }
+  }
+
   async function runNow() {
     setPending("run");
     setError(null);
@@ -126,7 +204,8 @@ export default function AutomationSettings() {
   return (
     <div className="bc-stack" style={{ maxWidth: 720 }}>
       <Card title="Marketing agent schedule" icon={Clock}
-        meta={s && (s.active ? <Badge tone="success">running</Badge> : <Badge>not running</Badge>)}>
+        meta={s && (!s.active ? <Badge>not running</Badge> : s.paused ? <Badge tone="warning">paused</Badge>
+          : <Badge tone="success">running</Badge>)}>
         <div className="bc-stack">
           <span className="bc-hint">
             The agent looks at your Facebook Page and your YouTube channel, drafts replies to new comments from your
@@ -224,12 +303,16 @@ export default function AutomationSettings() {
               )}
 
               <div className="bc-row" style={{ gap: 16 }}>
-                <span className="bc-hint" style={{ margin: 0 }}><strong>Next run:</strong> {s.schedule.mode === "scheduled" ? when(s.next_run, zone) : "only when you ask"}</span>
+                <span className="bc-hint" style={{ margin: 0 }}><strong>Next run:</strong> {s.paused ? "paused" : s.schedule.mode === "scheduled" ? when(s.next_run, zone) : "only when you ask"}</span>
                 <span className="bc-hint" style={{ margin: 0 }}><strong>Last run:</strong> {when(s.last_run, zone)}</span>
                 {!s.saved && <span className="bc-hint" style={{ margin: 0 }}>(not saved yet: the server default)</span>}
               </div>
 
               <div className="bc-studio-actions">
+                {s.schedule.mode === "scheduled" && (
+                  <Button variant="ghost" icon={s.paused ? Play : Pause} loading={pending === "pause"}
+                    disabled={pending !== null} onClick={togglePause}>{s.paused ? "Resume schedule" : "Pause schedule"}</Button>
+                )}
                 <Button variant="ghost" icon={Play} loading={pending === "run"} disabled={pending !== null || !s.active}
                   onClick={runNow}>Run now</Button>
                 <Button icon={Save} loading={pending === "save"} disabled={pending !== null || (scheduled && draft.days.length === 0)}
@@ -241,10 +324,12 @@ export default function AutomationSettings() {
           {error && <ErrorNote>{error}</ErrorNote>}
         </div>
       </Card>
+      <RecentCycles refresh={nonce} zone={zone} />
       <Card title="In Telegram" icon={Bot}>
         <span className="bc-hint">
-          /next – look now · /status – the schedule and the next run · under a proposal: ✅ Make it so, Skip, or write
-          what to change. A proposal waits until you answer it.
+          /next – run a cycle now · /status – the schedule and the running cycle · /pause, /resume – stop or restart
+          the schedule · under a proposal: ✅ Make it so, Skip, or write what to change. A proposal waits until you
+          answer it; the next one follows your answer, and the cycle ends with a summary.
         </span>
       </Card>
     </div>

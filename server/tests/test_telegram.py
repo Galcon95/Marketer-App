@@ -257,3 +257,12 @@ def test_connection_error_is_502_and_never_shows_the_token(bot, caplog):
     assert e.value.status_code == 502
     assert TOKEN not in str(e.value)
     assert TOKEN not in caplog.text
+
+
+def test_set_commands_sends_the_menu(bot):
+    bot.answer = True
+    tg.set_commands([("next", "Run a cycle now"), ("help", "x" * 300)])
+    body = _body(bot.requests[0])
+    assert _method(bot.requests[0]) == "setMyCommands"
+    assert body["commands"][0] == {"command": "next", "description": "Run a cycle now"}
+    assert len(body["commands"][1]["description"]) == 256  # Telegram's limit

@@ -190,3 +190,30 @@ def test_run_now(client, monkeypatch):
 def test_run_now_without_the_worker(client):
     _, c = client
     assert c.post("/automation/run").status_code == 409
+
+
+# ---------- pause ----------
+def test_a_paused_schedule_is_never_due():
+    s = _settings(paused=True, last_run_at=_utc(2026, 11, 1))
+    assert not automation.is_due(s, _utc(2026, 11, 17))
+
+
+def test_resume_counts_from_now_and_save_keeps_the_pause():
+    automation.save(OWNER.id, AutomationSchedule(every_minutes=60))
+    automation.set_paused(OWNER.id, True)
+    saved = automation.save(OWNER.id, AutomationSchedule(every_minutes=120))
+    assert saved.paused  # saving the schedule does not resume it
+    resumed = automation.set_paused(OWNER.id, False)
+    assert not resumed.paused and automation.reference(resumed) == resumed.resumed_at
+
+
+def test_api_pause_and_cycles(client):
+    from app.agents.cycle import Cycle
+    _, c = client
+    body = c.put("/automation/paused", json={"paused": True}).json()
+    assert body["paused"] and body["next_run"] is None
+    assert c.put("/automation/paused", json={"paused": False}).json()["paused"] is False
+    cycle = Cycle(OWNER.id, "app")
+    cycle.finish("error", "token expired")
+    [listed] = c.get("/automation/cycles").json()
+    assert listed["status"] == "error" and listed["trigger"] == "app"

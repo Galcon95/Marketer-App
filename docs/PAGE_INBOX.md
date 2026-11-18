@@ -36,7 +36,7 @@ The drafting is done by the [Discussion Relevance Agent](AGENT.md) in its own Pa
    `TELEGRAM_CHAT_ID`.
 3. **Books:** `FACEBOOK_INBOX_BOOKS=src_...,src_...` lists the processed books of one client to answer from (for
    Facebook and YouTube alike).
-4. **Schedule:** in the app, **Integrations → Automation** (signed in as the owner of the inbox books): *Manual only*
+4. **Schedule:** in the app, **Phase 4 · Agent Workspace** (signed in as the owner of the inbox books): *Manual only*
    (only `/next` or **Run now**), or *On a schedule*: at times of day (e.g. 09:00 and 18:00) or every few hours, on
    chosen days, in your time zone. Saved per user in `private.automation_settings`
    ([`automation.py`](../server/app/agents/automation.py)). A run missed while the server was off is made up once when
@@ -48,14 +48,22 @@ The drafting is done by the [Discussion Relevance Agent](AGENT.md) in its own Pa
 
 | In Telegram | What happens |
 |---|---|
-| `/next` | The agent looks at the Page and the channel now and proposes the oldest open item (or says "Nothing new"). |
+| `/next` | Runs a **cycle** now: the agent looks at the Page and the channel and proposes the oldest open item (or says "Nothing new"). |
 | **✅ Make it so** button, or the text `make it so` | The reply is posted as the Page or the channel; you get the link. The next open item follows. |
 | **Skip** button, or `skip` | Nothing is posted; the item is not proposed again. |
 | Any other text, e.g. "shorter, mention volume 2" | Feedback: the reply is rewritten from the same book passages and proposed again (up to 5 rounds, then finish it in the app). |
-| `/status` | The schedule, the next and the last run, and whether a proposal is waiting. |
-| `/help` | How to answer. |
+| `/status` | The schedule, the next and the last run, the running cycle, and whether a proposal is waiting. |
+| `/pause`, `/resume` | Stop the schedule for now, and start it again (the schedule is kept; after `/resume` the next run counts from then). `/next` works while paused. |
+| `/help` | All commands with what they do, and how to answer a proposal. The same commands appear in Telegram's menu when you type `/` (set when the server starts). |
 
-**Run now** on the Automation page works like `/next` (it starts within half a minute). A proposal waits until you
+**Cycles** ([`cycle.py`](../server/app/agents/cycle.py)): each start (the schedule, **Run now**, `/next`) is a cycle.
+It proposes the open items one at a time, the next one right after your answer, and ends with a summary in Telegram
+("Cycle done: 2 posted, 1 skipped."). While a proposal waits, a new start only checks it. Cycles are logged in
+`private.automation_cycles` and listed under **Recent cycles** in the Agent Workspace (scheduled looks that found
+nothing are not logged). A cycle still running when the server stops is shown as *interrupted*. A comment under a
+recent post and a book post will join the cycle as its phases 2 and 3.
+
+**Run now** in the Agent Workspace works like `/next` (it starts within half a minute). A proposal waits until you
 answer it; there is no expiry. The schedule only messages you when something new is there. Each proposal is also saved as a discussion analysis,
 so it can be read and edited in the app (Community). A YouTube proposal starts with ▶️ and names the video.
 

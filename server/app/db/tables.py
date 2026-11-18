@@ -138,6 +138,24 @@ class AutomationSettingsRow(Base):
     timezone: Mapped[str] = mapped_column(Text)
     saved_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     last_run_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+    paused: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    resumed_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+
+
+class AutomationCycleRow(Base):
+    """One cycle of the marketing agent; see schemas.AutomationCycle."""
+
+    __tablename__ = "automation_cycles"
+    __table_args__ = (Index("ix_automation_cycles_user_started", "user_id", "started_at"), {"schema": PRIVATE})
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)  # "cyc_1a2b3c4d"
+    user_id: Mapped[str] = mapped_column(Text)
+    trigger: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(UtcDateTime)
+    ended_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+    entries: Mapped[list] = mapped_column(Json)  # list of schemas.CycleEntry
+    note: Mapped[str] = mapped_column(Text)
 
 
 class AssetRow(Base):

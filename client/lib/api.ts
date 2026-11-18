@@ -189,11 +189,38 @@ export interface AutomationSchedule {
   days: number[];
   timezone: string;
 }
+/** What became of a proposal; "waiting" until the author answers. */
+export type CycleOutcome = "waiting" | "posted" | "skipped" | "failed" | "blocked" | "gave_up" | "answered";
+/** One proposal of a cycle. */
+export interface CycleEntry {
+  kind: "reply" | "comment" | "post";
+  platform: "facebook" | "youtube";
+  item_id: string;
+  thread_id: string;
+  author: string;
+  excerpt: string;
+  outcome: CycleOutcome;
+  url: string;
+  revisions: number;
+  proposed_at: string;
+  decided_at: string | null;
+}
+/** One cycle of the marketing agent (GET /automation/cycles). */
+export interface AutomationCycle {
+  id: string;
+  trigger: "schedule" | "app" | "telegram";
+  status: "running" | "done" | "error" | "interrupted";
+  started_at: string;
+  ended_at: string | null;
+  entries: CycleEntry[];
+  note: string;
+}
 /** Response of GET/PUT /automation. `active`: the agent on the server runs for this user; `note` says why not. */
 export interface AutomationStatus {
   schedule: AutomationSchedule;
   saved: boolean;
-  next_run: string | null;
+  paused: boolean;
+  next_run: string | null; // null: manual or paused
   last_run: string | null;
   active: boolean;
   note: string;
@@ -963,6 +990,11 @@ export const api = {
   /** PUT /automation: save the user's schedule (the next run counts from now). */
   automationSave: (schedule: AutomationSchedule) =>
     request<AutomationStatus>("/automation", { ...postJson(schedule), method: "PUT" }),
+  /** PUT /automation/paused: pause the schedule or resume it. */
+  automationPause: (paused: boolean) =>
+    request<AutomationStatus>("/automation/paused", { ...postJson({ paused }), method: "PUT" }),
+  /** GET /automation/cycles: the latest cycles, newest first. */
+  automationCycles: (limit = 20) => request<AutomationCycle[]>(`/automation/cycles?limit=${limit}`),
   /** POST /automation/run: ask the agent for a run now (the proposal arrives in Telegram). */
   automationRun: () => request<{ status: string }>("/automation/run", { method: "POST" }),
   /** GET /youtube/status: whether the user has connected a YouTube channel, with its name. */

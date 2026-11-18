@@ -9,8 +9,8 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore, type JSX } from "react";
 import {
-  Bot, Brain, Clock, Cpu, Database, FileText, Info, KeyRound, LogOut, Menu, MessagesSquare, Moon, Network, Plug, Server, Settings,
-  Sparkles, SquarePlay, Sun, SunMoon, Target, Terminal, ThumbsUp, Users, UserCheck,
+  Brain, Cpu, Database, FileText, KeyRound, LogOut, Menu, MessagesSquare, Moon, Plug, Server, Settings, Sparkles,
+  SquarePlay, Sun, SunMoon, ThumbsUp, Users,
 } from "lucide-react";
 import { api, API_URL } from "@/lib/api";
 import { signOut } from "@/lib/supabase";
@@ -25,7 +25,7 @@ import YouTubeConnection from "./YouTubeConnection";
 import AutomationSettings from "./AutomationSettings";
 import KeysDrawer from "./KeysPanel";
 import UsageDrawer, { formatTokens, formatUsd } from "./UsagePanel";
-import { Badge, Button, Card, ErrorNote, Placeholder, SectionHeading, Sidebar, StatusRow, Tabs, type NavGroup, type TabItem } from "./ui";
+import { Button, ErrorNote, Sidebar, StatusRow, Tabs, type NavGroup, type TabItem } from "./ui";
 
 /** localStorage key of the chosen theme; the theme-init script in app/layout.tsx reads the same key. */
 const THEME_KEY = "theme";
@@ -49,7 +49,7 @@ function useTheme(): "light" | "dark" | null {
 /** Id of one of the four pipeline phases (tabs). */
 type PhaseId = "p1" | "p2" | "p3" | "p4";
 /** Id of a view: a phase, or a page opened from the sidebar only (no phase tab). */
-type ViewId = PhaseId | "mcp" | "facebook" | "youtube" | "automation";
+type ViewId = PhaseId | "mcp" | "facebook" | "youtube";
 /**
  * Props passed to every phase view: `refresh` reloads its data, `onChange` triggers a global refresh, `bookId` is
  * the book being worked on (null = all books; shared, so a choice in the Knowledge Hub carries over to the
@@ -62,7 +62,7 @@ const TABS: TabItem<PhaseId>[] = [
   { id: "p1", kicker: "PHASE 1", label: "Knowledge Hub", icon: Database },
   { id: "p2", kicker: "PHASE 2", label: "Content Studio", icon: Sparkles },
   { id: "p3", kicker: "PHASE 3", label: "Community", icon: MessagesSquare },
-  { id: "p4", kicker: "PHASE 4 · PLANNED", label: "Agent Workspace", icon: Cpu },
+  { id: "p4", kicker: "PHASE 4", label: "Agent Workspace", icon: Cpu },
 ];
 
 /** Page title and breadcrumb subtitle shown in the top bar for each view. */
@@ -70,11 +70,10 @@ const TITLES: Record<ViewId, [title: string, crumb: string]> = {
   p1: ["Knowledge hub", "Retrieval-augmented generation over your content"],
   p2: ["Content studio", "Grounded assets from your books · zero-shot campaign kits"],
   p3: ["Community", "Discussions worth joining · replies grounded in your books"],
-  p4: ["Agent workspace", "Planned · Strategist → Copywriter → Auditor → You"],
+  p4: ["Agent workspace", "The marketing agent · its schedule and cycles · approvals in Telegram"],
   mcp: ["MCP servers", "Integrations · live tool calls via Model Context Protocol"],
   facebook: ["Facebook Page", "Integrations · your own Page, connected with Facebook Login"],
   youtube: ["YouTube channel", "Integrations · your own channel, connected with Google sign-in"],
-  automation: ["Automation", "Integrations · when the marketing agent runs · approvals in Telegram"],
 };
 
 /** Display label and icon for each service name reported by GET /health. */
@@ -84,63 +83,15 @@ const SERVICE_META: Record<string, { label: string; icon: typeof Server }> = {
   llm: { label: "LLM", icon: Brain },
 };
 
-/* ---------- Phase without backend endpoints yet (dummy) ---------- */
-
-/** Steps of the planned multi-agent workflow, in order. */
-const AGENTS = [
-  { name: "Strategist", icon: Target },
-  { name: "Copywriter", icon: Bot },
-  { name: "Auditor", icon: Cpu },
-  { name: "Human checkpoint", icon: UserCheck },
-];
-
-/**
- * Phase 4 placeholder: agent cards, console and review area, under a banner that says it is planned and where the
- * working agent is (Community). No API calls.
- */
-function AgentWorkspace() {
-  return (
-    <>
-      <Card title="Planned: not built yet" icon={Info} meta={<Badge tone="warning">planned</Badge>}>
-        <p style={{ margin: 0 }}>
-          A multi-agent campaign workflow: a Strategist plans, a Copywriter drafts, an Auditor checks, and you approve.
-          This page only shows the planned layout.
-        </p>
-        <p className="bc-hint" style={{ margin: "8px 0 0" }}>
-          The app&apos;s working agent is the <strong>Discussion Relevance Agent</strong> in{" "}
-          <strong>Community</strong>.
-        </p>
-      </Card>
-      <div>
-        <SectionHeading icon={Network} title="Agent workflow (planned)" />
-        <div className="bc-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
-          {AGENTS.map(({ name, icon }) => (
-            <Card key={name} title={name} icon={icon} meta={<Badge mono>planned</Badge>}>
-              <span className="bc-hint">Not built yet</span>
-            </Card>
-          ))}
-        </div>
-      </div>
-      <Card title="Agent console" icon={Terminal}>
-        <Placeholder icon={Terminal}>Agent logs will stream here.</Placeholder>
-      </Card>
-      <Card title="Review" icon={UserCheck}>
-        <Placeholder icon={UserCheck}>Drafts awaiting your approval will appear here.</Placeholder>
-      </Card>
-    </>
-  );
-}
-
 /** Component rendered for each view. */
 const VIEWS: Record<ViewId, (props: PhaseProps) => JSX.Element> = {
   p1: KnowledgeHub,
   p2: ContentStudio,
   p3: Community,
-  p4: AgentWorkspace,
+  p4: AutomationSettings,
   mcp: McpServers,
   facebook: () => <></>, // rendered by AppShell itself (it needs the login result)
   youtube: () => <></>, // the same
-  automation: AutomationSettings,
 };
 
 /* ---------- Shell ---------- */
@@ -197,7 +148,6 @@ export default function AppShell() {
       items: [
         { id: "facebook", icon: ThumbsUp, label: "Facebook Page" },
         { id: "youtube", icon: SquarePlay, label: "YouTube channel" },
-        { id: "automation", icon: Clock, label: "Automation" },
         { id: "mcp", icon: Plug, label: "MCP servers" },
       ],
     },

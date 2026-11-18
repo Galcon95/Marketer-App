@@ -828,6 +828,8 @@ class AutomationSettings(AutomationSchedule):
     user_id: str
     saved_at: datetime | None = None
     last_run_at: datetime | None = None
+    paused: bool = False  # the schedule is off for now (/pause); runs only when asked
+    resumed_at: datetime | None = None  # the next run counts from here too, so no missed run fires at /resume
 
 
 class AutomationStatus(BaseModel):
@@ -837,9 +839,52 @@ class AutomationStatus(BaseModel):
 
     schedule: AutomationSchedule
     saved: bool
-    next_run: datetime | None = None
+    paused: bool = False
+    next_run: datetime | None = None  # None: manual or paused
     last_run: datetime | None = None
     active: bool
+    note: str = ""
+
+
+class PauseRequest(BaseModel):
+    """Body of PUT /automation/paused."""
+
+    paused: bool
+
+
+CycleTrigger = Literal["schedule", "app", "telegram"]
+# waiting: the proposal waits for the author; the others are page_inbox.Outcome
+CycleOutcome = Literal["waiting", "posted", "skipped", "failed", "blocked", "gave_up", "answered"]
+
+
+class CycleEntry(BaseModel):
+    """One proposal of a cycle: what it answers, and what the author decided."""
+
+    kind: Literal["reply", "comment", "post"] = "reply"  # reply to a reader; comment / post: steps 3 and 4
+    platform: Literal["facebook", "youtube"]
+    item_id: str = ""  # the comment or post it is about
+    thread_id: str  # the inbox run
+    author: str = ""  # the reader answered
+    excerpt: str = ""  # the reader's text, shortened
+    outcome: CycleOutcome = "waiting"
+    url: str = ""  # where it was posted
+    revisions: int = 0  # rewrites after the author's feedback
+    proposed_at: datetime
+    decided_at: datetime | None = None
+
+
+class AutomationCycle(BaseModel):
+    """One cycle of the marketing agent (private.automation_cycles): replies to readers, then (later steps) an
+    engagement comment and a book post. `status` running: a proposal still waits; interrupted: the server restarted
+    while it ran (waiting proposals are kept in memory only); error: it stopped on an error (`note`)."""
+
+    id: str
+    user_id: str
+    trigger: CycleTrigger
+    status: Literal["running", "done", "error", "interrupted"] = "running"
+    started_at: datetime
+    ended_at: datetime | None = None
+    entries: list[CycleEntry] = []
     note: str = ""
 
 

@@ -361,3 +361,127 @@ def test_no_facebook_page_reads_only_youtube(env, monkeypatch):
     env.youtube_open = [_video_item()]
     env.worker.handle(_text("/next"))
     assert env.started == ["UgxCOMMENT0000000001"]
+
+
+# ---------- cycles ----------
+@pytest.fixture
+def cycles(env, monkeypatch):
+    """The env worker, working for OWNER; `inbox.start` gives each run its own thread id."""
+    from app.db import records
+    from tests.conftest import OWNER
+    monkeypatch.setattr(worker_module.automation, "inbox_owner", lambda: OWNER.id)
+    monkeypatch.setattr(inbox, "posted_url", lambda thread_id: f"https://facebook.com/{thread_id}")
+    count = iter(range(1, 100))
+
+    def start(item):
+        thread = f"{item.id}:run{next(count)}"
+        env.started.append(item.id)
+        env.decided.add(item.id)  # no longer open once it has a run
+        env.waiting = (thread, 100 + len(env.started))
+        return thread
+
+    monkeypatch.setattr(inbox, "start", start)
+    env.saved = lambda: records.list_cycles(OWNER.id)
+    return env
+
+
+def test_a_cycle_proposes_one_item_after_the_other_and_ends_with_a_summary(cycles):
+    cycles.open = [_item("222_1"), _item("222_2")]
+    cycles.worker.handle(_text("/next"))
+    assert cycles.started == ["222_1"] and cycles.worker.cycle is not None
+    cycles.worker.handle(_button("go", message_id=101))  # posted → the next item
+    assert cycles.started == ["222_1", "222_2"]
+    cycles.resume_result = "skipped"
+    cycles.worker.handle(_button("skip", message_id=102))
+    assert cycles.worker.cycle is None
+    assert ("Cycle done: 1 posted, 1 skipped.", None) in cycles.said
+    [saved] = cycles.saved()
+    assert saved.status == "done" and saved.trigger == "telegram"
+    assert [(e.item_id, e.outcome) for e in saved.entries] == [("222_1", "posted"), ("222_2", "skipped")]
+    assert saved.entries[0].url == "https://facebook.com/222_1:run1" and saved.entries[1].url == ""
+
+
+def test_feedback_counts_as_a_revision(cycles):
+    cycles.worker.handle(_text("/next"))
+    cycles.resume_result = "waiting"
+    cycles.worker.handle(_text("shorter please"))
+    [saved] = cycles.saved()
+    assert saved.status == "running" and saved.entries[0].revisions == 1
+
+
+def test_a_quiet_scheduled_cycle_is_not_logged(cycles):
+    cycles.open = []
+    cycles.due = True
+    cycles.worker.tick(NOW)
+    assert cycles.worker.cycle is None and cycles.saved() == [] and cycles.said == []
+
+
+def test_a_new_start_while_a_proposal_waits_continues_the_cycle(cycles):
+    cycles.worker.handle(_text("/next"))
+    first = cycles.worker.cycle
+    cycles.due = True
+    cycles.worker.tick(NOW)  # the comment is still open: the proposal keeps waiting
+    assert cycles.worker.cycle is first and len(first.record.entries) == 1
+
+
+def test_a_proposal_answered_elsewhere_is_logged_as_answered(cycles, monkeypatch):
+    cycles.open = [_item("222_1")]
+    cycles.worker.handle(_text("/next"))
+    cycles.open = [_item("222_2")]  # 222_1 was answered on Facebook meanwhile
+    monkeypatch.setattr(inbox, "item_of", lambda thread_id: thread_id.split(":")[0])
+    cycles.due = True
+    cycles.worker.tick(NOW)
+    entries = cycles.worker.cycle.record.entries
+    assert [(e.item_id, e.outcome) for e in entries] == [("222_1", "answered"), ("222_2", "waiting")]
+
+
+def test_an_error_ends_the_cycle_and_is_logged_once(cycles):
+    cycles.open_error = worker_module.facebook.FacebookError(503, "token expired")
+    cycles.due = True
+    for _ in range(3):
+        cycles.worker.tick(NOW)
+    [saved] = cycles.saved()
+    assert saved.status == "error" and "token expired" in saved.note
+    assert cycles.worker.cycle is None
+
+
+def test_pause_and_resume(cycles):
+    from tests.conftest import OWNER
+    cycles.worker.handle(_text("/pause"))
+    assert "Paused" in cycles.said[-1][0]
+    assert worker_module.automation.schedule_of(OWNER.id, fresh=True).paused
+    cycles.worker.handle(_text("/status"))
+    assert "PAUSED" in cycles.said[-1][0]
+    cycles.worker.handle(_text("/resume"))
+    assert cycles.said[-1][0].startswith("Resumed.")
+    assert not worker_module.automation.schedule_of(OWNER.id, fresh=True).paused
+
+
+def test_interrupted_cycles_are_marked_on_start(cycles):
+    cycles.worker.handle(_text("/next"))
+    worker_module.interrupt_leftovers()
+    [saved] = cycles.saved()
+    assert saved.status == "interrupted" and saved.ended_at is not None
+
+
+# ---------- help and the command menu ----------
+def test_help_lists_every_command(env):
+    env.worker.handle(_text("/help"))
+    text = env.said[0][0]
+    for name, _ in worker_module.COMMANDS:
+        assert f"/{name} – " in text
+    assert "Agent Workspace" in text
+
+
+def test_start_sets_the_command_menu_and_survives_a_failure(monkeypatch):
+    menus = []
+    monkeypatch.setattr(worker_module.threading.Thread, "start", lambda self: None)
+    monkeypatch.setattr(worker_module.telegram, "set_commands", lambda commands: menus.append(commands))
+    worker_module.InboxWorker().start()
+    assert menus == [worker_module.COMMANDS]
+
+    def fail(commands):
+        raise worker_module.telegram.TelegramError(502, "Bad Request")
+
+    monkeypatch.setattr(worker_module.telegram, "set_commands", fail)
+    worker_module.InboxWorker().start()  # no exception: the commands work without the menu

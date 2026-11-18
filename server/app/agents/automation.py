@@ -2,6 +2,7 @@
 
     schedule_of(user_id)         the user's settings (saved, or the defaults from FACEBOOK_INBOX_INTERVAL)
     save(user_id, schedule)      save the user's schedule; the next run counts from now
+    set_paused(user_id, paused)  pause the schedule (/pause) or resume it (/resume); runs only when asked meanwhile
     next_run(settings)           the next time the schedule is due (UTC), or None (manual)
     status(user_id)              the GUI's view: schedule, next and last run, does the agent run for this user
     inbox_due(now) / inbox_ran   the worker's clock for the inbox owner (page_inbox.inbox_owner_id)
@@ -10,7 +11,7 @@ Mode `manual`: the agent runs only when asked (/next in Telegram, "Run now" in t
 `every_minutes`, or at the `times` of day, only on the `days` of the week, in the user's time zone (daylight saving
 time included).
 
-The next run counts from the later of the last run and the last save, so a run missed while the server was down is
+The next run counts from the latest of the last run, the last save and the last resume, so a run missed while the server was down is
 made up once when it starts again (not once per missed time), and changing the schedule never fires a run at once.
 With no saved schedule and no run yet, it counts from the server's start.
 
@@ -71,12 +72,29 @@ def save(user_id: str, schedule: AutomationSchedule) -> AutomationSettings:
         DatabaseError: If the database cannot be read or written.
     """
     old = records.get_automation_settings(user_id)
-    settings = AutomationSettings(user_id=user_id, saved_at=datetime.now(UTC),
-                                  last_run_at=old.last_run_at if old else None, **schedule.model_dump())
+    keep = old.model_dump(include={"last_run_at", "paused", "resumed_at"}) if old else {}
+    settings = AutomationSettings(user_id=user_id, saved_at=datetime.now(UTC), **keep, **schedule.model_dump())
     records.save_automation_settings(settings)
     with _lock:
         _cache[user_id] = (datetime.now(UTC), settings)
     logger.info("A user saved the agent's schedule (%s)", describe(settings))
+    return settings
+
+
+def set_paused(user_id: str, paused: bool) -> AutomationSettings:
+    """Pause or resume the user's schedule (the schedule itself is kept). Resuming counts the next run from now, so
+    runs missed while paused do not fire at once.
+
+    Raises:
+        DatabaseError: If the database cannot be read or written.
+    """
+    settings = schedule_of(user_id, fresh=True)
+    update = {"paused": paused, **({} if paused else {"resumed_at": datetime.now(UTC)})}
+    settings = settings.model_copy(update=update)
+    records.save_automation_settings(settings)
+    with _lock:
+        _cache[user_id] = (datetime.now(UTC), settings)
+    logger.info("A user %s the agent's schedule", "paused" if paused else "resumed")
     return settings
 
 
@@ -96,10 +114,10 @@ def mark_run(user_id: str, now: datetime) -> None:
 
 # ---------- the clock ----------
 def reference(settings: AutomationSettings) -> datetime:
-    """The time the next run counts from: the later of the last run and the last save (else the server's start)."""
+    """The time the next run counts from: the latest of the last run, save and resume (else the server's start)."""
     with _lock:
         in_memory = _ran.get(settings.user_id)
-    times = [t for t in (settings.last_run_at, settings.saved_at, in_memory) if t]
+    times = [t for t in (settings.last_run_at, settings.saved_at, settings.resumed_at, in_memory) if t]
     return max(times) if times else STARTED
 
 
@@ -135,7 +153,9 @@ def next_time(schedule: AutomationSchedule, after: datetime) -> datetime | None:
 
 
 def is_due(settings: AutomationSettings, now: datetime) -> bool:
-    """True when the schedule's next run is at or before `now`."""
+    """True when the schedule's next run is at or before `now` (never while paused)."""
+    if settings.paused:
+        return False
     due = next_run(settings)
     return due is not None and due <= now
 
@@ -204,5 +224,6 @@ def status(user_id: str) -> AutomationStatus:
         note = ""
     with _lock:
         last = max((t for t in (settings.last_run_at, _ran.get(user_id)) if t), default=None)
-    return AutomationStatus(schedule=schedule, saved=settings.saved_at is not None, next_run=next_run(settings),
-                            last_run=last, active=running and owner == user_id, note=note)
+    return AutomationStatus(schedule=schedule, saved=settings.saved_at is not None, paused=settings.paused,
+                            next_run=None if settings.paused else next_run(settings), last_run=last,
+                            active=running and owner == user_id, note=note)

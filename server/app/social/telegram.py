@@ -7,6 +7,7 @@ the Page inbox agent: it sends a proposed reply here and waits for "make it so",
     get_updates(offset, wait)               the author's new texts and button presses (long polling)
     answer_button(callback_id, text)        confirm a button press (stops the spinner, optional short notice)
     remove_buttons(message_id)              take the buttons off a message (a decided proposal is not pressed again)
+    set_commands(commands)                  the bot's command menu (shown when the author types "/")
 
 Only the bot in TELEGRAM_BOT_TOKEN and only the private chat TELEGRAM_CHAT_ID (server/.env): messages go to that chat
 alone, and updates from any other chat or sender are dropped (confirmed, so they do not come back) and logged without
@@ -124,6 +125,12 @@ def answer_button(callback_id: str, text: str | None = None) -> None:
     except TelegramError as e:
         if "query is too old" not in str(e) and "query ID is invalid" not in str(e):
             raise
+
+
+def set_commands(commands: list[tuple[str, str]]) -> None:
+    """Set the bot's command menu, which Telegram shows when the author types "/": (command without "/", what it
+    does) pairs, in this order. Replaces the menu set before."""
+    _request("setMyCommands", {"commands": [{"command": name, "description": text[:256]} for name, text in commands]})
 
 
 def remove_buttons(message_id: int) -> None:

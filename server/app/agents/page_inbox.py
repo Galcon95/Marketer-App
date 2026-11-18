@@ -222,6 +222,11 @@ def waiting_run() -> tuple[str, int] | None:
     return None
 
 
+def posted_url(thread_id: str) -> str:
+    """Where a finished run posted its reply ("" if it did not post, or the link is unknown)."""
+    return _graph().get_state(_config(thread_id)).values.get("posted_url", "") or ""
+
+
 def item_of(thread_id: str) -> str:
     """The id of the item a run is about (thread ids are "<item id>:<run id>")."""
     return thread_id.rsplit(":", 1)[0]

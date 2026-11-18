@@ -1,18 +1,20 @@
-"""The marketing agent's schedule (agents/automation.py), set in the app under Integrations → Automation.
+"""The marketing agent's schedule (agents/automation.py), set in the app under Phase 4 · Agent Workspace.
 
     GET  /automation        the user's schedule, the next and the last run, whether the agent runs for the user
     PUT  /automation        save the user's schedule (manual, or every N minutes / at times of day)
-    POST /automation/run    ask the agent for a run now, like /next in Telegram
+    PUT  /automation/paused pause the schedule, or resume it (like /pause and /resume in Telegram)
+    POST /automation/run    ask the agent for a cycle now, like /next in Telegram
+    GET  /automation/cycles the user's latest cycles: what the agent proposed and what was decided
 
 Every user has their own schedule. The agent itself (agents/page_inbox_worker.py) runs once per server, for the owner
 of the inbox books (FACEBOOK_INBOX_BOOKS); for any other user the schedule is saved but not used (`active` false).
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.agents import automation, page_inbox_worker
+from app.agents import automation, cycle, page_inbox_worker
 from app.core.auth import User, current_user
-from app.core.schemas import AutomationSchedule, AutomationStatus
+from app.core.schemas import AutomationCycle, AutomationSchedule, AutomationStatus, PauseRequest
 
 router = APIRouter()
 
@@ -61,3 +63,32 @@ def run_now(user: User = Depends(current_user)) -> dict[str, str]:
         raise HTTPException(409, "The agent on this server works for the owner of other books.")
     page_inbox_worker.request_run()
     return {"status": "Run requested: watch Telegram."}
+
+
+@router.put("/automation/paused", response_model=AutomationStatus)
+def pause(body: PauseRequest, user: User = Depends(current_user)):
+    """Pause the schedule (the agent then runs only when asked) or resume it; the schedule itself is kept. After a
+    resume the next run counts from now.
+
+    Raises:
+        HTTPException: 503 if the database cannot be written.
+    """
+    try:
+        automation.set_paused(user.id, body.paused)
+        return automation.status(user.id)
+    except OSError as e:  # DatabaseError
+        raise HTTPException(503, "Could not change the schedule right now, please try again.") from e
+
+
+@router.get("/automation/cycles", response_model=list[AutomationCycle])
+def cycles(limit: int = Query(default=20, ge=1, le=100), user: User = Depends(current_user)):
+    """The user's latest cycles, newest first, with their proposals and the decisions. Quiet scheduled looks
+    ("nothing new") are not logged.
+
+    Raises:
+        HTTPException: 503 if the database cannot be read.
+    """
+    try:
+        return cycle.recent(user.id, limit)
+    except OSError as e:  # DatabaseError
+        raise HTTPException(503, "The cycles cannot be read right now, please try again.") from e

@@ -9,7 +9,7 @@ Status as of 2026-11-17 (Facebook Page and YouTube channel included).
 | 1 | Knowledge Hub (RAG) | ✅ Built |
 | 2 | Content Studio (grounded single assets + zero-shot campaign kits) | ✅ Built |
 | 3 | Community: Discussion Relevance Agent, Reddit scan; 2 MCP servers + tool console (Integrations) | ✅ Built, incl. the author's own Facebook Page and YouTube channel |
-| 4 | Agent Workspace (multi-agent campaign: Strategist → Copywriter → Auditor) | ⬜ Placeholder UI only |
+| 4 | Agent Workspace: the marketing agent (schedule, cycles, approvals in Telegram) | 🟡 In progress; multi-agent campaign later |
 | – | Sign-in, one library per user, limits and budgets, all data in Supabase | ✅ Built |
 
 ---
@@ -297,9 +297,13 @@ The app acts as a real **MCP client** (official `mcp` SDK `Client`, Streamable H
 
 ## Phase 4 – Agent Workspace
 
-- Placeholder UI only: Strategist → Copywriter → Auditor → Human checkpoint cards, an agent console and a review panel.
-- Planned as a multi-agent campaign workflow. No backend: the first agent of the app was built in Phase 3 instead
-  (one agent at a time).
+- **The marketing agent** (see [docs/PAGE_INBOX.md](docs/PAGE_INBOX.md)): runs manually or on a schedule (times of day
+  or every few hours, chosen days, the author's time zone), pause/resume, "Run now". Each run is a **cycle**: replies
+  to readers' comments on the Facebook Page and the YouTube channel, one proposal at a time in Telegram, posted only
+  after the author's "Make it so"; a summary at the end. **Recent cycles** lists what was proposed and decided.
+- Coming in the cycle: a question under a recent post when there are no new comments; a book topic as a new post
+  with a call to action.
+- Later: the multi-agent campaign workflow (Strategist → Copywriter → Auditor → human checkpoint).
 
 ---
 
