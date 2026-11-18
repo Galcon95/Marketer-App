@@ -35,6 +35,19 @@ def env(monkeypatch):
     e = SimpleNamespace(said=[], answered=[], removed=[], started=[], resumed=[], waiting=None, open=[_item()],
                         decided=set(), resume_result="posted", start_error=None, open_error=None, withdrawn=[],
                         channel=None, youtube_open=[], youtube_error=None, due=False, ran=[])
+    # phase 2: no post to engage under unless a test sets env.engage_post
+    e.engage_post, e.engaged, e.engage_waiting, e.posted_today = None, [], None, 0
+    eng = worker_module.engagement
+    monkeypatch.setattr(eng, "pick_post", lambda settings: e.engage_post)
+    monkeypatch.setattr(eng, "posted_today", lambda user_id, timezone: e.posted_today)
+    monkeypatch.setattr(eng, "waiting_run", lambda: e.engage_waiting)
+
+    def engage_start(post):
+        e.engaged.append(post.id)
+        e.engage_waiting = (f"eng:{post.id}:run1", 201)
+        return e.engage_waiting[0]
+
+    monkeypatch.setattr(eng, "start", engage_start)
     monkeypatch.setattr(worker_module.automation, "inbox_due", lambda now: e.due)
     monkeypatch.setattr(worker_module.automation, "inbox_ran", lambda now: e.ran.append(now))
     monkeypatch.setattr(worker_module.telegram, "send_message",
@@ -370,6 +383,8 @@ def cycles(env, monkeypatch):
     from app.db import records
     from tests.conftest import OWNER
     monkeypatch.setattr(worker_module.automation, "inbox_owner", lambda: OWNER.id)
+    monkeypatch.setattr(worker_module.automation, "_cache", {})  # each test has a fresh database
+    monkeypatch.setattr(worker_module.automation, "_ran", {})
     monkeypatch.setattr(inbox, "posted_url", lambda thread_id: f"https://facebook.com/{thread_id}")
     count = iter(range(1, 100))
 
@@ -485,3 +500,75 @@ def test_start_sets_the_command_menu_and_survives_a_failure(monkeypatch):
 
     monkeypatch.setattr(worker_module.telegram, "set_commands", fail)
     worker_module.InboxWorker().start()  # no exception: the commands work without the menu
+
+
+# ---------- phase 2: a question under an own post ----------
+def _own_post(id="111_7"):
+    return FacebookPost(id=id, message="Cities should grow in rings.", created_time=NOW)
+
+
+@pytest.fixture
+def engage(cycles, monkeypatch):
+    """No open comments; an own post without comments; the engagement run answers like the inbox fake."""
+    cycles.open = []
+    cycles.engage_post = _own_post()
+    eng = worker_module.engagement
+
+    def resume(thread_id, message_id, decision, feedback=""):
+        cycles.resumed.append((thread_id, message_id, decision, feedback))
+        result = {"approve": "posted", "skip": "skipped"}.get(decision, "waiting")
+        if result != "waiting":
+            cycles.engage_waiting = None
+        return result
+
+    monkeypatch.setattr(eng, "resume", resume)
+    monkeypatch.setattr(eng, "posted_url", lambda thread_id: "https://www.facebook.com/111_7_c")
+    return cycles
+
+
+def test_no_comments_leads_to_a_question_under_an_own_post(engage):
+    engage.worker.handle(_text("/next"))
+    assert engage.engaged == ["111_7"]
+    assert ("Drafting a question for your post…", None) in engage.said
+    engage.worker.handle(_button("go", message_id=201))
+    assert engage.resumed == [("eng:111_7:run1", 201, "approve", "")]
+    assert ("Cycle done: 1 posted.", None) in engage.said
+    [saved] = engage.saved()
+    assert [(e.kind, e.item_id, e.outcome, e.url) for e in saved.entries] == [
+        ("comment", "111_7", "posted", "https://www.facebook.com/111_7_c")]
+
+
+def test_feedback_on_the_question_goes_to_the_engagement_agent(engage):
+    engage.worker.handle(_text("/next"))
+    engage.worker.handle(_text("make it a yes/no question"))
+    assert engage.resumed[-1][0].startswith("eng:") and engage.resumed[-1][2] == "feedback"
+    assert engage.worker.cycle.record.entries[0].revisions == 1
+
+
+def test_no_question_when_the_cycle_had_comments(engage):
+    engage.open = [_item("222_1")]
+    engage.worker.handle(_text("/next"))
+    engage.resume_result = "skipped"
+    engage.worker.handle(_button("skip", message_id=101))
+    assert engage.engaged == []  # phase 2 only when phase 1 found nothing
+
+
+def test_no_question_beyond_the_daily_limit(engage):
+    engage.posted_today = 2
+    engage.worker.handle(_text("/next"))
+    assert engage.engaged == [] and "Daily limit reached" in engage.said[-1][0]
+
+
+def test_no_question_when_engagement_is_off(engage):
+    from app.core.schemas import AutomationSchedule
+    from tests.conftest import OWNER
+    worker_module.automation.save(OWNER.id, AutomationSchedule(every_minutes=60, engage=False))
+    engage.worker.handle(_text("/next"))
+    assert engage.engaged == []
+
+
+def test_while_a_question_waits_a_new_start_keeps_waiting(engage):
+    engage.worker.handle(_text("/next"))
+    engage.worker.handle(_text("/next"))
+    assert engage.engaged == ["111_7"]
+    assert engage.said[-1] == ("A proposal is still waiting for your answer (above).", 201)

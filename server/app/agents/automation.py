@@ -153,11 +153,21 @@ def next_time(schedule: AutomationSchedule, after: datetime) -> datetime | None:
 
 
 def is_due(settings: AutomationSettings, now: datetime) -> bool:
-    """True when the schedule's next run is at or before `now` (never while paused)."""
-    if settings.paused:
+    """True when the schedule's next run is at or before `now` (never while paused or in the quiet hours: a run due
+    then starts when they end)."""
+    if settings.paused or in_quiet_hours(settings, now):
         return False
     due = next_run(settings)
     return due is not None and due <= now
+
+
+def in_quiet_hours(schedule: AutomationSchedule, now: datetime) -> bool:
+    """True when `now` is within the quiet hours (local time; from inclusive, to exclusive; may span midnight)."""
+    if not schedule.quiet_from:
+        return False
+    clock = now.astimezone(ZoneInfo(schedule.timezone)).strftime("%H:%M")
+    start, end = schedule.quiet_from, schedule.quiet_to
+    return start <= clock < end if start < end else clock >= start or clock < end
 
 
 def _at(day: date, clock: time, zone: ZoneInfo) -> datetime:
@@ -177,7 +187,8 @@ def describe(schedule: AutomationSchedule) -> str:
         when = f"every {every // 60} h" if every % 60 == 0 else f"every {every} min"
     else:
         when = "at " + ", ".join(schedule.times)
-    return f"{days} {when} ({schedule.timezone})"
+    quiet = f", quiet {schedule.quiet_from}–{schedule.quiet_to}" if schedule.quiet_from else ""
+    return f"{days} {when} ({schedule.timezone}{quiet})"
 
 
 # ---------- the inbox worker ----------

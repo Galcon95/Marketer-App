@@ -50,3 +50,4 @@ in the Python code. The loader is `app/core/prompt_files.py`.
 | Discussion Relevance Agent | `discussion_research`, `discussion_assess`, `discussion_draft`, `discussion_reply_rules`, `discussion_situation`, `discussion_role` |
 | Reddit scan | `discussion_scan_triage` |
 | Page inbox agent | `page_inbox_revise` |
+| Engagement agent (cycle phase 2) | `engagement_comment` |

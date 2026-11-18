@@ -51,6 +51,14 @@ class Cycle:
             excerpt=text[:EXCERPT] + ("…" if len(text) > EXCERPT else ""), proposed_at=db.now()))
         self._save()
 
+    def proposed_comment(self, thread_id: str, post) -> None:
+        """A question under the author's own post (a FacebookPost) was proposed (phase 2)."""
+        text = " ".join(post.message.split())
+        self.record.entries.append(CycleEntry(
+            kind="comment", platform="facebook", item_id=post.id, thread_id=thread_id, author="",
+            excerpt=text[:EXCERPT] + ("…" if len(text) > EXCERPT else ""), proposed_at=db.now()))
+        self._save()
+
     def revised(self, thread_id: str) -> None:
         """The author gave feedback: the proposal was rewritten and sent again."""
         if entry := self._entry(thread_id):

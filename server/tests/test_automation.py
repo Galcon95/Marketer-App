@@ -217,3 +217,36 @@ def test_api_pause_and_cycles(client):
     cycle.finish("error", "token expired")
     [listed] = c.get("/automation/cycles").json()
     assert listed["status"] == "error" and listed["trigger"] == "app"
+
+
+# ---------- quiet hours ----------
+@pytest.mark.parametrize("utc_hour, quiet", [(20, False), (21, True), (2, True), (5, True), (6, False)])
+def test_quiet_hours_span_midnight_in_local_time(utc_hour, quiet):
+    s = _settings(quiet_from="22:00", quiet_to="07:00")  # Berlin = UTC+1 in November
+    assert automation.in_quiet_hours(s, _utc(2026, 11, 17, utc_hour, 0)) is quiet
+
+
+def test_a_run_due_in_quiet_hours_waits_until_they_end():
+    s = _settings(times=[], every_minutes=60, quiet_from="22:00", quiet_to="07:00",
+                  last_run_at=_utc(2026, 11, 17, 20, 30))
+    assert not automation.is_due(s, _utc(2026, 11, 17, 23, 0))  # 00:00 Berlin: quiet
+    assert automation.is_due(s, _utc(2026, 11, 18, 6, 0))  # 07:00 Berlin: quiet hours over, run made up
+
+
+@pytest.mark.parametrize("kwargs", [{"quiet_from": "22:00"}, {"quiet_from": "22:00", "quiet_to": "22:00"},
+                                    {"quiet_from": "7", "quiet_to": "8"}, {"engage_days": 0}, {"daily_limit": 11}])
+def test_invalid_quiet_hours_and_limits(kwargs):
+    with pytest.raises(ValidationError):
+        AutomationSchedule(times=["09:00"], **kwargs)
+
+
+def test_describe_shows_quiet_hours():
+    assert automation.describe(_settings(quiet_from="22:00", quiet_to="07:00")).endswith(
+        "(Europe/Berlin, quiet 22:00–07:00)")
+
+
+def test_save_keeps_the_new_settings():
+    automation.save(OWNER.id, AutomationSchedule(times=["09:00"], engage=False, engage_days=7, daily_limit=1,
+                                                 quiet_from="22:00", quiet_to="07:00"))
+    saved = records.get_automation_settings(OWNER.id)
+    assert (saved.engage, saved.engage_days, saved.daily_limit, saved.quiet_from) == (False, 7, 1, "22:00")

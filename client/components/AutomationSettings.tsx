@@ -99,7 +99,8 @@ function RecentCycles({ refresh, zone }: { refresh: number; zone: string }) {
               <div key={e.thread_id} className="bc-row" style={{ gap: 8, alignItems: "baseline" }}>
                 <Badge tone={OUTCOMES[e.outcome].tone}>{OUTCOMES[e.outcome].label}</Badge>
                 <span className="bc-hint" style={{ margin: 0, flex: 1, minWidth: 200 }}>
-                  {e.platform === "youtube" ? "▶️ " : ""}{e.author || "A reader"}: “{e.excerpt}”
+                  {e.kind === "comment" ? "💡 Question under your post: "
+                    : `${e.platform === "youtube" ? "▶️ " : ""}${e.author || "A reader"}: `}“{e.excerpt}”
                   {e.revisions > 0 && ` · rewritten ${e.revisions}×`}
                 </span>
                 {e.url && (
@@ -299,8 +300,58 @@ export default function AutomationSettings() {
                       {zoneList.map((z) => <option key={z} value={z}>{z}</option>)}
                     </select>
                   </div>
+
+                  <div className="bc-field">
+                    <label className="bc-label" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <input type="checkbox" checked={!!draft.quiet_from}
+                        onChange={(e) => edit(e.target.checked ? { quiet_from: "22:00", quiet_to: "07:00" }
+                          : { quiet_from: "", quiet_to: "" })} />
+                      Quiet hours
+                    </label>
+                    {draft.quiet_from ? (
+                      <div className="bc-row" style={{ gap: 8 }}>
+                        <span className="bc-hint" style={{ margin: 0 }}>from</span>
+                        <input type="time" className="bc-input" style={{ width: 120 }} value={draft.quiet_from}
+                          aria-label="Quiet hours from" onChange={(e) => edit({ quiet_from: e.target.value })} />
+                        <span className="bc-hint" style={{ margin: 0 }}>to</span>
+                        <input type="time" className="bc-input" style={{ width: 120 }} value={draft.quiet_to}
+                          aria-label="Quiet hours to" onChange={(e) => edit({ quiet_to: e.target.value })} />
+                        <span className="bc-hint" style={{ margin: 0 }}>no scheduled runs; a run due then waits until they end</span>
+                      </div>
+                    ) : <span className="bc-hint">The schedule may run at any time of day.</span>}
+                  </div>
                 </>
               )}
+
+              <fieldset className="bc-seg-field" style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+                <legend className="bc-label">When there are no new comments</legend>
+                <div className="bc-stack" style={{ gap: 8 }}>
+                  <label className="bc-row" style={{ gap: 8, flexWrap: "nowrap" }}>
+                    <input type="checkbox" checked={draft.engage} onChange={(e) => edit({ engage: e.target.checked })} />
+                    <span>Propose a question under one of my recent posts that has no comments yet, to start a discussion</span>
+                  </label>
+                  {draft.engage && (
+                    <div className="bc-row" style={{ gap: 16 }}>
+                      <label className="bc-row" style={{ gap: 6 }}>
+                        <span className="bc-hint" style={{ margin: 0 }}>Posts from the last</span>
+                        <select className="bc-select" style={{ width: 90 }} value={draft.engage_days}
+                          onChange={(e) => edit({ engage_days: Number(e.target.value) })}>
+                          {[3, 7, 14, 30, 60].map((d) => <option key={d} value={d}>{d} days</option>)}
+                        </select>
+                      </label>
+                      <label className="bc-row" style={{ gap: 6 }}>
+                        <span className="bc-hint" style={{ margin: 0 }}>At most</span>
+                        <select className="bc-select" style={{ width: 70 }} value={draft.daily_limit}
+                          onChange={(e) => edit({ daily_limit: Number(e.target.value) })}>
+                          {[0, 1, 2, 3, 5, 10].map((n) => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                        <span className="bc-hint" style={{ margin: 0 }}>own comments or posts per day</span>
+                      </label>
+                    </div>
+                  )}
+                  <span className="bc-hint">Each post gets at most one such question. Replies to readers are not limited.</span>
+                </div>
+              </fieldset>
 
               <div className="bc-row" style={{ gap: 16 }}>
                 <span className="bc-hint" style={{ margin: 0 }}><strong>Next run:</strong> {s.paused ? "paused" : s.schedule.mode === "scheduled" ? when(s.next_run, zone) : "only when you ask"}</span>

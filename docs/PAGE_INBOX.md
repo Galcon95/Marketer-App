@@ -63,6 +63,15 @@ It proposes the open items one at a time, the next one right after your answer, 
 nothing are not logged). A cycle still running when the server stops is shown as *interrupted*. A comment under a
 recent post and a book post will join the cycle as its phases 2 and 3.
 
+**Phase 2: a question under your own post** ([`engagement.py`](../server/app/agents/engagement.py),
+prompt [`engagement_comment.md`](../server/prompts/engagement_comment.md)): when a cycle finds no new comments, the
+agent takes your newest Page post of the last 14 days (setting) that has no comments yet and never had such a
+proposal, finds fitting passages in your books and drafts one open question that invites readers to answer (no
+promotion, at most 3 sentences). Telegram shows it with the same buttons; feedback rewrites it from the same passages.
+Each post gets at most one try (posted or skipped). A **daily limit** (default 2) caps the comments and posts the agent
+writes on its own initiative per day; replies to readers are not limited. Off switch, post age and limit are on the
+Agent Workspace page, next to the **quiet hours** (no scheduled runs then; a run due in them starts when they end).
+
 **Run now** in the Agent Workspace works like `/next` (it starts within half a minute). A proposal waits until you
 answer it; there is no expiry. The schedule only messages you when something new is there. Each proposal is also saved as a discussion analysis,
 so it can be read and edited in the app (Community). A YouTube proposal starts with ▶️ and names the video.

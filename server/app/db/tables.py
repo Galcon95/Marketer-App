@@ -140,6 +140,11 @@ class AutomationSettingsRow(Base):
     last_run_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     paused: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     resumed_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+    quiet_from: Mapped[str] = mapped_column(Text, server_default=text("''"))
+    quiet_to: Mapped[str] = mapped_column(Text, server_default=text("''"))
+    engage: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
+    engage_days: Mapped[int] = mapped_column(Integer, server_default=text("14"))
+    daily_limit: Mapped[int] = mapped_column(Integer, server_default=text("2"))
 
 
 class AutomationCycleRow(Base):

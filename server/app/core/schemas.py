@@ -791,21 +791,36 @@ HHMM = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
 
 
 class AutomationSchedule(BaseModel):
-    """When the marketing agent runs on its own. `manual`: only when asked (/next in Telegram, "Run now" in the app);
-    `scheduled`: every `every_minutes`, or (when that is 0) at the `times` of day; either only on the `days` of the
-    week (0 = Monday), in the user's `timezone` (IANA name, e.g. "Europe/Berlin")."""
+    """When the marketing agent runs on its own, and what it may do. `manual`: only when asked (/next in Telegram,
+    "Run now" in the app); `scheduled`: every `every_minutes`, or (when that is 0) at the `times` of day; either only on
+    the `days` of the week (0 = Monday), in the user's `timezone` (IANA name, e.g. "Europe/Berlin"), never within the
+    quiet hours (`quiet_from`–`quiet_to`, local, may span midnight; both "" = none).
+
+    `engage`: when a cycle finds no new comments, propose a question under an own post of the last `engage_days`
+    days that has no comments (phase 2). `daily_limit`: at most this many comments and posts the agent writes on its
+    own initiative per day (replies to readers do not count; 0 = none)."""
 
     mode: Literal["manual", "scheduled"] = "scheduled"
     every_minutes: int = Field(default=0, ge=0, le=1440)  # 0: at `times`; else at least 15
     times: list[str] = Field(default_factory=list, max_length=24)  # "HH:MM", local time
     days: list[int] = Field(default_factory=lambda: list(range(7)), min_length=1, max_length=7)
     timezone: str = "UTC"
+    quiet_from: str = ""  # "22:00"
+    quiet_to: str = ""  # "07:00"
+    engage: bool = True
+    engage_days: int = Field(default=14, ge=1, le=60)
+    daily_limit: int = Field(default=2, ge=0, le=10)
 
     @model_validator(mode="after")
     def _check(self) -> "AutomationSchedule":
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
         if any(not HHMM.fullmatch(t) for t in self.times):
             raise ValueError("Times of day must look like 09:00 (24-hour clock).")
+        if bool(self.quiet_from) != bool(self.quiet_to) or any(
+                t and not HHMM.fullmatch(t) for t in (self.quiet_from, self.quiet_to)):
+            raise ValueError("Quiet hours need a start and an end like 22:00 and 07:00 (or neither).")
+        if self.quiet_from and self.quiet_from == self.quiet_to:
+            raise ValueError("Quiet hours must not start and end at the same time.")
         self.times = sorted(set(self.times))
         if any(d not in range(7) for d in self.days):
             raise ValueError("Days are 0 (Monday) to 6 (Sunday).")

@@ -19,9 +19,15 @@ through the Page in one go. The schedule only proposes when something new is the
 
 A cycle (agents/cycle.py) is one pass of the agent: started by the schedule, "Run now" in the app or /next, it
 proposes the open items one at a time (each after the author's decision on the previous one) and ends when nothing is
-left: then a summary goes to Telegram ("Cycle done: 2 posted, 1 skipped.") and the cycle is logged. Phase 2 (a
-comment under a recent post) and phase 3 (a book post) join the cycle in later steps. While a proposal waits, a new
-start only checks it (answered elsewhere: taken back, and the cycle goes on).
+left: then a summary goes to Telegram ("Cycle done: 2 posted, 1 skipped.") and the cycle is logged. Phases:
+
+    1 replies   readers' new comments on the Page and the channel (page_inbox.py)
+    2 comment   only when phase 1 found nothing in this cycle: a question under an own recent post without comments
+                (engagement.py), if the schedule allows it (`engage`) and the daily limit is not reached
+    3 post      a book topic as a new post (a later step)
+
+While a proposal waits, a new start only checks it (answered elsewhere: taken back, and the cycle goes on). Only one
+proposal waits at a time, of either agent; answers go to the agent whose proposal it is.
 
 The schedule is the inbox owner's (agents/automation.py, set in the app under Phase 4 · Agent Workspace): manual, or
 every N minutes, or at times of day. "Run now" in the app asks the worker for a run like /next (request_run); it
@@ -44,7 +50,7 @@ from datetime import UTC, datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from app.agents import automation
+from app.agents import automation, engagement
 from app.agents.cycle import Cycle, interrupt_leftovers
 from app.agents import page_inbox as inbox
 from app.core import config
@@ -61,7 +67,7 @@ SCAN_COMMENTS = 50  # latest YouTube comment threads looked at per scan (1-3 quo
 
 # The bot's commands: /help lists them, and they are Telegram's command menu (set on start, shown when typing "/").
 COMMANDS: list[tuple[str, str]] = [
-    ("next", "Run a cycle now: look at your Page and channel and propose a reply to the next new comment"),
+    ("next", "Run a cycle now: replies to new comments; with none, a question under a recent post of yours"),
     ("status", "The schedule, the next and the last run, the running cycle, and a waiting proposal"),
     ("pause", "Stop the schedule for now (/next still works; your schedule is kept)"),
     ("resume", "Start the schedule again (the next run counts from now)"),
@@ -69,7 +75,8 @@ COMMANDS: list[tuple[str, str]] = [
 ]
 
 HELP = ("I am your marketing agent. I watch your Facebook Page and your YouTube channel and propose replies to "
-        "readers' comments, drafted from your books. Nothing is posted without your OK.\n\n"
+        "readers' comments, drafted from your books. When nobody commented, I propose a question under one of your "
+        "recent posts to start a discussion. Nothing is posted without your OK.\n\n"
         "Commands:\n" + "\n".join(f"/{name} – {text}" for name, text in COMMANDS) + "\n\n"
         "Under a proposal:\n"
         "✅ Make it so (button, or write “make it so”) – post it as your Page or channel\n"
@@ -151,8 +158,44 @@ class InboxWorker:
         result = self.propose_next(asked)
         if result in ("proposed", "waiting") or self.cycle is None:
             return
-        # phase 2 (comment under a recent post) and phase 3 (book post) go here in later steps
+        if result == "none" and not self.cycle.record.entries:  # phase 2: no comments in this cycle
+            result = self.propose_engagement(asked)
+            if result == "proposed":
+                return
+        # phase 3 (book post) goes here in a later step
         self._end_cycle(error=result == "error")
+
+    def propose_engagement(self, asked: bool) -> Step:
+        """Phase 2: a question under an own recent post without comments, when the schedule allows it."""
+        owner = automation.inbox_owner()
+        if not owner or not facebook.is_configured():
+            return "none"
+        try:
+            settings = automation.schedule_of(owner)
+            if not settings.engage:
+                return "none"
+            if engagement.posted_today(owner, settings.timezone) >= settings.daily_limit:
+                if asked:
+                    self._say(f"Daily limit reached ({settings.daily_limit} own comments or posts today), so no "
+                              "question under a post.")
+                return "none"
+            post = engagement.pick_post(settings)
+            if post is None:
+                if asked:
+                    self._say(f"No post of yours from the last {settings.engage_days} days is waiting for a first "
+                              "comment.")
+                return "none"
+            if asked:
+                self._say("Drafting a question for your post…")
+            thread_id = engagement.start(post)
+            if thread_id and self.cycle:
+                self.cycle.proposed_comment(thread_id, post)
+            self.last_error = ""
+            return "proposed" if thread_id else "none"
+        except (facebook.FacebookError, telegram.TelegramError, GenerationError, inbox.InboxConfigError,
+                LookupError, OSError) as e:
+            self._report(f"Could not prepare a question for your post: {e}", asked)
+            return "error"
 
     def _end_cycle(self, error: bool) -> None:
         cycle, self.cycle = self.cycle, None
@@ -185,7 +228,11 @@ class InboxWorker:
         """
         try:
             items, failed = self._open_items(asked)
-            if waiting := inbox.waiting_run():
+            if (waiting := _waiting()) and engagement.is_engagement(waiting[0]):
+                if asked:
+                    self._say("A proposal is still waiting for your answer (above).", reply_to=waiting[1])
+                return "waiting"
+            if waiting:
                 # still unanswered: it keeps waiting; answered elsewhere: take it back and go on (not when a source
                 # could not be read: then its item may only seem answered)
                 if failed or inbox.item_of(waiting[0]) in {i.id for i in items} or not inbox.withdraw(*waiting):
@@ -259,7 +306,7 @@ class InboxWorker:
             entries = self.cycle.record.entries
             done = sum(e.outcome != "waiting" for e in entries)
             lines.append(f"A cycle is running: {len(entries)} proposed, {done} decided.")
-        if inbox.waiting_run():
+        if _waiting():
             lines.append("A proposal is waiting for your answer.")
         return "\n".join(lines) + "\n\nChange it in the app: Phase 4 · Agent Workspace."
 
@@ -281,7 +328,7 @@ class InboxWorker:
     # ----- helpers -----
     def _button(self, update: TelegramUpdate) -> None:
         decision = inbox.button_decision(update.text)
-        waiting = inbox.waiting_run()
+        waiting = _waiting()
         if decision is None or waiting is None or waiting[1] != update.message_id:
             self._answer(update, "This proposal is already decided.")
             _remove(update.message_id)
@@ -303,7 +350,7 @@ class InboxWorker:
         if command == "/status":
             self._say(self._status())
             return
-        waiting = inbox.waiting_run()
+        waiting = _waiting()
         if waiting is None:
             self._say("Nothing is waiting for an answer. Send /next to look at your Page.")
             return
@@ -319,7 +366,8 @@ class InboxWorker:
     def _decide(self, thread_id: str, message_id: int, decision: str, feedback: str) -> None:
         """Resume the run; after a final decision, propose the next open item."""
         try:
-            result = inbox.resume(thread_id, message_id, decision, feedback)
+            agent = engagement if engagement.is_engagement(thread_id) else inbox
+            result = agent.resume(thread_id, message_id, decision, feedback)
         except (GenerationError, telegram.TelegramError, LookupError, OSError) as e:
             logger.warning("Page inbox: applying the decision failed: %s", e)
             self._say(f"That did not work: {e}\nThe proposal above still waits; try again.")
@@ -333,7 +381,7 @@ class InboxWorker:
             return
         if self.cycle is None:  # e.g. a proposal from before the cycles: the decision starts one
             self.cycle = Cycle(automation.inbox_owner() or "", "telegram")
-        self.cycle.decided(thread_id, result, inbox.posted_url(thread_id) if result == "posted" else "")
+        self.cycle.decided(thread_id, result, agent.posted_url(thread_id) if result == "posted" else "")
         self._step(asked=False)
 
     def _say(self, text: str, reply_to: int | None = None) -> None:
@@ -347,6 +395,11 @@ class InboxWorker:
             telegram.answer_button(update.callback_id or "", text)
         except telegram.TelegramError as e:
             logger.warning("Page inbox: could not confirm a button press: %s", e)
+
+
+def _waiting() -> tuple[str, int] | None:
+    """The proposal that waits for the author (thread id, message id), of the inbox or the engagement agent."""
+    return inbox.waiting_run() or engagement.waiting_run()
 
 
 def _when(moment: datetime, timezone: str) -> str:

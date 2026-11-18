@@ -188,6 +188,11 @@ export interface AutomationSchedule {
   times: string[];
   days: number[];
   timezone: string;
+  quiet_from: string; // "22:00"; "" = no quiet hours
+  quiet_to: string;
+  engage: boolean; // no new comments: propose a question under an own recent post without comments
+  engage_days: number; // how recent that post must be
+  daily_limit: number; // own comments and posts per day (replies to readers do not count)
 }
 /** What became of a proposal; "waiting" until the author answers. */
 export type CycleOutcome = "waiting" | "posted" | "skipped" | "failed" | "blocked" | "gave_up" | "answered";
