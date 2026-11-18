@@ -124,6 +124,22 @@ class YouTubeConnectionRow(Base):
     connected_at: Mapped[datetime] = mapped_column(UtcDateTime)
 
 
+class AutomationSettingsRow(Base):
+    """A user's schedule for the marketing agent; see schemas.AutomationSettings. One row per user."""
+
+    __tablename__ = "automation_settings"
+    __table_args__ = {"schema": PRIVATE}
+
+    user_id: Mapped[str] = mapped_column(Text, primary_key=True)  # Supabase user id
+    mode: Mapped[str] = mapped_column(Text)
+    every_minutes: Mapped[int] = mapped_column(Integer)
+    times: Mapped[list] = mapped_column(Json)  # ["09:00", "18:00"]
+    days: Mapped[list] = mapped_column(Json)  # [0, ..., 6], 0 = Monday
+    timezone: Mapped[str] = mapped_column(Text)
+    saved_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+
+
 class AssetRow(Base):
     """A generated marketing asset; one column per field of schemas.Asset (a test checks they match)."""
 

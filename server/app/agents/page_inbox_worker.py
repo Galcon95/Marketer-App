@@ -1,9 +1,10 @@
 """The Page inbox agent's worker: a background thread that connects Telegram, the Facebook Page, the YouTube channel
 and the graph (agents/page_inbox.py) while the server runs.
 
-    loop:  get_updates (long poll) ─► handle each update ─► every FACEBOOK_INBOX_INTERVAL min: propose_next()
+    loop:  get_updates (long poll) ─► handle each update ─► tick: when the schedule is due, propose_next()
 
     /next             look at the Page and the channel now and propose the next open item
+    /status           the schedule, the next and the last run
     /start, /help     what the bot does and how to answer
     a button          "Make it so" / "Skip" under the current proposal
     a text            "make it so", "skip", or feedback for the current proposal (a Telegram "Reply" to an older
@@ -14,6 +15,10 @@ answered elsewhere in the meantime (in the app, or on Facebook) is taken back on
 not block the newer comments. After a decision the next open item is proposed right away, so the author can work
 through the Page in one go. The schedule only proposes when something new is there; /next always answers (also
 "Nothing new").
+
+The schedule is the inbox owner's (agents/automation.py, set in the app under Integrations → Automation): manual, or
+every N minutes, or at times of day. "Run now" in the app asks the worker for a run like /next (request_run); it
+starts after the current long poll, within half a minute.
 
 Items come from the Facebook Page (when FACEBOOK_PAGE_* is set) and from the YouTube channel the books' owner
 connected in the app (page_inbox.channel_for_inbox), oldest first. When one of them cannot be read, the other is still
@@ -28,8 +33,10 @@ reported in Telegram.
 
 import logging
 import threading
-import time
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
+from app.agents import automation
 from app.agents import page_inbox as inbox
 from app.core import config
 from app.core.llm import GenerationError
@@ -46,33 +53,36 @@ SCAN_COMMENTS = 50  # latest YouTube comment threads looked at per scan (1-3 quo
 HELP = ("I watch your Facebook Page and your YouTube channel and propose replies to readers' comments, drafted from "
         "your books.\n\n"
         "Under a proposal: press ✅ Make it so (or write “make it so”) to post it as your Page or channel, Skip to "
-        "leave it, or write what to change and I rewrite it.\n\n/next – look at the Page and the channel now")
+        "leave it, or write what to change and I rewrite it.\n\n/next – look at the Page and the channel now\n"
+        "/status – when I look next on my own")
 
 
 class InboxWorker:
     """Polls Telegram and runs the inbox; `handle` and `tick` do one step each (tests call them directly)."""
 
-    def __init__(self, interval_minutes: float):
-        self.interval = interval_minutes * 60  # 0: no schedule, only /next
+    def __init__(self):
         self.offset: int | None = None
-        self.last_scan = 0.0
         self.last_error = ""  # the last scan error reported in Telegram (the schedule reports each error once)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._run_requested = threading.Event()  # "Run now" in the app
 
     # ----- lifecycle -----
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="page-inbox", daemon=True)
         self._thread.start()
-        logger.info("Page inbox worker started (scan every %s min, /next in Telegram)", self.interval / 60 or "—")
+        logger.info("Page inbox worker started (schedule from the app, /next in Telegram)")
 
     def stop(self) -> None:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=2)  # a long poll may still be open; the thread is a daemon
 
+    def request_run(self) -> None:
+        """Ask for a run like /next (from the app); it starts after the current long poll."""
+        self._run_requested.set()
+
     def _run(self) -> None:
-        self.last_scan = time.monotonic()  # the first scheduled scan after one interval; /next any time
         while not self._stop.is_set():
             try:
                 updates = telegram.get_updates(self.offset, wait=POLL_WAIT)
@@ -83,15 +93,21 @@ class InboxWorker:
             self.offset = updates.next_offset
             for update in updates.items:
                 self.handle(update)
-            self.tick(time.monotonic())
+            self.tick(datetime.now(UTC))
 
     # ----- one step -----
-    def tick(self, now: float) -> None:
-        """The schedule: when the interval has passed, look at the Page: take back a waiting proposal that was
-        answered elsewhere, and propose the next open item when nothing waits."""
-        if not self.interval or now - self.last_scan < self.interval:
+    def tick(self, now: datetime) -> None:
+        """A run asked for in the app, or the schedule: when one is due, look at the Page: take back a waiting
+        proposal that was answered elsewhere, and propose the next open item when nothing waits."""
+        if self._run_requested.is_set():
+            self._run_requested.clear()
+            automation.inbox_ran(now)
+            self._say("Run started from the app.")
+            self.propose_next(asked=True)
             return
-        self.last_scan = now
+        if not automation.inbox_due(now):
+            return
+        automation.inbox_ran(now)
         self.propose_next(asked=False)
 
     def handle(self, update: TelegramUpdate) -> None:
@@ -163,6 +179,23 @@ class InboxWorker:
             self._say(message)
         self.last_error = message
 
+    def _status(self) -> str:
+        """The schedule, the next and the last run, and whether a proposal waits, in words."""
+        owner = automation.inbox_owner()
+        if not owner:
+            return "No inbox books are set up (FACEBOOK_INBOX_BOOKS)."
+        try:
+            info = automation.status(owner)
+        except OSError as e:  # DatabaseError
+            return f"The schedule cannot be read right now: {e}"
+        zone = info.schedule.timezone
+        lines = [f"Schedule: {automation.describe(info.schedule)}",
+                 f"Next run: {_when(info.next_run, zone) if info.next_run else '— (only /next)'}",
+                 f"Last run: {_when(info.last_run, zone) if info.last_run else '—'}"]
+        if inbox.waiting_run():
+            lines.append("A proposal is waiting for your answer.")
+        return "\n".join(lines) + "\n\nChange it in the app: Integrations → Automation."
+
     # ----- helpers -----
     def _button(self, update: TelegramUpdate) -> None:
         decision = inbox.button_decision(update.text)
@@ -181,6 +214,9 @@ class InboxWorker:
             return
         if command == "/next":
             self.propose_next(asked=True)
+            return
+        if command == "/status":
+            self._say(self._status())
             return
         waiting = inbox.waiting_run()
         if waiting is None:
@@ -221,6 +257,11 @@ class InboxWorker:
             logger.warning("Page inbox: could not confirm a button press: %s", e)
 
 
+def _when(moment: datetime, timezone: str) -> str:
+    """A time in the schedule's time zone, e.g. "Tue 18 Nov 09:00"."""
+    return moment.astimezone(ZoneInfo(timezone)).strftime("%a %d %b %H:%M")
+
+
 def _remove(message_id: int) -> None:
     try:
         telegram.remove_buttons(message_id)
@@ -246,11 +287,26 @@ def start_if_configured() -> InboxWorker | None:
     except inbox.InboxConfigError as e:
         logger.warning("Page inbox worker off: %s", e)
         return None
-    _worker = InboxWorker(config.FACEBOOK_INBOX_INTERVAL)
+    _worker = InboxWorker()
     _worker.start()
     return _worker
 
 
+def is_running() -> bool:
+    """True when the worker runs in this server process."""
+    return _worker is not None
+
+
+def request_run() -> bool:
+    """Ask the worker for a run now (the app's "Run now"); False when it does not run."""
+    if _worker is None:
+        return False
+    _worker.request_run()
+    return True
+
+
 def stop() -> None:
+    global _worker
     if _worker:
         _worker.stop()
+        _worker = None

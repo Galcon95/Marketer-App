@@ -47,8 +47,9 @@ Read once on import from environment variables (and server/.env, if present), fi
     FACEBOOK_INBOX_BOOKS → optional, comma-separated book ids (src_...) of one client: the Page inbox agent
                           (agents/page_inbox.py) answers readers on the Facebook Page and viewers on the YouTube channel
                           the books' owner connected in the app from the best fitting of them
-    FACEBOOK_INBOX_INTERVAL → optional, minutes between the inbox worker's looks at the Page (default 30; 0 = only
-                          when the author sends /next in Telegram)
+    FACEBOOK_INBOX_INTERVAL → optional, the default schedule until the books' owner saves one in the app
+                          (agents/automation.py): minutes between the inbox worker's looks at the Page (default 30;
+                          0 = only when the author sends /next in Telegram)
     LANGSMITH_PROJECT   → optional, the LangSmith project the traces go to (default "marketer-app")
     SUPABASE_URL        → URL of the Supabase project whose users may sign in (auth.py checks their access tokens
                           with its public signing keys); without it every API request except /health gets 503

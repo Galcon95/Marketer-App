@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore, type JSX } from "react";
 import {
-  Bot, Brain, Cpu, Database, FileText, Info, KeyRound, LogOut, Menu, MessagesSquare, Moon, Network, Plug, Server, Settings,
+  Bot, Brain, Clock, Cpu, Database, FileText, Info, KeyRound, LogOut, Menu, MessagesSquare, Moon, Network, Plug, Server, Settings,
   Sparkles, SquarePlay, Sun, SunMoon, Target, Terminal, ThumbsUp, Users, UserCheck,
 } from "lucide-react";
 import { api, API_URL } from "@/lib/api";
@@ -22,6 +22,7 @@ import McpServers from "./phases/McpServers";
 import ExportDrawer from "./ExportDrawer";
 import FacebookConnection, { type LoginResult } from "./FacebookConnection";
 import YouTubeConnection from "./YouTubeConnection";
+import AutomationSettings from "./AutomationSettings";
 import KeysDrawer from "./KeysPanel";
 import UsageDrawer, { formatTokens, formatUsd } from "./UsagePanel";
 import { Badge, Button, Card, ErrorNote, Placeholder, SectionHeading, Sidebar, StatusRow, Tabs, type NavGroup, type TabItem } from "./ui";
@@ -48,7 +49,7 @@ function useTheme(): "light" | "dark" | null {
 /** Id of one of the four pipeline phases (tabs). */
 type PhaseId = "p1" | "p2" | "p3" | "p4";
 /** Id of a view: a phase, or a page opened from the sidebar only (no phase tab). */
-type ViewId = PhaseId | "mcp" | "facebook" | "youtube";
+type ViewId = PhaseId | "mcp" | "facebook" | "youtube" | "automation";
 /**
  * Props passed to every phase view: `refresh` reloads its data, `onChange` triggers a global refresh, `bookId` is
  * the book being worked on (null = all books; shared, so a choice in the Knowledge Hub carries over to the
@@ -73,6 +74,7 @@ const TITLES: Record<ViewId, [title: string, crumb: string]> = {
   mcp: ["MCP servers", "Integrations · live tool calls via Model Context Protocol"],
   facebook: ["Facebook Page", "Integrations · your own Page, connected with Facebook Login"],
   youtube: ["YouTube channel", "Integrations · your own channel, connected with Google sign-in"],
+  automation: ["Automation", "Integrations · when the marketing agent runs · approvals in Telegram"],
 };
 
 /** Display label and icon for each service name reported by GET /health. */
@@ -138,6 +140,7 @@ const VIEWS: Record<ViewId, (props: PhaseProps) => JSX.Element> = {
   mcp: McpServers,
   facebook: () => <></>, // rendered by AppShell itself (it needs the login result)
   youtube: () => <></>, // the same
+  automation: AutomationSettings,
 };
 
 /* ---------- Shell ---------- */
@@ -194,6 +197,7 @@ export default function AppShell() {
       items: [
         { id: "facebook", icon: ThumbsUp, label: "Facebook Page" },
         { id: "youtube", icon: SquarePlay, label: "YouTube channel" },
+        { id: "automation", icon: Clock, label: "Automation" },
         { id: "mcp", icon: Plug, label: "MCP servers" },
       ],
     },

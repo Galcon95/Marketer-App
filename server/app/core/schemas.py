@@ -786,6 +786,63 @@ class TelegramUpdates(BaseModel):
     next_offset: int | None = None
 
 
+# ---------- Automation (agents/automation.py) ----------
+HHMM = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
+
+
+class AutomationSchedule(BaseModel):
+    """When the marketing agent runs on its own. `manual`: only when asked (/next in Telegram, "Run now" in the app);
+    `scheduled`: every `every_minutes`, or (when that is 0) at the `times` of day; either only on the `days` of the
+    week (0 = Monday), in the user's `timezone` (IANA name, e.g. "Europe/Berlin")."""
+
+    mode: Literal["manual", "scheduled"] = "scheduled"
+    every_minutes: int = Field(default=0, ge=0, le=1440)  # 0: at `times`; else at least 15
+    times: list[str] = Field(default_factory=list, max_length=24)  # "HH:MM", local time
+    days: list[int] = Field(default_factory=lambda: list(range(7)), min_length=1, max_length=7)
+    timezone: str = "UTC"
+
+    @model_validator(mode="after")
+    def _check(self) -> "AutomationSchedule":
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        if any(not HHMM.fullmatch(t) for t in self.times):
+            raise ValueError("Times of day must look like 09:00 (24-hour clock).")
+        self.times = sorted(set(self.times))
+        if any(d not in range(7) for d in self.days):
+            raise ValueError("Days are 0 (Monday) to 6 (Sunday).")
+        self.days = sorted(set(self.days))
+        if 0 < self.every_minutes < 15:
+            raise ValueError("Run at most every 15 minutes.")
+        if self.mode == "scheduled" and not self.every_minutes and not self.times:
+            raise ValueError("Give at least one time of day, or an interval.")
+        try:
+            ZoneInfo(self.timezone)
+        except (ZoneInfoNotFoundError, ValueError) as e:
+            raise ValueError(f"Unknown time zone: {self.timezone}") from e
+        return self
+
+
+class AutomationSettings(AutomationSchedule):
+    """A user's saved schedule (private.automation_settings). `saved_at` None: the defaults, never saved by the user
+    (the row then only keeps `last_run_at`); `last_run_at`: the last scheduled or requested run."""
+
+    user_id: str
+    saved_at: datetime | None = None
+    last_run_at: datetime | None = None
+
+
+class AutomationStatus(BaseModel):
+    """Response of GET /automation: the user's schedule and what the agent does with it. `active`: the agent runs
+    for this user (Telegram and the inbox books are set up on the server, and the books are this user's); `note`
+    says why not."""
+
+    schedule: AutomationSchedule
+    saved: bool
+    next_run: datetime | None = None
+    last_run: datetime | None = None
+    active: bool
+    note: str = ""
+
+
 # ---------- MCP console (Community) ----------
 class McpTool(BaseModel):
     """One tool of an MCP server, as listed by tools/list."""

@@ -36,9 +36,12 @@ The drafting is done by the [Discussion Relevance Agent](AGENT.md) in its own Pa
    `TELEGRAM_CHAT_ID`.
 3. **Books:** `FACEBOOK_INBOX_BOOKS=src_...,src_...` lists the processed books of one client to answer from (for
    Facebook and YouTube alike).
-4. Optional: `FACEBOOK_INBOX_INTERVAL` sets the minutes between automatic looks at the Page and the channel. The
-   default is 30; `0` means they are only checked when you send `/next`. One look at the channel costs 1-3 of the
-   10,000 daily YouTube API units, a reply 50.
+4. **Schedule:** in the app, **Integrations → Automation** (signed in as the owner of the inbox books): *Manual only*
+   (only `/next` or **Run now**), or *On a schedule*: at times of day (e.g. 09:00 and 18:00) or every few hours, on
+   chosen days, in your time zone. Saved per user in `private.automation_settings`
+   ([`automation.py`](../server/app/agents/automation.py)). A run missed while the server was off is made up once when
+   it starts. Until you save one, `FACEBOOK_INBOX_INTERVAL` (minutes, default 30; `0` = manual) is the default. One
+   look at the channel costs 1-3 of the 10,000 daily YouTube API units, a reply 50.
 5. Start the server. The log shows `Page inbox worker started`; if something is missing, it shows which setting.
 
 ## 2. Using it
@@ -49,9 +52,11 @@ The drafting is done by the [Discussion Relevance Agent](AGENT.md) in its own Pa
 | **✅ Make it so** button, or the text `make it so` | The reply is posted as the Page or the channel; you get the link. The next open item follows. |
 | **Skip** button, or `skip` | Nothing is posted; the item is not proposed again. |
 | Any other text, e.g. "shorter, mention volume 2" | Feedback: the reply is rewritten from the same book passages and proposed again (up to 5 rounds, then finish it in the app). |
+| `/status` | The schedule, the next and the last run, and whether a proposal is waiting. |
 | `/help` | How to answer. |
 
-The schedule only messages you when something new is there. Each proposal is also saved as a discussion analysis,
+**Run now** on the Automation page works like `/next` (it starts within half a minute). A proposal waits until you
+answer it; there is no expiry. The schedule only messages you when something new is there. Each proposal is also saved as a discussion analysis,
 so it can be read and edited in the app (Community). A YouTube proposal starts with ▶️ and names the video.
 
 **What counts as open:** a visitor's comment the Page has not answered in its thread, and a visitor's post on the

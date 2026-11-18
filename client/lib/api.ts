@@ -178,6 +178,26 @@ export interface YouTubeComment {
 export interface YouTubeThread { video: YouTubeVideo; comments: YouTubeComment[] }
 /** Response of GET /youtube/status; `error` says why the channel is not reachable (e.g. connect again). */
 export interface YouTubeStatus { connected: boolean; channel: YouTubeChannel | null; error: string; login_available: boolean }
+/**
+ * When the marketing agent runs on its own (PUT /automation). `manual`: only when asked; `scheduled`: every
+ * `every_minutes`, or (when that is 0) at the `times` of day ("HH:MM"), only on `days` (0 = Monday), in `timezone`.
+ */
+export interface AutomationSchedule {
+  mode: "manual" | "scheduled";
+  every_minutes: number;
+  times: string[];
+  days: number[];
+  timezone: string;
+}
+/** Response of GET/PUT /automation. `active`: the agent on the server runs for this user; `note` says why not. */
+export interface AutomationStatus {
+  schedule: AutomationSchedule;
+  saved: boolean;
+  next_run: string | null;
+  last_run: string | null;
+  active: boolean;
+  note: string;
+}
 /** Body of POST /generate. `k` = number of chunks to retrieve as context (server default 5). */
 /**
  * Body of POST /generate. For "social_reply", reply_to (the post) is required and brief is an optional
@@ -938,6 +958,13 @@ export const api = {
     request<FacebookStatus>(`/facebook/connect/pages/${encodeURIComponent(pageId)}`, { method: "POST" }),
   /** DELETE /facebook/connection: forget the user's Page. */
   facebookDisconnect: () => request<void>("/facebook/connection", { method: "DELETE" }),
+  /** GET /automation: the user's schedule for the marketing agent, its next and last run. */
+  automationStatus: () => request<AutomationStatus>("/automation"),
+  /** PUT /automation: save the user's schedule (the next run counts from now). */
+  automationSave: (schedule: AutomationSchedule) =>
+    request<AutomationStatus>("/automation", { ...postJson(schedule), method: "PUT" }),
+  /** POST /automation/run: ask the agent for a run now (the proposal arrives in Telegram). */
+  automationRun: () => request<{ status: string }>("/automation/run", { method: "POST" }),
   /** GET /youtube/status: whether the user has connected a YouTube channel, with its name. */
   youtubeStatus: () => request<YouTubeStatus>("/youtube/status"),
   /** POST /youtube/connect: Google's sign-in URL; Google sends the browser back to `returnTo` (this app's origin). */

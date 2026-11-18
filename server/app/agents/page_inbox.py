@@ -136,6 +136,17 @@ def inbox_books() -> tuple[str, list[str]]:
     return projects.pop(), ids
 
 
+def inbox_owner_id() -> str | None:
+    """The user the inbox works for: the owner of the inbox books' client (None: no books configured, or no owner).
+    Their schedule (agents/automation.py) and their YouTube channel are used."""
+    try:
+        project_id, _ = inbox_books()
+    except InboxConfigError:
+        return None
+    project = db.projects.get(project_id)
+    return project.owner_id if project and project.owner_id else None
+
+
 def channel_for_inbox() -> youtube.ChannelAccess | None:
     """The YouTube channel the inbox answers on: the one the owner of the inbox books' client connected in the app,
     or None (no books configured, no owner, or no channel connected).
@@ -144,14 +155,8 @@ def channel_for_inbox() -> youtube.ChannelAccess | None:
         YouTubeError: If Google no longer accepts the connection (503: connect again) or cannot be reached.
         DatabaseError: If the database cannot be read.
     """
-    try:
-        project_id, _ = inbox_books()
-    except InboxConfigError:
-        return None
-    project = db.projects.get(project_id)
-    if not project or not project.owner_id:
-        return None
-    return channel_connections.channel_for(project.owner_id)
+    owner = inbox_owner_id()
+    return channel_connections.channel_for(owner) if owner else None
 
 
 def start(item: InboxItem) -> str | None:

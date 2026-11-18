@@ -12,11 +12,12 @@ from pydantic import BaseModel
 from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy import inspect as sa_inspect
 
-from app.core.schemas import (ApiKey, Asset, BookSummary, Chunk, ChunkLocation, Conversation, DiscussionAnalysis,
-                              FacebookConnection, Project, Source, UsageRecord, UsageTotals, YouTubeConnection)
+from app.core.schemas import (ApiKey, Asset, AutomationSettings, BookSummary, Chunk, ChunkLocation, Conversation,
+                              DiscussionAnalysis, FacebookConnection, Project, Source, UsageRecord, UsageTotals,
+                              YouTubeConnection)
 from app.db.database import session
-from app.db.tables import (ApiKeyRow, AssetRow, Base, ChunkRow, ConversationRow, DiscussionRow, FacebookConnectionRow,
-                           ProjectRow, SourceRow, SummaryRow, UsageRow, YouTubeConnectionRow)
+from app.db.tables import (ApiKeyRow, AssetRow, AutomationSettingsRow, Base, ChunkRow, ConversationRow, DiscussionRow,
+                           FacebookConnectionRow, ProjectRow, SourceRow, SummaryRow, UsageRow, YouTubeConnectionRow)
 
 # Fields saved in a JSON column (nested models, lists): written in JSON mode, so datetimes inside become strings.
 ASSET_JSON_FIELDS = {"citations", "source_ids", "ai_tells"}
@@ -132,6 +133,20 @@ def delete_youtube_connection(user_id: str) -> None:
     """Forget the user's channel; nothing happens if there is none."""
     with session() as s:
         s.execute(delete(YouTubeConnectionRow).where(YouTubeConnectionRow.user_id == user_id))
+
+
+# ---------- Automation schedule ----------
+def get_automation_settings(user_id: str) -> AutomationSettings | None:
+    """The user's saved schedule for the marketing agent, or None."""
+    with session() as s:
+        row = s.get(AutomationSettingsRow, user_id)
+        return _record(AutomationSettings, row) if row else None
+
+
+def save_automation_settings(settings: AutomationSettings) -> None:
+    """Save the user's schedule (replaces the one saved before)."""
+    with session() as s:
+        s.merge(AutomationSettingsRow(**settings.model_dump()))
 
 
 # ---------- Generated assets ----------
