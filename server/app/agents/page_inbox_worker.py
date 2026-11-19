@@ -54,7 +54,7 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 from app.agents import automation, book_post, engagement
-from app.agents.cycle import Cycle, interrupt_leftovers
+from app.agents.cycle import Cycle, continue_after_restart
 from app.agents import page_inbox as inbox
 from app.core import config
 from app.core.llm import GenerationError
@@ -493,10 +493,24 @@ def start_if_configured() -> InboxWorker | None:
     except inbox.InboxConfigError as e:
         logger.warning("Page inbox worker off: %s", e)
         return None
-    interrupt_leftovers()
     _worker = InboxWorker()
+    _worker.cycle = _restore()
     _worker.start()
     return _worker
+
+
+def _restore() -> Cycle | None:
+    """The agents' runs kept in the database: a proposal that waited when the server stopped waits again (its buttons
+    in Telegram still work), and its cycle goes on. Returns that cycle, or None."""
+    try:
+        restored = inbox.restore() + engagement.restore() + book_post.restore()
+    except Exception:  # noqa: BLE001 (the database or a run cannot be read: start without them)
+        logger.exception("Page inbox: the kept agent runs could not be restored")
+        restored = 0
+    waiting = _waiting() if restored else None
+    if waiting:
+        logger.info("Page inbox: a waiting proposal was restored (%s)", waiting[0])
+    return continue_after_restart(automation.inbox_owner() or "", waiting[0] if waiting else None)
 
 
 def is_running() -> bool:

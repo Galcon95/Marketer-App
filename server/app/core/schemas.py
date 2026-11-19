@@ -904,7 +904,7 @@ class CycleEntry(BaseModel):
 class AutomationCycle(BaseModel):
     """One cycle of the marketing agent (private.automation_cycles): replies to readers, then (later steps) an
     engagement comment and a book post. `status` running: a proposal still waits; interrupted: the server restarted
-    while it ran (waiting proposals are kept in memory only); error: it stopped on an error (`note`)."""
+    while it ran and its proposal was not kept (agents/checkpoints.py); error: it stopped on an error (`note`)."""
 
     id: str
     user_id: str

@@ -4,8 +4,9 @@ the rest of the app does not see SQLAlchemy.
 Every function raises database.DatabaseError if the database cannot be reached or a statement fails.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import datetime
+from itertools import islice
 from typing import TypeVar
 
 from pydantic import BaseModel
@@ -27,6 +28,7 @@ DISCUSSION_JSON_FIELDS = {"book_mention", "citations", "search_queries", "tool_c
                           "injection_findings", "output_issues"}
 SUMMARY_JSON_FIELDS = {"themes", "chapters"}
 CYCLE_JSON_FIELDS = {"entries"}
+CHUNK_WRITE_BATCH = 100  # chunk rows sent to the database at a time (replace_chunks)
 
 
 def to_row(row_class: type[Base], record: BaseModel, json_fields: set[str]) -> Base:
@@ -165,15 +167,18 @@ def list_cycles(user_id: str, limit: int = 20) -> list[AutomationCycle]:
         return [_record(AutomationCycle, row) for row in rows]
 
 
-def interrupt_running_cycles(ended_at: datetime) -> int:
-    """Mark every cycle still "running" as interrupted (on server start: waiting proposals were in memory only).
+def interrupt_running_cycles(ended_at: datetime, keep_id: str | None = None) -> int:
+    """Mark every cycle still "running" as interrupted, except `keep_id` (on server start: the cycle whose proposal
+    still waits goes on).
 
     Returns:
         How many were marked.
     """
+    query = update(AutomationCycleRow).where(AutomationCycleRow.status == "running")
+    if keep_id:
+        query = query.where(AutomationCycleRow.id != keep_id)
     with session() as s:
-        result = s.execute(update(AutomationCycleRow).where(AutomationCycleRow.status == "running")
-                           .values(status="interrupted", ended_at=ended_at))
+        result = s.execute(query.values(status="interrupted", ended_at=ended_at))
         return result.rowcount or 0
 
 
@@ -414,9 +419,10 @@ _CHUNK_FIELDS = (ChunkRow.id, ChunkRow.source_id, ChunkRow.text, ChunkRow.chapte
 
 
 def replace_chunks(project_id: str, source_id: str, chunks: list[Chunk], contents: list[str],
-                   embeddings: list[list[float]], embedding_key: str) -> None:
+                   embeddings: Sequence[Sequence[float]], embedding_key: str) -> None:
     """Replace all chunks of a source with these, in one transaction: searches see the old chunks until the new
     ones are complete. Fails if the source no longer exists (foreign key): a deleted book gets no chunks back.
+    The rows are sent in batches of CHUNK_WRITE_BATCH, so only one batch of rows is in memory at a time.
 
     Args:
         project_id: The source's project (for the search filter).
@@ -426,13 +432,16 @@ def replace_chunks(project_id: str, source_id: str, chunks: list[Chunk], content
         embeddings: Per chunk, its embedding.
         embedding_key: Embedding model and index format of these embeddings (vectorstore.EMBEDDING_KEY).
     """
+    rows = (ChunkRow(id=c.id, source_id=source_id, project_id=project_id, position=n, text=c.text,
+                     chapter=c.location.chapter, page=c.location.page, start_time=c.location.start_time,
+                     end_time=c.location.end_time, token_count=c.token_count, content=content,
+                     embedding=list(map(float, embedding)), embedding_key=embedding_key)
+            for n, (c, content, embedding) in enumerate(zip(chunks, contents, embeddings, strict=True), 1))
     with session() as s:
         s.execute(delete(ChunkRow).where(ChunkRow.source_id == source_id))
-        s.add_all(ChunkRow(id=c.id, source_id=source_id, project_id=project_id, position=n, text=c.text,
-                           chapter=c.location.chapter, page=c.location.page, start_time=c.location.start_time,
-                           end_time=c.location.end_time, token_count=c.token_count, content=content,
-                           embedding=list(map(float, embedding)), embedding_key=embedding_key)
-                  for n, (c, content, embedding) in enumerate(zip(chunks, contents, embeddings, strict=True), 1))
+        while batch := list(islice(rows, CHUNK_WRITE_BATCH)):
+            s.add_all(batch)
+            s.flush()  # sent (same transaction); the session keeps written rows only weakly, so they can go
 
 
 def delete_chunks(source_id: str) -> None:

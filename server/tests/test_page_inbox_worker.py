@@ -487,11 +487,32 @@ def test_pause_and_resume(cycles):
     assert not worker_module.automation.schedule_of(OWNER.id, fresh=True).paused
 
 
-def test_interrupted_cycles_are_marked_on_start(cycles):
+def _restored(monkeypatch, waiting: int):
+    for agent in (worker_module.inbox, worker_module.engagement, worker_module.book_post):
+        monkeypatch.setattr(agent, "restore", lambda: 0)
+    monkeypatch.setattr(worker_module.inbox, "restore", lambda: waiting)
+    return worker_module._restore()
+
+
+def test_a_cycle_without_a_waiting_proposal_is_marked_interrupted_on_start(cycles, monkeypatch):
     cycles.worker.handle(_text("/next"))
-    worker_module.interrupt_leftovers()
+    cycles.waiting = None  # the proposal was not kept
+    assert _restored(monkeypatch, waiting=0) is None
     [saved] = cycles.saved()
     assert saved.status == "interrupted" and saved.ended_at is not None
+
+
+def test_the_cycle_of_a_restored_proposal_goes_on_after_a_restart(cycles, monkeypatch):
+    cycles.open = [_item("222_1"), _item("222_2")]
+    cycles.worker.handle(_text("/next"))  # 222_1 waits; then the server restarts
+    restarted = worker_module.InboxWorker()
+    restarted.cycle = _restored(monkeypatch, waiting=1)
+    assert restarted.cycle is not None and restarted.cycle.record.status == "running"
+    restarted.handle(_button("go", message_id=101))  # the old button still works
+    assert cycles.started == ["222_1", "222_2"]
+    [saved] = cycles.saved()
+    assert [(e.item_id, e.outcome) for e in saved.entries] == [("222_1", "posted"), ("222_2", "waiting")]
+    assert saved.status == "running"
 
 
 # ---------- help and the command menu ----------

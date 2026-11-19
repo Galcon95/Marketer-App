@@ -27,7 +27,7 @@ post, facebook.open_items; a viewer's comment, youtube.open_items):
 
 Which YouTube channel: the one connected in the app (Integrations → YouTube channel) by the owner of the inbox books'
 client (channel_for_inbox); there is none in server/.env.
-    skip         nothing is posted; the item is not proposed again (until a restart: see below)
+    skip         nothing is posted; the item is not proposed again (for KEEP_DAYS: see below)
     withdraw     the item was answered elsewhere while the proposal waited (in the app, or on Facebook): the buttons
                  go, the author is told, nothing is posted (withdraw(), called by the worker before it proposes)
 
@@ -36,8 +36,9 @@ decision is applied once: resume() only accepts an answer to the run's current p
 lock; a second press, an answer to an older proposal or to a finished run is refused (the caller tells the author). The
 revise loop ends after MAX_REVISIONS rounds: the author finishes that reply in the app.
 
-Paused runs are kept in memory (MemorySaver): after a server restart a waiting proposal is gone and the item, still
-unanswered on Facebook, is proposed anew; skipped items too (the set of decided items is in memory as well).
+Paused runs are kept by the shared checkpointer (agents/checkpoints.py: in the database), so a waiting proposal
+survives a server restart: restore() on startup makes it the current proposal again, and the items decided in the last
+KEEP_DAYS are not proposed again.
 
 The reader's text is untrusted: it reaches the models only as quoted data (the Discussion agent's own guard, and a
 <post> block under guard.UNTRUSTED_RULE in revise), and Telegram gets it as plain text. The feedback is the author's
@@ -51,12 +52,11 @@ import threading
 from functools import cache
 from typing import Literal, TypedDict
 
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
 
-from app.agents import discussion
+from app.agents import checkpoints, discussion
 from app.core import config, prompt_files, prompts, tracing
 from app.core import state as db
 from app.core.guard import clean_text, output_blocked, quote_untrusted
@@ -82,6 +82,7 @@ BOOK_SEARCH_K = 3  # passages per book when choosing the book
 
 APPROVE = "make it so"
 BUTTON_GO, BUTTON_SKIP = "go", "skip"
+OTHER_AGENTS = ("eng:", "post:")  # thread id prefixes of engagement.py and book_post.py (same checkpointer)
 TEST_HEAD = " (TEST MODE: nothing will be posted)"
 TEST_NOT_POSTED = ("🧪 Test mode: NOT posted. Turn test mode off in the app (Phase 4 · Agent Workspace) to post for "
                    "real.")
@@ -236,10 +237,35 @@ def resume(thread_id: str, message_id: int, decision: Decision, feedback: str = 
             return "waiting"
         values = _graph().get_state(_config(thread_id)).values
         item_id = values["item"]["id"]
-        if values.get("outcome") in ("posted", "skipped", "blocked", "answered", "tested") or not values.get("outcome"):
+        if _is_decided(values):
             _decided.add(item_id)
         _runs.pop(item_id, None)
         return values.get("outcome", "gave_up")
+
+
+def restore() -> int:
+    """On server start: the runs kept in the database. A waiting run becomes the current proposal again (its
+    Telegram buttons still work), a finished run's item counts as decided, and runs finished more than KEEP_DAYS ago
+    or broken by an error are deleted (their item is proposed anew).
+
+    Returns:
+        How many waiting runs were restored.
+    """
+    restored = 0
+    with _lock:
+        for thread_id in checkpoints.thread_ids():
+            if thread_id.startswith(OTHER_AGENTS):
+                continue
+            state = _graph().get_state(_config(thread_id))
+            item_id = item_of(thread_id)
+            if "wait" in state.next:
+                _runs[item_id] = thread_id
+                restored += 1
+            elif state.next or checkpoints.is_old(state.created_at):  # broken off by an error, or old
+                checkpoints.delete(thread_id)
+            elif _is_decided(state.values):
+                _decided.add(item_id)
+    return restored
 
 
 def waiting_run() -> tuple[str, int] | None:
@@ -300,8 +326,13 @@ def button_decision(data: str) -> Decision | None:
     return {BUTTON_GO: "approve", BUTTON_SKIP: "skip"}.get(data)
 
 
+def _is_decided(values: dict) -> bool:
+    """A finished run's item is not proposed again: posted, skipped, blocked, answered elsewhere, tested, or handed to
+    the app (no outcome). Only a failed post is proposed again."""
+    return values.get("outcome") in ("posted", "skipped", "blocked", "answered", "tested") or not values.get("outcome")
+
+
 # ---------- Graph ----------
-_checkpointer = MemorySaver()
 _lock = threading.RLock()
 _runs: dict[str, str] = {}  # item id → its run's thread id, while the run waits
 _decided: set[str] = set()  # items posted, skipped or handed to the app: not proposed again
@@ -309,7 +340,7 @@ _decided: set[str] = set()  # items posted, skipped or handed to the app: not pr
 
 @cache
 def _graph():
-    """Build and compile the graph with the in-memory checkpointer (needed for interrupt)."""
+    """Build and compile the graph with the shared checkpointer (needed for interrupt)."""
     builder = StateGraph(InboxState)
     builder.add_node("choose_book", _choose_book)
     builder.add_node("analyze", _analyze)
@@ -328,7 +359,7 @@ def _graph():
     builder.add_edge("publish", END)
     builder.add_edge("skip", END)
     builder.add_edge("withdraw", END)
-    return builder.compile(checkpointer=_checkpointer)
+    return builder.compile(checkpointer=checkpoints.checkpointer())
 
 
 def _choose_book(state: InboxState) -> InboxState:

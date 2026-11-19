@@ -86,11 +86,14 @@ def add_chunks(project_id: str, source_id: str, chunks: list[Chunk], on_progress
     if not is_configured():
         raise _no_key()
     contents = [_content(c, title) for c in chunks]
-    embeddings: list[list[float]] = []
+    # float32 arrays, not lists of Python floats: a book's vectors take 12 KB each instead of ~100 KB (3072 dimensions)
+    # while they wait to be saved; pgvector stores 32-bit floats anyway, so nothing is lost
+    embeddings: list[np.ndarray] = []
     try:
         for start in range(0, len(chunks), EMBED_BATCH):
             batch = chunks[start:start + EMBED_BATCH]
-            embeddings += _embeddings().embed_documents(contents[start:start + EMBED_BATCH])
+            embeddings += [np.asarray(e, dtype=np.float32)
+                           for e in _embeddings().embed_documents(contents[start:start + EMBED_BATCH])]
             usage.record_embedding("embed_chunks", EMBEDDING_MODEL, tokens=sum(c.token_count for c in batch),
                                    project_id=project_id, source_id=source_id)
             if on_progress:

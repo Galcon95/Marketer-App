@@ -20,7 +20,8 @@ Telegram. Always newly written (never a post from Content Studio).
                  in test mode nothing is published and Telegram says so (outcome "tested")
 
 Like the other agents: one waiting proposal at a time across all agents, a decision is applied exactly once under a
-lock, MAX_REVISIONS feedback rounds, runs in memory (MemorySaver). Thread ids start with "post:". Runs are traced as
+lock, MAX_REVISIONS feedback rounds, runs kept by the shared checkpointer (agents/checkpoints.py), so a waiting
+proposal survives a server restart (restore()). Thread ids start with "post:". Runs are traced as
 "book_post".
 """
 
@@ -30,11 +31,11 @@ from datetime import datetime
 from functools import cache
 from typing import Literal, TypedDict
 
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
 
+from app.agents import checkpoints
 from app.agents import page_inbox as inbox
 from app.core import prompt_files, prompts, tracing, usage
 from app.core import state as db
@@ -188,6 +189,31 @@ def resume(thread_id: str, message_id: int, decision: str, feedback: str = "") -
         return values.get("outcome", "gave_up")
 
 
+def restore() -> int:
+    """On server start: the book post runs kept in the database (see page_inbox.restore). A waiting run becomes the
+    current proposal again; every run's topic counts as proposed (for the rotation).
+
+    Returns:
+        How many waiting runs were restored.
+    """
+    restored = 0
+    with _lock:
+        for thread_id in checkpoints.thread_ids(PREFIX):
+            state = _graph().get_state(_config(thread_id))
+            key = thread_id[len(PREFIX):].rsplit(":", 1)[0]
+            if "wait" in state.next:
+                _runs[key] = thread_id
+                restored += 1
+            elif state.next or checkpoints.is_old(state.created_at):  # broken off by an error, or old
+                checkpoints.delete(thread_id)
+                continue
+            if state.created_at:
+                when = datetime.fromisoformat(state.created_at)
+                if key not in _used or _used[key] < when:
+                    _used[key] = when
+    return restored
+
+
 def waiting_run() -> tuple[str, int] | None:
     """The book post run that waits for the author, with its proposal's message id, or None."""
     with _lock:
@@ -203,7 +229,6 @@ def posted_url(thread_id: str) -> str:
 
 
 # ---------- Graph ----------
-_checkpointer = MemorySaver()
 _lock = threading.RLock()
 _runs: dict[str, str] = {}  # topic key → its run's thread id, while the run waits
 _used: dict[str, datetime] = {}  # topic key → when it was proposed (in this process)
@@ -225,7 +250,7 @@ def _graph():
     builder.add_edge("revise", "propose")
     builder.add_edge("publish", END)
     builder.add_edge("skip", END)
-    return builder.compile(checkpointer=_checkpointer)
+    return builder.compile(checkpointer=checkpoints.checkpointer())
 
 
 def _draft(state: PostState) -> PostState:

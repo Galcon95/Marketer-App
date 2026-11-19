@@ -269,6 +269,16 @@ def test_chunks_are_replaced_in_reading_order_with_their_vectors():
     assert records.count_all_chunks() == 2
 
 
+def test_many_chunks_are_written_in_batches_with_float32_vectors(monkeypatch):
+    import numpy as np
+    monkeypatch.setattr(records, "CHUNK_WRITE_BATCH", 2)
+    records.add_source(_source("src_a"))
+    vectors = [np.asarray([n / 8, 0.5], dtype=np.float32) for n in range(5)]  # as vectorstore.add_chunks passes them
+    records.replace_chunks(db.DEFAULT_PROJECT_ID, "src_a", _chunks("src_a", 5), ["x"] * 5, vectors, "k")
+    assert [c.id for c in records.load_chunks()["src_a"]] == [f"chk_src_a_{n}" for n in range(1, 6)]
+    assert records.chunk_embeddings(["chk_src_a_5"]) == {"chk_src_a_5": [0.5, 0.5]}
+
+
 def test_a_deleted_book_gets_no_chunks_and_loses_its_own():
     with pytest.raises(DatabaseError):  # the book is gone (e.g. deleted while it was being embedded)
         records.replace_chunks(db.DEFAULT_PROJECT_ID, "src_gone", _chunks("src_gone", 1), ["x"], [[1.0]], "k")

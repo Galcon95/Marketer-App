@@ -10,8 +10,9 @@ The worker (page_inbox_worker.py) drives it; this module only records it. Each p
 author's decision fills in its outcome. A cycle is saved once it has something to show (a proposal, or an error):
 the schedule's many quiet looks ("nothing new") are not logged; the Agent Workspace's "Last run" shows them.
 
-Waiting proposals live in memory (page_inbox.py), so a cycle still running when the server stops is marked
-"interrupted" on the next start (interrupt_leftovers). Saving never breaks the agent: a database error is logged.
+Waiting proposals are kept in the database (agents/checkpoints.py), so on the next server start the cycle whose
+proposal still waits goes on (continue_after_restart); any other cycle still "running" is marked "interrupted". Saving
+never breaks the agent: a database error is logged.
 """
 
 import logging
@@ -39,6 +40,14 @@ class Cycle:
     def __init__(self, user_id: str, trigger: CycleTrigger):
         self.record = AutomationCycle(id=db.new_id("cyc"), user_id=user_id, trigger=trigger, started_at=db.now())
         self.post_tried = False  # phase 3 ran in this cycle (once per cycle)
+
+    @classmethod
+    def of(cls, record: AutomationCycle) -> "Cycle":
+        """A saved running cycle, to go on with (after a server restart)."""
+        cycle = cls(record.user_id, record.trigger)
+        cycle.record = record
+        cycle.post_tried = any(e.kind == "post" for e in record.entries)
+        return cycle
 
     @property
     def asked(self) -> bool:
@@ -102,13 +111,20 @@ class Cycle:
             logger.warning("Could not save the agent's cycle %s: %s", self.record.id, e)
 
 
-def interrupt_leftovers() -> None:
-    """On server start: cycles still "running" lost their waiting proposals with the last process."""
+def continue_after_restart(user_id: str, waiting_thread: str | None) -> Cycle | None:
+    """On server start: the running cycle that holds the waiting proposal (`waiting_thread`, restored from the
+    database) goes on and is returned; every other cycle still "running" is marked interrupted. None when no cycle
+    holds it (or there is no waiting proposal)."""
+    keep = None
     try:
-        if count := records.interrupt_running_cycles(db.now()):
+        if waiting_thread and user_id:
+            keep = next((c for c in records.list_cycles(user_id, 5) if c.status == "running"
+                         and any(e.thread_id == waiting_thread for e in c.entries)), None)
+        if count := records.interrupt_running_cycles(db.now(), keep.id if keep else None):
             logger.info("Marked %s unfinished agent cycle(s) as interrupted", count)
     except OSError as e:
-        logger.warning("Could not mark unfinished agent cycles: %s", e)
+        logger.warning("Could not check the unfinished agent cycles: %s", e)
+    return Cycle.of(keep) if keep else None
 
 
 def recent(user_id: str, limit: int = 20) -> list[AutomationCycle]:

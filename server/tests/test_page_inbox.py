@@ -197,6 +197,42 @@ def test_skip_posts_nothing_and_is_not_proposed_again(world):
     assert not inbox.is_open(_item())
 
 
+# ---------- after a server restart (runs kept by the checkpointer) ----------
+def _restart(monkeypatch):
+    """What a new server process knows: only what the checkpointer kept."""
+    monkeypatch.setattr(inbox, "_runs", {})
+    monkeypatch.setattr(inbox, "_decided", set())
+    return inbox.restore()
+
+
+def test_a_waiting_proposal_survives_a_restart_and_can_be_approved(world, monkeypatch):
+    thread_id, message_id = _start()
+    assert _restart(monkeypatch) == 1
+    assert inbox.waiting_run() == (thread_id, message_id) and not inbox.is_open(_item())
+    assert inbox.resume(thread_id, message_id, "approve") == "posted"
+    assert len(world.posted) == 1
+
+
+def test_a_skipped_item_stays_decided_after_a_restart(world, monkeypatch):
+    thread_id, message_id = _start()
+    inbox.resume(thread_id, message_id, "skip")
+    assert _restart(monkeypatch) == 0
+    assert inbox.waiting_run() is None and not inbox.is_open(_item())
+
+
+def test_old_finished_runs_are_deleted_on_restart(world, monkeypatch, agent_checkpoints):
+    thread_id, message_id = _start()
+    inbox.resume(thread_id, message_id, "skip")
+    monkeypatch.setattr(inbox.checkpoints, "is_old", lambda created_at: True)
+    _restart(monkeypatch)
+    assert inbox.checkpoints.thread_ids() == [] and inbox.is_open(_item())
+
+
+def test_runs_of_the_other_agents_are_left_alone(world, monkeypatch):
+    monkeypatch.setattr(inbox.checkpoints, "thread_ids", lambda prefix="": ["eng:111_222:run_1", "post:src#0:run_2"])
+    assert _restart(monkeypatch) == 0
+
+
 def test_feedback_revises_and_proposes_again(world):
     thread_id, first = _start()
     assert inbox.resume(thread_id, first, "feedback", "Make it shorter") == "waiting"

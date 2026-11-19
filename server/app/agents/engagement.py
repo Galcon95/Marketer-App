@@ -17,8 +17,8 @@ question drafted from the books, posted only after the author's "make it so" in 
     publish      the output guard once more, then facebook.comment_on_post as the Page; Telegram gets the link
 
 Like the Page inbox (page_inbox.py): one waiting proposal at a time across both agents (the worker asks both),
-a decision is applied exactly once under a lock, MAX_REVISIONS feedback rounds, runs in memory (MemorySaver), so a
-server restart drops a waiting proposal. Thread ids start with "eng:" so the worker knows which agent a run belongs to.
+a decision is applied exactly once under a lock, MAX_REVISIONS feedback rounds, runs kept by the shared
+checkpointer (agents/checkpoints.py), so a waiting proposal survives a server restart (restore()). Thread ids start with "eng:" so the worker knows which agent a run belongs to.
 The post is the author's own text; the feedback is the author's own instruction. Runs are traced as "engagement".
 """
 
@@ -29,11 +29,11 @@ from functools import cache
 from typing import Literal, TypedDict
 from zoneinfo import ZoneInfo
 
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
 
+from app.agents import checkpoints
 from app.agents import page_inbox as inbox
 from app.core import prompt_files, prompts, tracing, usage
 from app.core import state as db
@@ -180,6 +180,28 @@ def resume(thread_id: str, message_id: int, decision: str, feedback: str = "") -
         return values.get("outcome", "gave_up")
 
 
+def restore() -> int:
+    """On server start: the engagement runs kept in the database (see page_inbox.restore). A waiting run becomes the
+    current proposal again; a finished run's post counts as tried.
+
+    Returns:
+        How many waiting runs were restored.
+    """
+    restored = 0
+    with _lock:
+        for thread_id in checkpoints.thread_ids(PREFIX):
+            state = _graph().get_state(_config(thread_id))
+            post_id = thread_id[len(PREFIX):].rsplit(":", 1)[0]
+            if "wait" in state.next:
+                _runs[post_id] = thread_id
+                restored += 1
+            elif state.next or checkpoints.is_old(state.created_at):  # broken off by an error, or old
+                checkpoints.delete(thread_id)
+            else:
+                _decided.add(post_id)
+    return restored
+
+
 def waiting_run() -> tuple[str, int] | None:
     """The engagement run that waits for the author, with its proposal's message id, or None."""
     with _lock:
@@ -195,7 +217,6 @@ def posted_url(thread_id: str) -> str:
 
 
 # ---------- Graph ----------
-_checkpointer = MemorySaver()
 _lock = threading.RLock()
 _runs: dict[str, str] = {}  # post id → its run's thread id, while the run waits
 _decided: set[str] = set()  # posts whose proposal was decided (in this process)
@@ -217,7 +238,7 @@ def _graph():
     builder.add_edge("revise", "propose")
     builder.add_edge("publish", END)
     builder.add_edge("skip", END)
-    return builder.compile(checkpointer=_checkpointer)
+    return builder.compile(checkpointer=checkpoints.checkpointer())
 
 
 def _draft(state: EngageState) -> EngageState:

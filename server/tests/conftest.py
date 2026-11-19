@@ -1,14 +1,16 @@
 """Shared test setup: a signed-in test user who owns the default project, without Supabase.
 
-Every test gets an empty in-memory SQLite database instead of the real one (DATABASE_URL is never used), a fresh
-project list (the default project, owned by OWNER, also saved in that database) and no API keys. Tests that build an app with API routers call sign_in(app) to be OWNER (or another user).
+Every test gets an empty in-memory SQLite database instead of the real one (DATABASE_URL is never used), an empty
+in-memory checkpointer for the agents' runs, a fresh project list (the default project, owned by OWNER, also saved in that database) and no API keys. Tests that build an app with API routers call sign_in(app) to be OWNER (or another user).
 """
 
 import pytest
 from fastapi import FastAPI
+from langgraph.checkpoint.memory import MemorySaver
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
+from app.agents import book_post, checkpoints, engagement, page_inbox
 from app.campaign import kit
 from app.core import api_keys, auth, config, files, llm, usage
 from app.core import state as db
@@ -42,6 +44,20 @@ def test_database(monkeypatch):
     database.use_engine(engine)
     yield engine
     engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def agent_checkpoints(monkeypatch):
+    """An empty MemorySaver for the agents' runs (instead of the database's); the graphs are built again with it.
+    Returns it, so a test can look at the kept runs."""
+    saver = MemorySaver()
+    monkeypatch.setattr(checkpoints, "checkpointer", lambda: saver)
+    graphs = (page_inbox._graph, engagement._graph, book_post._graph)
+    for graph in graphs:
+        graph.cache_clear()
+    yield saver
+    for graph in graphs:
+        graph.cache_clear()
 
 
 class MemoryFiles:
