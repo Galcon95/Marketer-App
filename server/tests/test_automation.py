@@ -250,3 +250,30 @@ def test_save_keeps_the_new_settings():
                                                  quiet_from="22:00", quiet_to="07:00"))
     saved = records.get_automation_settings(OWNER.id)
     assert (saved.engage, saved.engage_days, saved.daily_limit, saved.quiet_from) == (False, 7, 1, "22:00")
+
+
+# ---------- book post and test mode ----------
+def test_book_links_must_be_web_addresses():
+    s = AutomationSchedule(times=["09:00"], books=["src_1", "src_2", "src_1"],
+                           book_links={"src_1": " https://example.com/b ", "src_2": " "})
+    assert s.books == ["src_1", "src_2"] and s.book_links == {"src_1": "https://example.com/b"}
+    with pytest.raises(ValidationError):
+        AutomationSchedule(times=["09:00"], book_links={"src_1": "example.com/b"})
+
+
+def test_save_keeps_the_book_post_settings():
+    automation.save(OWNER.id, AutomationSchedule(times=["09:00"], book_post=False, books=["src_1"],
+                                                 book_links={"src_1": "https://example.com/b"}, test_mode=True))
+    saved = records.get_automation_settings(OWNER.id)
+    assert (saved.book_post, saved.books, saved.book_links, saved.test_mode) == (
+        False, ["src_1"], {"src_1": "https://example.com/b"}, True)
+
+
+def test_status_lists_the_books_in_use_and_those_without_summary(client, monkeypatch):
+    from app.agents import page_inbox
+    from app.core import state
+    monkeypatch.setattr(page_inbox, "inbox_books", lambda: ("prj_1", ["src_1", "src_2"]))
+    monkeypatch.setitem(state.summaries, "src_1", object())
+    _, c = client
+    body = c.get("/automation").json()
+    assert body["books"] == ["src_1", "src_2"] and body["without_summary"] == ["src_2"]

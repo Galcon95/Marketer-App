@@ -798,7 +798,10 @@ class AutomationSchedule(BaseModel):
 
     `engage`: when a cycle finds no new comments, propose a question under an own post of the last `engage_days`
     days that has no comments (phase 2). `daily_limit`: at most this many comments and posts the agent writes on its
-    own initiative per day (replies to readers do not count; 0 = none)."""
+    own initiative per day (replies to readers do not count; 0 = none). `book_post`: at the end of a cycle, propose a
+    new post about the next topic of the books (phase 3), with a call to action and the book's link from
+    `book_links` (book id → where to get it). `books`: the books the agent uses for all phases (of the user's client;
+    [] = FACEBOOK_INBOX_BOOKS). `test_mode`: everything runs and is proposed, but nothing is published."""
 
     mode: Literal["manual", "scheduled"] = "scheduled"
     every_minutes: int = Field(default=0, ge=0, le=1440)  # 0: at `times`; else at least 15
@@ -810,6 +813,10 @@ class AutomationSchedule(BaseModel):
     engage: bool = True
     engage_days: int = Field(default=14, ge=1, le=60)
     daily_limit: int = Field(default=2, ge=0, le=10)
+    book_post: bool = True
+    books: list[str] = Field(default_factory=list, max_length=20)
+    book_links: dict[str, str] = Field(default_factory=dict, max_length=20)
+    test_mode: bool = False
 
     @model_validator(mode="after")
     def _check(self) -> "AutomationSchedule":
@@ -821,6 +828,10 @@ class AutomationSchedule(BaseModel):
             raise ValueError("Quiet hours need a start and an end like 22:00 and 07:00 (or neither).")
         if self.quiet_from and self.quiet_from == self.quiet_to:
             raise ValueError("Quiet hours must not start and end at the same time.")
+        self.books = list(dict.fromkeys(self.books))
+        self.book_links = {k: v.strip() for k, v in self.book_links.items() if v.strip()}
+        if any(len(v) > 500 or not re.fullmatch(r"https?://\S+", v) for v in self.book_links.values()):
+            raise ValueError("A book link must be an http(s) URL.")
         self.times = sorted(set(self.times))
         if any(d not in range(7) for d in self.days):
             raise ValueError("Days are 0 (Monday) to 6 (Sunday).")
@@ -858,6 +869,8 @@ class AutomationStatus(BaseModel):
     next_run: datetime | None = None  # None: manual or paused
     last_run: datetime | None = None
     active: bool
+    books: list[str] = Field(default_factory=list)  # the books the agent uses now (the chosen ones, or the default)
+    without_summary: list[str] = Field(default_factory=list)  # of those: no summary, so no topics for book posts
     note: str = ""
 
 
@@ -869,13 +882,13 @@ class PauseRequest(BaseModel):
 
 CycleTrigger = Literal["schedule", "app", "telegram"]
 # waiting: the proposal waits for the author; the others are page_inbox.Outcome
-CycleOutcome = Literal["waiting", "posted", "skipped", "failed", "blocked", "gave_up", "answered"]
+CycleOutcome = Literal["waiting", "posted", "skipped", "failed", "blocked", "gave_up", "answered", "tested"]
 
 
 class CycleEntry(BaseModel):
     """One proposal of a cycle: what it answers, and what the author decided."""
 
-    kind: Literal["reply", "comment", "post"] = "reply"  # reply to a reader; comment / post: steps 3 and 4
+    kind: Literal["reply", "comment", "post"] = "reply"  # reply to a reader; a question under an own post; a book post
     platform: Literal["facebook", "youtube"]
     item_id: str = ""  # the comment or post it is about
     thread_id: str  # the inbox run

@@ -48,7 +48,7 @@ The drafting is done by the [Discussion Relevance Agent](AGENT.md) in its own Pa
 
 | In Telegram | What happens |
 |---|---|
-| `/next` | Runs a **cycle** now: the agent looks at the Page and the channel and proposes the oldest open item (or says "Nothing new"). |
+| `/next` | Runs a **cycle** now: the agent looks at the Page and the channel and proposes the oldest open item (or says "Nothing new"); then the question and the book post (phases 2 and 3). |
 | **✅ Make it so** button, or the text `make it so` | The reply is posted as the Page or the channel; you get the link. The next open item follows. |
 | **Skip** button, or `skip` | Nothing is posted; the item is not proposed again. |
 | Any other text, e.g. "shorter, mention volume 2" | Feedback: the reply is rewritten from the same book passages and proposed again (up to 5 rounds, then finish it in the app). |
@@ -60,8 +60,9 @@ The drafting is done by the [Discussion Relevance Agent](AGENT.md) in its own Pa
 It proposes the open items one at a time, the next one right after your answer, and ends with a summary in Telegram
 ("Cycle done: 2 posted, 1 skipped."). While a proposal waits, a new start only checks it. Cycles are logged in
 `private.automation_cycles` and listed under **Recent cycles** in the Agent Workspace (scheduled looks that found
-nothing are not logged). A cycle still running when the server stops is shown as *interrupted*. A comment under a
-recent post and a book post will join the cycle as its phases 2 and 3.
+nothing are not logged). A cycle still running when the server stops is shown as *interrupted*. A cycle has three
+phases: 1 replies to readers, 2 a question under your own post (only when there were no new comments), 3 a new post
+about your book (once per cycle, at the end).
 
 **Phase 2: a question under your own post** ([`engagement.py`](../server/app/agents/engagement.py),
 prompt [`engagement_comment.md`](../server/prompts/engagement_comment.md)): when a cycle finds no new comments, the
@@ -71,6 +72,22 @@ promotion, at most 3 sentences). Telegram shows it with the same buttons; feedba
 Each post gets at most one try (posted or skipped). A **daily limit** (default 2) caps the comments and posts the agent
 writes on its own initiative per day; replies to readers are not limited. Off switch, post age and limit are on the
 Agent Workspace page, next to the **quiet hours** (no scheduled runs then; a run due in them starts when they end).
+
+**Phase 3: a new post about your book** ([`book_post.py`](../server/app/agents/book_post.py), prompt
+[`book_post.md`](../server/prompts/book_post.md)): at the end of each cycle, after the replies and the question, the
+agent proposes a new Page post about the next topic of your books, always newly written: a hook, one or two ideas from
+the chapter's passages and a call to action. The topics are the chapters of the book summaries (make one in the app,
+Knowledge); the books take turns, and no topic comes again before every topic had its turn (skipped ones count too,
+from the cycle log). Each book's optional **link** (where to get it, e.g. its Amazon page) is attached to posts about
+that book. The agent also gets your latest Page posts so it does not repeat them. It counts toward the daily limit.
+
+**Books:** at the top of the Agent Workspace you tick the books the agent uses for replies, questions and book posts,
+each with its link. Until you choose, it uses `FACEBOOK_INBOX_BOOKS`, which also stays the server setting that says
+whose agent it is.
+
+**Test mode** (Agent Workspace): every phase drafts and proposes as usual, marked *TEST MODE* in Telegram and with a
+"Make it so (test)" button, but nothing is published; the outcome is logged as *test: not posted*. `/status` shows
+when it is on.
 
 **Run now** in the Agent Workspace works like `/next` (it starts within half a minute). A proposal waits until you
 answer it; there is no expiry. The schedule only messages you when something new is there. Each proposal is also saved as a discussion analysis,

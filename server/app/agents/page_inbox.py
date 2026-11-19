@@ -82,6 +82,9 @@ BOOK_SEARCH_K = 3  # passages per book when choosing the book
 
 APPROVE = "make it so"
 BUTTON_GO, BUTTON_SKIP = "go", "skip"
+TEST_HEAD = " (TEST MODE: nothing will be posted)"
+TEST_NOT_POSTED = ("🧪 Test mode: NOT posted. Turn test mode off in the app (Phase 4 · Agent Workspace) to post for "
+                   "real.")
 
 REVISE_PROMPT = prompt_files.chat_prompt("page_inbox_revise")  # prompts/page_inbox_revise.md
 
@@ -95,7 +98,8 @@ class Revision(BaseModel):
 PROMPT_VERSION = prompts.register("page_inbox", REVISE_PROMPT, Revision, {"humanize": HUMANIZE})
 
 Decision = Literal["approve", "skip", "feedback", "answered"]  # answered: not the author's; see withdraw()
-Outcome = Literal["posted", "skipped", "failed", "blocked", "gave_up", "answered"]  # gave_up: too many revisions
+Outcome = Literal["posted", "skipped", "failed", "blocked", "gave_up", "answered", "tested"]  # gave_up: too many
+# revisions; tested: approved in test mode, nothing posted
 
 
 class InboxState(TypedDict, total=False):
@@ -111,6 +115,7 @@ class InboxState(TypedDict, total=False):
     feedback: str
     outcome: Outcome
     posted_url: str
+    test: bool  # test mode (the schedule's test_mode when the run started): nothing is posted
 
 
 class InboxConfigError(RuntimeError):
@@ -119,11 +124,34 @@ class InboxConfigError(RuntimeError):
 
 # ---------- Public API ----------
 def inbox_books() -> tuple[str, list[str]]:
-    """The project and the books the inbox answers from (FACEBOOK_INBOX_BOOKS, one client's processed books).
+    """The project and the books the agent works with: the ones the owner chose in the app (Agent Workspace), else
+    FACEBOOK_INBOX_BOOKS. FACEBOOK_INBOX_BOOKS also says whose agent it is (its books' client and that client's
+    owner); chosen books of another client, unknown or not processed are left out.
 
     Raises:
-        InboxConfigError: If none is configured, one is unknown or not processed, or they belong to different clients.
+        InboxConfigError: If FACEBOOK_INBOX_BOOKS is not set, names an unknown or unprocessed book, or books of
+            different clients.
     """
+    project_id, ids = _env_books()
+    return project_id, _chosen_books(project_id) or ids
+
+
+def _chosen_books(project_id: str) -> list[str]:
+    """The books the owner chose in the app that still belong to the client and are processed ([] = none)."""
+    from app.agents import automation  # here: automation imports this module lazily too
+    project = db.projects.get(project_id)
+    if not project or not project.owner_id:
+        return []
+    try:
+        chosen = automation.schedule_of(project.owner_id).books
+    except OSError as e:  # DatabaseError: the default books
+        logger.warning("Page inbox: the chosen books cannot be read: %s", e)
+        return []
+    return [i for i in chosen if (s := db.sources.get(i)) and s.status == "ready" and s.project_id == project_id]
+
+
+def _env_books() -> tuple[str, list[str]]:
+    """The project and books of FACEBOOK_INBOX_BOOKS (see inbox_books)."""
     ids = config.FACEBOOK_INBOX_BOOKS
     if not ids:
         raise InboxConfigError("Set FACEBOOK_INBOX_BOOKS in server/.env: the book ids (src_...) to answer from.")
@@ -140,7 +168,7 @@ def inbox_owner_id() -> str | None:
     """The user the inbox works for: the owner of the inbox books' client (None: no books configured, or no owner).
     Their schedule (agents/automation.py) and their YouTube channel are used."""
     try:
-        project_id, _ = inbox_books()
+        project_id, _ = _env_books()
     except InboxConfigError:
         return None
     project = db.projects.get(project_id)
@@ -159,8 +187,9 @@ def channel_for_inbox() -> youtube.ChannelAccess | None:
     return channel_connections.channel_for(owner) if owner else None
 
 
-def start(item: InboxItem) -> str | None:
-    """Start a run for one item: choose the book, draft the reply, send the proposal to Telegram and wait.
+def start(item: InboxItem, test: bool = False) -> str | None:
+    """Start a run for one item: choose the book, draft the reply, send the proposal to Telegram and wait. `test`:
+    test mode, the approved reply is not posted.
 
     Returns:
         The run's thread id (the run now waits for the author), or None when it ended without waiting (it should not;
@@ -174,8 +203,8 @@ def start(item: InboxItem) -> str | None:
     _, source_ids = inbox_books()
     thread_id = f"{item.id}:{db.new_id('run')}"
     with tracing.scope():
-        _graph().invoke({"item": item.model_dump(mode="json"), "source_ids": source_ids, "revisions": 0},
-                        _config(thread_id))
+        _graph().invoke({"item": item.model_dump(mode="json"), "source_ids": source_ids, "revisions": 0,
+                         "test": test}, _config(thread_id))
     if _waiting(thread_id):
         with _lock:
             _runs[item.id] = thread_id
@@ -207,7 +236,7 @@ def resume(thread_id: str, message_id: int, decision: Decision, feedback: str = 
             return "waiting"
         values = _graph().get_state(_config(thread_id)).values
         item_id = values["item"]["id"]
-        if values.get("outcome") in ("posted", "skipped", "blocked", "answered") or not values.get("outcome"):
+        if values.get("outcome") in ("posted", "skipped", "blocked", "answered", "tested") or not values.get("outcome"):
             _decided.add(item_id)
         _runs.pop(item_id, None)
         return values.get("outcome", "gave_up")
@@ -342,7 +371,7 @@ def _propose(state: InboxState) -> InboxState:
         _quietly(telegram.remove_buttons, old)
     buttons = [TelegramButton(label="Skip", data=BUTTON_SKIP)]
     if reply and not blocked:
-        buttons.insert(0, TelegramButton(label="✅ Make it so", data=BUTTON_GO))
+        buttons.insert(0, TelegramButton(label=go_label(state.get("test", False)), data=BUTTON_GO))
     message_id = telegram.send_message(_proposal_text(item, analysis, reply, blocked, state), buttons=buttons)
     return {"proposal_message_id": message_id}
 
@@ -400,6 +429,9 @@ def _publish(state: InboxState) -> InboxState:
         _quietly(telegram.send_message, "Not posted: the reply is empty or looks like it contains instructions to an "
                                         "AI. Check it in the app (Discussions).")
         return {"outcome": "blocked"}
+    if state.get("test"):
+        _quietly(telegram.send_message, TEST_NOT_POSTED)
+        return {"outcome": "tested"}
     site = "YouTube" if item.platform == "youtube" else "Facebook"
     try:
         if isinstance(item, YouTubeInboxItem):
@@ -524,7 +556,7 @@ def _proposal_text(item: InboxItem, analysis: DiscussionAnalysis, reply: str, bl
         head = f"↪️ Follow-up by {who} in a thread {where}"
     else:
         head = f"💬 New comment by {who} {where}"
-    lines = [("▶️ " if youtube_item else "") + head]
+    lines = [("▶️ " if youtube_item else "") + head + (TEST_HEAD if state.get("test") else "")]
     if youtube_item:
         lines.append(f"Your video: {_excerpt(item.video.title, POST_EXCERPT) or item.video.url}")
     elif item.kind == "comment" and item.post.message:
@@ -550,6 +582,11 @@ def _proposal_text(item: InboxItem, analysis: DiscussionAnalysis, reply: str, bl
     else:
         lines += ["", "No reply proposed. Write what the reply should say, or skip."]
     return "\n".join(lines)
+
+
+def go_label(test: bool) -> str:
+    """The approve button's label (marked in test mode)."""
+    return "✅ Make it so (test)" if test else "✅ Make it so"
 
 
 def _excerpt(text: str, limit: int = EXCERPT) -> str:

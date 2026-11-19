@@ -51,3 +51,4 @@ in the Python code. The loader is `app/core/prompt_files.py`.
 | Reddit scan | `discussion_scan_triage` |
 | Page inbox agent | `page_inbox_revise` |
 | Engagement agent (cycle phase 2) | `engagement_comment` |
+| Book post agent (cycle phase 3) | `book_post` |

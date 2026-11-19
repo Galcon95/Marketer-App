@@ -150,3 +150,11 @@ def test_a_facebook_error_is_reported(world):
     thread_id, message_id = _start()
     assert eng.resume(thread_id, message_id, "approve") == "failed"
     assert "token expired" in world.sent[-1][0]
+
+
+def test_test_mode_posts_nothing(world):
+    thread_id = eng.start(_post(), test=True)
+    message_id = eng.waiting_run()[1]
+    assert "TEST MODE" in world.sent[0][0]
+    assert eng.resume(thread_id, message_id, "approve") == "tested"
+    assert world.posted == [] and "NOT posted" in world.sent[-1][0]

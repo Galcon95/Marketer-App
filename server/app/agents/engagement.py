@@ -58,7 +58,7 @@ LOG_CYCLES = 200  # cycles read to find the posts that had a proposal already
 
 PROMPT = prompt_files.chat_prompt("engagement_comment")  # prompts/engagement_comment.md
 
-Outcome = Literal["posted", "skipped", "failed", "blocked", "gave_up"]
+Outcome = Literal["posted", "skipped", "failed", "blocked", "gave_up", "tested"]
 
 
 class EngagementComment(BaseModel):
@@ -85,6 +85,7 @@ class EngageState(TypedDict, total=False):
     feedback: str
     outcome: Outcome
     posted_url: str
+    test: bool  # test mode: nothing is posted
 
 
 # ---------- choosing the post ----------
@@ -139,8 +140,8 @@ def is_engagement(thread_id: str) -> bool:
     return thread_id.startswith(PREFIX)
 
 
-def start(post: FacebookPost) -> str | None:
-    """Draft the question for the post, send the proposal to Telegram and wait.
+def start(post: FacebookPost, test: bool = False) -> str | None:
+    """Draft the question for the post, send the proposal to Telegram and wait. `test`: test mode, nothing is posted.
 
     Returns:
         The run's thread id, or None if it ended without waiting.
@@ -152,8 +153,8 @@ def start(post: FacebookPost) -> str | None:
     _, source_ids = inbox.inbox_books()
     thread_id = f"{PREFIX}{post.id}:{db.new_id('run')}"
     with tracing.scope():
-        _graph().invoke({"post": post.model_dump(mode="json"), "source_ids": source_ids, "revisions": 0},
-                        _config(thread_id))
+        _graph().invoke({"post": post.model_dump(mode="json"), "source_ids": source_ids, "revisions": 0,
+                         "test": test}, _config(thread_id))
     if _waiting(thread_id):
         with _lock:
             _runs[post.id] = thread_id
@@ -265,8 +266,9 @@ def _propose(state: EngageState) -> EngageState:
         inbox._quietly(telegram.remove_buttons, old)
     buttons = [TelegramButton(label="Skip", data=inbox.BUTTON_SKIP)]
     if comment and not blocked:
-        buttons.insert(0, TelegramButton(label="✅ Make it so", data=inbox.BUTTON_GO))
-    lines = ["💡 No new comments, so here is a question to start a discussion under your post",
+        buttons.insert(0, TelegramButton(label=inbox.go_label(state.get("test", False)), data=inbox.BUTTON_GO))
+    lines = ["💡 No new comments, so here is a question to start a discussion under your post"
+             + (inbox.TEST_HEAD if state.get("test") else ""),
              f"Your post ({post.created_time:%d %b}): {inbox._excerpt(post.message, EXCERPT)}"]
     if post.permalink_url:
         lines.append(post.permalink_url)
@@ -312,6 +314,9 @@ def _publish(state: EngageState) -> EngageState:
         inbox._quietly(telegram.send_message, "Not posted: the comment is empty or looks like it contains "
                                               "instructions to an AI.")
         return {"outcome": "blocked"}
+    if state.get("test"):
+        inbox._quietly(telegram.send_message, inbox.TEST_NOT_POSTED)
+        return {"outcome": "tested"}
     try:
         posted = facebook.comment_on_post(post.id, text)
     except (facebook.FacebookError, ValueError) as e:

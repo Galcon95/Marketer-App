@@ -10,9 +10,12 @@
 import { useMemo, useState } from "react";
 import { Bot, Check, Clock, ExternalLink, History, Pause, Play, Plus, RefreshCw, Save, X } from "lucide-react";
 import {
-  api, errorMessage, type AutomationCycle, type AutomationSchedule, type AutomationStatus, type CycleOutcome,
+  api, bookTitle, errorMessage, type AutomationCycle, type AutomationSchedule, type AutomationStatus, type CycleEntry,
+  type CycleOutcome,
 } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
+import BookCover from "./BookCover";
+import { readyBooks } from "./BookPicker";
 import { Badge, Button, Card, ErrorNote, Placeholder } from "./ui";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -65,7 +68,15 @@ const OUTCOMES: Record<CycleOutcome, { label: string; tone: "success" | "neutral
   blocked: { label: "blocked by guard", tone: "danger" },
   failed: { label: "failed", tone: "danger" },
   gave_up: { label: "finish in app", tone: "warning" },
+  tested: { label: "test: not posted", tone: "neutral" },
 };
+
+/** What a cycle entry was about, before its excerpt. */
+function entryLabel(e: CycleEntry): string {
+  if (e.kind === "comment") return "💡 Question under your post: ";
+  if (e.kind === "post") return "📣 New post about ";
+  return `${e.platform === "youtube" ? "▶️ " : ""}${e.author || "A reader"}: `;
+}
 const TRIGGERS: Record<AutomationCycle["trigger"], string> = { schedule: "schedule", app: "Run now", telegram: "Telegram" };
 const STATUSES: Record<AutomationCycle["status"], string> = {
   running: "running", done: "done", error: "error", interrupted: "interrupted (server restart)",
@@ -97,10 +108,11 @@ function RecentCycles({ refresh, zone }: { refresh: number; zone: string }) {
             {c.note && <span className="bc-hint" style={{ margin: 0 }}>{c.note}</span>}
             {c.entries.map((e) => (
               <div key={e.thread_id} className="bc-row" style={{ gap: 8, alignItems: "baseline" }}>
-                <Badge tone={OUTCOMES[e.outcome].tone}>{OUTCOMES[e.outcome].label}</Badge>
+                {c.status === "interrupted" && e.outcome === "waiting"
+                  ? <Badge tone="neutral">dropped (restart)</Badge>  // proposals live in memory: lost on a restart
+                  : <Badge tone={OUTCOMES[e.outcome].tone}>{OUTCOMES[e.outcome].label}</Badge>}
                 <span className="bc-hint" style={{ margin: 0, flex: 1, minWidth: 200 }}>
-                  {e.kind === "comment" ? "💡 Question under your post: "
-                    : `${e.platform === "youtube" ? "▶️ " : ""}${e.author || "A reader"}: `}“{e.excerpt}”
+                  {entryLabel(e)}“{e.excerpt}”
                   {e.revisions > 0 && ` · rewritten ${e.revisions}×`}
                 </span>
                 {e.url && (
@@ -134,6 +146,20 @@ export default function AutomationSettings() {
   }) : null);
 
   const zoneList = useMemo(() => zones(draft?.timezone ?? "UTC"), [draft?.timezone]);
+  const sources = useApi("automation-books", api.listSources);
+  const books = useMemo(() => readyBooks(sources.data ?? []), [sources.data]);
+  // The ticked books: the chosen ones, or (nothing chosen yet) the ones the agent uses now.
+  const ticked = draft?.books.length ? draft.books : (s?.books ?? []);
+
+  /** Tick or untick a book (the last ticked one stays: the agent needs a book). */
+  function toggleBook(id: string) {
+    const next = ticked.includes(id) ? ticked.filter((b) => b !== id) : [...ticked, id];
+    if (next.length) edit({ books: next });
+  }
+
+  function setLink(id: string, url: string) {
+    if (draft) edit({ book_links: { ...draft.book_links, [id]: url } });
+  }
 
   /** Change part of the draft. */
   function edit(change: Partial<AutomationSchedule>) {
@@ -205,8 +231,11 @@ export default function AutomationSettings() {
   return (
     <div className="bc-stack" style={{ maxWidth: 720 }}>
       <Card title="Marketing agent schedule" icon={Clock}
-        meta={s && (!s.active ? <Badge>not running</Badge> : s.paused ? <Badge tone="warning">paused</Badge>
-          : <Badge tone="success">running</Badge>)}>
+        meta={s && (<span className="bc-row" style={{ gap: 6 }}>
+          {s.schedule.test_mode && <Badge tone="warning">test mode</Badge>}
+          {!s.active ? <Badge>not running</Badge> : s.paused ? <Badge tone="warning">paused</Badge>
+            : <Badge tone="success">running</Badge>}
+        </span>)}>
         <div className="bc-stack">
           <span className="bc-hint">
             The agent looks at your Facebook Page and your YouTube channel, drafts replies to new comments from your
@@ -221,6 +250,40 @@ export default function AutomationSettings() {
               {s.note && <span className="bc-hint" style={{ color: "var(--warning-text, var(--ink-muted))" }}>{s.note}</span>}
 
               <fieldset className="bc-seg-field">
+                <legend className="bc-label">Books the agent uses</legend>
+                <div className="bc-stack" style={{ gap: 10 }}>
+                  {sources.error && <ErrorNote>{sources.error}</ErrorNote>}
+                  {!books.length && <span className="bc-hint">{sources.loading ? "Loading your books…" : "No processed books yet."}</span>}
+                  {books.map((b) => {
+                    const on = ticked.includes(b.id);
+                    return (
+                      <div key={b.id} className="bc-row" style={{ gap: 10, alignItems: "flex-start", flexWrap: "nowrap" }}>
+                        <input type="checkbox" checked={on} onChange={() => toggleBook(b.id)} style={{ marginTop: 6 }}
+                          aria-label={`Use ${bookTitle(b.filename)}`} disabled={on && ticked.length === 1} />
+                        <BookCover sourceId={b.id} title={bookTitle(b.filename)} width={30} />
+                        <div className="bc-stack" style={{ gap: 4, flex: 1, minWidth: 0 }}>
+                          <strong>{bookTitle(b.filename)}</strong>
+                          {on && (
+                            <>
+                              <input type="url" className="bc-input" placeholder="Where to get it: https://… (optional)"
+                                aria-label={`Where to get ${bookTitle(b.filename)}`} value={draft.book_links[b.id] ?? ""}
+                                onChange={(e) => setLink(b.id, e.target.value)} />
+                              {s.without_summary.includes(b.id) && (
+                                <span className="bc-hint" style={{ margin: 0 }}>No summary yet, so no book posts about it:
+                                  create one in Phase 1 (Knowledge).</span>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <span className="bc-hint">Replies, questions and book posts are drafted from the ticked books. The link
+                    is attached to book posts about that book (e.g. its Amazon page or your website).</span>
+                </div>
+              </fieldset>
+
+              <fieldset className="bc-seg-field" style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
                 <legend className="bc-label">Mode</legend>
                 <div className="bc-seg" role="radiogroup">
                   {(["scheduled", "manual"] as const).map((mode) => (
@@ -331,32 +394,53 @@ export default function AutomationSettings() {
                     <span>Propose a question under one of my recent posts that has no comments yet, to start a discussion</span>
                   </label>
                   {draft.engage && (
-                    <div className="bc-row" style={{ gap: 16 }}>
-                      <label className="bc-row" style={{ gap: 6 }}>
-                        <span className="bc-hint" style={{ margin: 0 }}>Posts from the last</span>
-                        <select className="bc-select" style={{ width: 90 }} value={draft.engage_days}
-                          onChange={(e) => edit({ engage_days: Number(e.target.value) })}>
-                          {[3, 7, 14, 30, 60].map((d) => <option key={d} value={d}>{d} days</option>)}
-                        </select>
-                      </label>
-                      <label className="bc-row" style={{ gap: 6 }}>
-                        <span className="bc-hint" style={{ margin: 0 }}>At most</span>
-                        <select className="bc-select" style={{ width: 70 }} value={draft.daily_limit}
-                          onChange={(e) => edit({ daily_limit: Number(e.target.value) })}>
-                          {[0, 1, 2, 3, 5, 10].map((n) => <option key={n} value={n}>{n}</option>)}
-                        </select>
-                        <span className="bc-hint" style={{ margin: 0 }}>own comments or posts per day</span>
-                      </label>
-                    </div>
+                    <label className="bc-row" style={{ gap: 6 }}>
+                      <span className="bc-hint" style={{ margin: 0 }}>Posts from the last</span>
+                      <select className="bc-select" style={{ width: 90 }} value={draft.engage_days}
+                        onChange={(e) => edit({ engage_days: Number(e.target.value) })}>
+                        {[3, 7, 14, 30, 60].map((d) => <option key={d} value={d}>{d} days</option>)}
+                      </select>
+                    </label>
                   )}
-                  <span className="bc-hint">Each post gets at most one such question. Replies to readers are not limited.</span>
+                  <span className="bc-hint">Each post gets at most one such question.</span>
                 </div>
               </fieldset>
+
+              <fieldset className="bc-seg-field" style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+                <legend className="bc-label">At the end of each cycle</legend>
+                <div className="bc-stack" style={{ gap: 8 }}>
+                  <label className="bc-row" style={{ gap: 8, flexWrap: "nowrap" }}>
+                    <input type="checkbox" checked={draft.book_post} onChange={(e) => edit({ book_post: e.target.checked })} />
+                    <span>Propose a new post about the next topic of my book, with a call to action</span>
+                  </label>
+                  {draft.book_post && (
+                    <span className="bc-hint">The topics are the chapters of the ticked books&apos; summaries; the books
+                      take turns, and no topic repeats before all had their turn. The book&apos;s link (above) is attached.</span>
+                  )}
+                </div>
+              </fieldset>
+
+              <div className="bc-stack" style={{ gap: 8, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+                <label className="bc-row" style={{ gap: 6 }}>
+                  <span className="bc-hint" style={{ margin: 0 }}>At most</span>
+                  <select className="bc-select" style={{ width: 70 }} value={draft.daily_limit}
+                    onChange={(e) => edit({ daily_limit: Number(e.target.value) })}>
+                    {[0, 1, 2, 3, 5, 10].map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                  <span className="bc-hint" style={{ margin: 0 }}>own questions or posts per day (replies to readers are not limited)</span>
+                </label>
+                <label className="bc-row" style={{ gap: 8, flexWrap: "nowrap" }}>
+                  <input type="checkbox" checked={draft.test_mode} onChange={(e) => edit({ test_mode: e.target.checked })} />
+                  <span><strong>Test mode</strong>: everything is proposed in Telegram as usual, but nothing is published,
+                    not even after “Make it so”</span>
+                </label>
+              </div>
 
               <div className="bc-row" style={{ gap: 16 }}>
                 <span className="bc-hint" style={{ margin: 0 }}><strong>Next run:</strong> {s.paused ? "paused" : s.schedule.mode === "scheduled" ? when(s.next_run, zone) : "only when you ask"}</span>
                 <span className="bc-hint" style={{ margin: 0 }}><strong>Last run:</strong> {when(s.last_run, zone)}</span>
                 {!s.saved && <span className="bc-hint" style={{ margin: 0 }}>(not saved yet: the server default)</span>}
+                {s.schedule.test_mode && <Badge tone="warning">test mode: nothing is published</Badge>}
               </div>
 
               <div className="bc-studio-actions">
@@ -378,7 +462,7 @@ export default function AutomationSettings() {
       <RecentCycles refresh={nonce} zone={zone} />
       <Card title="In Telegram" icon={Bot}>
         <span className="bc-hint">
-          /next – run a cycle now · /status – the schedule and the running cycle · /pause, /resume – stop or restart
+          /next – run a cycle now (replies, a question when there are none, then a book post) · /status – the schedule and the running cycle · /pause, /resume – stop or restart
           the schedule · under a proposal: ✅ Make it so, Skip, or write what to change. A proposal waits until you
           answer it; the next one follows your answer, and the cycle ends with a summary.
         </span>

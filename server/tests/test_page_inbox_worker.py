@@ -42,12 +42,25 @@ def env(monkeypatch):
     monkeypatch.setattr(eng, "posted_today", lambda user_id, timezone: e.posted_today)
     monkeypatch.setattr(eng, "waiting_run", lambda: e.engage_waiting)
 
-    def engage_start(post):
+    def engage_start(post, test=False):
         e.engaged.append(post.id)
         e.engage_waiting = (f"eng:{post.id}:run1", 201)
         return e.engage_waiting[0]
 
     monkeypatch.setattr(eng, "start", engage_start)
+    # phase 3: no topic for a book post unless a test sets env.post_topic
+    e.post_topic, e.book_posted, e.post_waiting, e.tests = None, [], None, []
+    bp = worker_module.book_post
+    monkeypatch.setattr(bp, "next_topic", lambda settings: e.post_topic)
+    monkeypatch.setattr(bp, "waiting_run", lambda: e.post_waiting)
+
+    def post_start(topic, settings):
+        e.book_posted.append(topic.key)
+        e.tests.append(settings.test_mode)
+        e.post_waiting = (f"post:{topic.key}:run1", 301)
+        return e.post_waiting[0]
+
+    monkeypatch.setattr(bp, "start", post_start)
     monkeypatch.setattr(worker_module.automation, "inbox_due", lambda now: e.due)
     monkeypatch.setattr(worker_module.automation, "inbox_ran", lambda now: e.ran.append(now))
     monkeypatch.setattr(worker_module.telegram, "send_message",
@@ -77,7 +90,8 @@ def env(monkeypatch):
     monkeypatch.setattr(inbox, "waiting_run", lambda: e.waiting)
     monkeypatch.setattr(inbox, "is_open", lambda item: item.id not in e.decided)
 
-    def start(item):
+    def start(item, test=False):
+        e.tests.append(test)
         if e.start_error:
             raise e.start_error
         e.started.append(item.id)
@@ -388,7 +402,8 @@ def cycles(env, monkeypatch):
     monkeypatch.setattr(inbox, "posted_url", lambda thread_id: f"https://facebook.com/{thread_id}")
     count = iter(range(1, 100))
 
-    def start(item):
+    def start(item, test=False):
+        env.tests.append(test)
         thread = f"{item.id}:run{next(count)}"
         env.started.append(item.id)
         env.decided.add(item.id)  # no longer open once it has a run
@@ -572,3 +587,84 @@ def test_while_a_question_waits_a_new_start_keeps_waiting(engage):
     engage.worker.handle(_text("/next"))
     assert engage.engaged == ["111_7"]
     assert engage.said[-1] == ("A proposal is still waiting for your answer (above).", 201)
+
+
+# ---------- phase 3: a new post about the book ----------
+@pytest.fixture
+def post_phase(engage, monkeypatch):
+    """No open comments, no post to engage under, one book topic; the book post run answers like the others."""
+    from app.agents.book_post import Topic
+    engage.engage_post = None
+    engage.post_topic = Topic(key="src_1#0", source_id="src_1", title="The Magnet", summary="About it.")
+    bp = worker_module.book_post
+
+    def resume(thread_id, message_id, decision, feedback=""):
+        engage.resumed.append((thread_id, message_id, decision, feedback))
+        result = {"approve": "posted", "skip": "skipped"}.get(decision, "waiting")
+        if result != "waiting":
+            engage.post_waiting = None
+        return result
+
+    monkeypatch.setattr(bp, "resume", resume)
+    monkeypatch.setattr(bp, "posted_url", lambda thread_id: "https://www.facebook.com/999_1")
+    monkeypatch.setattr(worker_module, "source_name", lambda sid: "Volume 1")
+    return engage
+
+
+def test_a_cycle_ends_with_a_book_post(post_phase):
+    post_phase.worker.handle(_text("/next"))
+    assert post_phase.book_posted == ["src_1#0"]
+    assert ("Writing a new post about your book…", None) in post_phase.said
+    post_phase.worker.handle(_button("go", message_id=301))
+    assert post_phase.resumed == [("post:src_1#0:run1", 301, "approve", "")]
+    assert post_phase.worker.cycle is None and ("Cycle done: 1 posted.", None) in post_phase.said
+    [saved] = post_phase.saved()
+    assert [(e.kind, e.item_id, e.excerpt, e.url) for e in saved.entries] == [
+        ("post", "src_1#0", "Volume 1 · The Magnet", "https://www.facebook.com/999_1")]
+
+
+def test_the_book_post_follows_the_question(post_phase):
+    post_phase.engage_post = _own_post()
+    post_phase.worker.handle(_text("/next"))
+    assert post_phase.engaged == ["111_7"] and post_phase.book_posted == []
+    post_phase.worker.handle(_button("skip", message_id=201))
+    assert post_phase.book_posted == ["src_1#0"]  # then phase 3
+    post_phase.worker.handle(_button("skip", message_id=301))
+    assert post_phase.worker.cycle is None and post_phase.book_posted == ["src_1#0"]  # once per cycle
+
+
+def test_the_book_post_follows_the_replies(post_phase):
+    post_phase.open = [_item("222_1")]
+    post_phase.worker.handle(_text("/next"))
+    post_phase.worker.handle(_button("go", message_id=101))
+    assert post_phase.engaged == [] and post_phase.book_posted == ["src_1#0"]
+
+
+def test_no_book_post_when_off_or_beyond_the_limit(post_phase):
+    from app.core.schemas import AutomationSchedule
+    from tests.conftest import OWNER
+    post_phase.posted_today = 2
+    post_phase.worker.handle(_text("/next"))
+    assert post_phase.book_posted == [] and "Daily limit reached" in post_phase.said[-1][0]
+    post_phase.posted_today = 0
+    worker_module.automation.save(OWNER.id, AutomationSchedule(every_minutes=60, book_post=False))
+    post_phase.worker.handle(_text("/next"))
+    assert post_phase.book_posted == []
+
+
+def test_no_topics_says_how_to_get_them(post_phase):
+    post_phase.post_topic = None
+    post_phase.worker.handle(_text("/next"))
+    assert "summarize your book" in post_phase.said[-1][0]
+
+
+def test_test_mode_reaches_every_agent(post_phase):
+    from app.core.schemas import AutomationSchedule
+    from tests.conftest import OWNER
+    worker_module.automation.save(OWNER.id, AutomationSchedule(every_minutes=60, test_mode=True))
+    post_phase.open = [_item("222_1")]
+    post_phase.worker.handle(_text("/next"))
+    post_phase.worker.handle(_button("go", message_id=101))
+    assert post_phase.tests == [True, True]  # the reply, then the book post
+    post_phase.worker.handle(_text("/status"))
+    assert "TEST MODE" in post_phase.said[-1][0]

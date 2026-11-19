@@ -193,9 +193,13 @@ export interface AutomationSchedule {
   engage: boolean; // no new comments: propose a question under an own recent post without comments
   engage_days: number; // how recent that post must be
   daily_limit: number; // own comments and posts per day (replies to readers do not count)
+  book_post: boolean; // end each cycle with a new post about the next topic of the books
+  books: string[]; // the books the agent uses (ids); [] = the server's default (FACEBOOK_INBOX_BOOKS)
+  book_links: Record<string, string>; // book id → where to get it (the book post's link)
+  test_mode: boolean; // propose everything, publish nothing
 }
 /** What became of a proposal; "waiting" until the author answers. */
-export type CycleOutcome = "waiting" | "posted" | "skipped" | "failed" | "blocked" | "gave_up" | "answered";
+export type CycleOutcome = "waiting" | "posted" | "skipped" | "failed" | "blocked" | "gave_up" | "answered" | "tested";
 /** One proposal of a cycle. */
 export interface CycleEntry {
   kind: "reply" | "comment" | "post";
@@ -229,6 +233,8 @@ export interface AutomationStatus {
   last_run: string | null;
   active: boolean;
   note: string;
+  books: string[]; // the books the agent uses now (the chosen ones, or the server's default)
+  without_summary: string[]; // of those: no summary yet, so no topics for book posts
 }
 /** Body of POST /generate. `k` = number of chunks to retrieve as context (server default 5). */
 /**

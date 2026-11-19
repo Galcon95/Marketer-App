@@ -3,8 +3,8 @@
 A cycle starts on the schedule, from the app ("Run now") or from Telegram (/next) and goes through its phases:
 
     replies   answer what readers wrote on the Page and the channel, one proposal at a time   (page_inbox.py)
-    comment   no new comments: a question under a recent post                                   (step 3, not yet)
-    post      a book topic as a new post with a call to action                                  (step 4, not yet)
+    comment   no new comments: a question under a recent post                                   (engagement.py)
+    post      a book topic as a new post with a call to action                                  (book_post.py)
 
 The worker (page_inbox_worker.py) drives it; this module only records it. Each proposal becomes a CycleEntry; the
 author's decision fills in its outcome. A cycle is saved once it has something to show (a proposal, or an error):
@@ -27,7 +27,8 @@ EXCERPT = 140  # characters of the reader's text kept in the log
 
 # How each outcome reads in the summary message, in this order.
 SUMMARY_WORDS: dict[CycleOutcome, str] = {
-    "posted": "posted", "skipped": "skipped", "answered": "answered elsewhere", "blocked": "blocked by the guard",
+    "posted": "posted", "tested": "approved in test mode (not posted)", "skipped": "skipped",
+    "answered": "answered elsewhere", "blocked": "blocked by the guard",
     "failed": "failed to post", "gave_up": "handed to the app", "waiting": "still waiting",
 }
 
@@ -37,6 +38,7 @@ class Cycle:
 
     def __init__(self, user_id: str, trigger: CycleTrigger):
         self.record = AutomationCycle(id=db.new_id("cyc"), user_id=user_id, trigger=trigger, started_at=db.now())
+        self.post_tried = False  # phase 3 ran in this cycle (once per cycle)
 
     @property
     def asked(self) -> bool:
@@ -57,6 +59,13 @@ class Cycle:
         self.record.entries.append(CycleEntry(
             kind="comment", platform="facebook", item_id=post.id, thread_id=thread_id, author="",
             excerpt=text[:EXCERPT] + ("…" if len(text) > EXCERPT else ""), proposed_at=db.now()))
+        self._save()
+
+    def proposed_post(self, thread_id: str, topic, book: str) -> None:
+        """A new post about a book topic (a book_post.Topic) was proposed (phase 3)."""
+        self.record.entries.append(CycleEntry(
+            kind="post", platform="facebook", item_id=topic.key, thread_id=thread_id, author="",
+            excerpt=f"{book} · {topic.title}"[:EXCERPT], proposed_at=db.now()))
         self._save()
 
     def revised(self, thread_id: str) -> None:

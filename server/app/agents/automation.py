@@ -25,6 +25,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from app.core import config
+from app.core import state
 from app.core.schemas import AutomationSchedule, AutomationSettings, AutomationStatus
 from app.db import records
 
@@ -235,6 +236,19 @@ def status(user_id: str) -> AutomationStatus:
         note = ""
     with _lock:
         last = max((t for t in (settings.last_run_at, _ran.get(user_id)) if t), default=None)
+    books = _books_in_use(user_id, owner, settings)
     return AutomationStatus(schedule=schedule, saved=settings.saved_at is not None, paused=settings.paused,
                             next_run=None if settings.paused else next_run(settings), last_run=last,
-                            active=running and owner == user_id, note=note)
+                            active=running and owner == user_id, note=note, books=books,
+                            without_summary=[b for b in books if b not in state.summaries])
+
+
+def _books_in_use(user_id: str, owner: str | None, settings: AutomationSettings) -> list[str]:
+    """The books the agent uses for this user: for the inbox owner the chosen or the default ones, else the chosen."""
+    if owner != user_id:
+        return settings.books
+    from app.agents import page_inbox
+    try:
+        return page_inbox.inbox_books()[1]
+    except page_inbox.InboxConfigError:
+        return settings.books

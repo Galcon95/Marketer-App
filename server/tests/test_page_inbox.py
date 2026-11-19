@@ -142,6 +142,22 @@ def test_books_must_be_configured(world, monkeypatch, books):
         inbox.start(_item())
 
 
+def test_the_books_chosen_in_the_app_replace_the_default(world, monkeypatch):
+    from app.agents import automation
+    from app.core.schemas import AutomationSettings
+    other = "src_other_client"
+    monkeypatch.setitem(db.projects, PROJECT, SimpleNamespace(id=PROJECT, owner_id="usr_owner"))
+    monkeypatch.setitem(db.sources, "src_vol3", SimpleNamespace(id="src_vol3", project_id=PROJECT, status="ready"))
+    monkeypatch.setitem(db.sources, other, SimpleNamespace(id=other, project_id="prj_other", status="ready"))
+    chosen = []
+    monkeypatch.setattr(automation, "schedule_of", lambda user_id: AutomationSettings(
+        user_id=user_id, every_minutes=60, books=chosen))
+    assert inbox.inbox_books() == (PROJECT, [VOL1, VOL2])  # nothing chosen: FACEBOOK_INBOX_BOOKS
+    chosen[:] = ["src_vol3", other, "src_unknown"]
+    assert inbox.inbox_books() == (PROJECT, ["src_vol3"])  # only the client's processed books
+    assert inbox.inbox_owner_id() == "usr_owner"
+
+
 # ---------- the author's decision ----------
 def test_make_it_so_posts_once(world):
     thread_id, message_id = _start()
@@ -155,6 +171,15 @@ def test_make_it_so_posts_once(world):
     assert inbox.resume(thread_id, message_id, "approve") == "stale"
     assert len(world.posted) == 1
     assert inbox.waiting_run() is None and not inbox.is_open(_item())
+
+
+def test_test_mode_posts_nothing_and_keeps_the_item_decided(world):
+    thread_id = inbox.start(_item(), test=True)
+    message_id = inbox.waiting_run()[1]
+    assert "TEST MODE" in world.sent[0][0]
+    assert inbox.resume(thread_id, message_id, "approve") == "tested"
+    assert world.posted == [] and "NOT posted" in world.sent[-1][0]
+    assert world.analyses["dsc_1"].replied_url in (None, "") and not inbox.is_open(_item())
 
 
 def test_reply_goes_to_the_thread_and_visitor_posts_get_a_comment(world):

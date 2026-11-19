@@ -301,9 +301,12 @@ The app acts as a real **MCP client** (official `mcp` SDK `Client`, Streamable H
   or every few hours, chosen days, the author's time zone), pause/resume, "Run now". Each run is a **cycle**: replies
   to readers' comments on the Facebook Page and the YouTube channel, one proposal at a time in Telegram, posted only
   after the author's "Make it so"; a summary at the end. **Recent cycles** lists what was proposed and decided.
+- **Books:** the books the agent uses are ticked on the Agent Workspace, each with an optional "where to get it" link.
 - **Phase 2 of the cycle:** no new comments → a question under an own recent post without comments, drafted from the
   books, approved in Telegram; one try per post, a daily limit for the agent's own comments and posts, quiet hours.
-- Coming in the cycle: a book topic as a new post with a call to action.
+- **Phase 3 of the cycle:** at the end of each cycle, a new post about the next topic of the books (the chapters of
+  the book summaries, taking turns), with a call to action and the book's link; approved in Telegram,
+  counted in the daily limit. **Test mode:** every phase proposes as usual, nothing is published.
 - Later: the multi-agent campaign workflow (Strategist → Copywriter → Auditor → human checkpoint).
 
 ---
