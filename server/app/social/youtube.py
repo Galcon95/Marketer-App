@@ -6,6 +6,7 @@
     open_items(comments)              what waits for an answer: viewers' comments the channel has not answered
     list_replies(comment_id)          all replies under a top comment
     recent_videos(limit)              the channel's latest uploads with title, description and comment count
+    video_transcript(video_id)        what is said in one of the channel's videos, from its captions
     reply_to_comment(id, message)     a reply as the channel under a comment          (writes)
     comment_on_video(id, message)     a new top comment as the channel under a video  (writes)
 
@@ -20,7 +21,7 @@ top comment). A comment counts as answered when the channel wrote in its thread 
 
 Quota: the API gives a project 10,000 units a day. Reading costs 1 unit per request (recent_threads: one for the
 threads, one for the video titles, one more for each thread with more replies than YouTube includes; recent_videos:
-three); a reply or a new comment costs 50.
+three); a reply or a new comment costs 50; video_transcript 250 (50 to list the captions, 200 to download one).
 
 Comments are other people's text: whoever passes them to a model quotes them as untrusted data (guard.py).
 Plain HTTP (httpx) next to the LangChain stack; no model call here.
@@ -223,6 +224,40 @@ def recent_videos(limit: int = 10) -> list[YouTubeUpload]:
     return sorted(videos, key=lambda v: v.published_at, reverse=True)
 
 
+def video_transcript(video_id: str, max_chars: int = 20000) -> str:
+    """What is said in one of the channel's own videos, as plain text from its captions: a track the author uploaded
+    is preferred over YouTube's automatic one. "" when the video has no captions. Costs 250 quota units (only the
+    channel's owner may download captions).
+
+    Raises:
+        ValueError: If the video id is invalid.
+        YouTubeError: If the captions cannot be listed or downloaded (e.g. YouTube refuses an automatic track).
+    """
+    _check_video(video_id)
+    data = _request("GET", "captions", {"part": "snippet", "videoId": video_id})
+    tracks = [t for t in data.get("items", []) if t.get("id")
+              and (t.get("snippet") or {}).get("status", "serving") == "serving"]
+    if not tracks:
+        return ""
+    tracks.sort(key=lambda t: (t.get("snippet") or {}).get("trackKind", "").lower() == "asr")  # uploaded first
+    srt = _request("GET", f"captions/{tracks[0]['id']}", {"tfmt": "srt"}, text=True)
+    return srt_text(srt)[:max_chars]
+
+
+def srt_text(srt: str) -> str:
+    """The spoken text of an SRT caption file: numbers, timings, markup and sound notes ("[music]") removed, lines
+    joined, and the repeated lines of automatic captions (each line shown again in the next cue) dropped."""
+    words: list[str] = []
+    for line in srt.splitlines():
+        line = re.sub(r"\s+", " ", re.sub(r"<[^>]+>|\[[^\]]*\]", "", line)).strip()
+        if not line or line.isdigit() or "-->" in line:
+            continue
+        if words and words[-1] == line:
+            continue
+        words.append(line)
+    return " ".join(words)
+
+
 def comment_on_video(video_id: str, message: str) -> YouTubePublished:
     """A new top comment as the channel under one of its videos. Only on the author's decision. Costs 50 quota
     units.
@@ -231,8 +266,7 @@ def comment_on_video(video_id: str, message: str) -> YouTubePublished:
         ValueError: If the video id is invalid or the message is empty or too long.
         YouTubeError: 404 if the video is unknown or its comments are turned off.
     """
-    if not _VIDEO_ID.match(video_id or ""):
-        raise ValueError("Invalid YouTube video id.")
+    _check_video(video_id)
     body = {"snippet": {"videoId": video_id, "topLevelComment": {"snippet": {"textOriginal": _check_message(message)}}}}
     data = _request("POST", "commentThreads", {"part": "snippet"}, json=body)
     return YouTubePublished(id=data["id"], url=_comment_url(video_id, data["id"]) or "")
@@ -271,8 +305,9 @@ def _client() -> httpx.Client:
 
 
 def _request(method: str, path: str, params: dict[str, Any] | None = None,
-             json: dict[str, Any] | None = None) -> dict[str, Any]:
-    """One API request with the channel's access token; the JSON answer, or YouTubeError."""
+             json: dict[str, Any] | None = None, text: bool = False) -> Any:
+    """One API request with the channel's access token; the JSON answer (`text`: the answer as text, e.g. a caption
+    file), or YouTubeError."""
     channel = _channel.get()
     if not channel:
         raise YouTubeError(503, "No YouTube channel is connected: connect yours under Integrations → YouTube channel.")
@@ -285,6 +320,8 @@ def _request(method: str, path: str, params: dict[str, Any] | None = None,
     except httpx.HTTPError as e:  # no str(e): keep request details out of messages
         logger.warning("YouTube request %s /%s failed: %s", method, path, type(e).__name__)
         raise YouTubeError(502, "Could not reach YouTube. Try again.") from e
+    if text and response.is_success:
+        return response.text
     try:
         body = response.json()
     except ValueError:
@@ -386,6 +423,12 @@ def _check_id(value: str) -> None:
     """Reject anything but a comment id."""
     if not _ID.match(value or ""):
         raise ValueError("Invalid YouTube comment id.")
+
+
+def _check_video(video_id: str) -> None:
+    """Reject anything but a video id."""
+    if not _VIDEO_ID.match(video_id or ""):
+        raise ValueError("Invalid YouTube video id.")
 
 
 def _check_message(message: str) -> str:

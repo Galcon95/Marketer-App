@@ -12,9 +12,11 @@ one inviting question drafted from the books, posted only after the author's "ma
                  on the channel the inbox owner connected (page_inbox.channel_for_inbox)
                  Both: never had an engagement proposal (any outcome: one try per post or video; from the cycle log,
                  and in memory)
-    draft        the book whose passages fit the post (a video: its title and description) best (one vector search
-                 per book), its best passages, and one model call (prompts/engagement_comment.md): one open question,
-                 at most 3 sentences, no promotion
+    draft        the book whose passages fit the post (a video: its title, description and transcript) best (one
+                 vector search per book), its best passages, and one model call (prompts/engagement_comment.md): one
+                 open question, at most 3 sentences, no promotion. A video's transcript is fetched once, for the first
+                 draft (youtube.video_transcript, 250 quota units), and kept for revisions; without captions, or when
+                 YouTube refuses them, the question is drawn from title and description
     propose      the post or video, the book, why, and the comment to Telegram with "Make it so" / "Skip"
     wait         interrupt(): stored by the checkpointer until the author answers (resume)
     revise       the same prompt again with the author's feedback and the current comment, from the same passages
@@ -24,7 +26,7 @@ one inviting question drafted from the books, posted only after the author's "ma
 Like the Page inbox (page_inbox.py): one waiting proposal at a time across both agents (the worker asks both),
 a decision is applied exactly once under a lock, MAX_REVISIONS feedback rounds, runs kept by the shared
 checkpointer (agents/checkpoints.py), so a waiting proposal survives a server restart (restore()). Thread ids start with "eng:" so the worker knows which agent a run belongs to.
-The post and the video's title and description are the author's own text; the feedback is the author's own instruction. Runs are traced as "engagement".
+The post and the video's title, description and transcript are the author's own text; the feedback is the author's own instruction. Runs are traced as "engagement".
 """
 
 import logging
@@ -58,7 +60,8 @@ MAX_REVISIONS = inbox.MAX_REVISIONS
 SCAN_POSTS = 10  # latest posts looked at
 SCAN_VIDEOS = 10  # latest uploads looked at (3 quota units)
 PASSAGES = 4  # book passages given to the model
-POST_TEXT = 3000  # characters of the post given to the model
+POST_TEXT = 3000  # characters of the post given to the model (and of a video's text used for the book search)
+VIDEO_TEXT = 9000  # characters of a video's title, description and transcript given to the model
 EXCERPT = 300  # characters of the post shown in Telegram
 LOG_CYCLES = 200  # cycles read to find the posts that had a proposal already
 
@@ -71,7 +74,8 @@ Target = FacebookPost | YouTubeUpload  # what the question goes under
 # How each platform reads in the prompt.
 WHERE = {"facebook": "their own Facebook Page under one of their own recent posts",
          "youtube": "their own YouTube channel under one of their own videos"}
-LABEL = {"facebook": "My post on my Facebook Page", "youtube": "My video on my YouTube channel (title and description)"}
+LABEL = {"facebook": "My post on my Facebook Page",
+         "youtube": "My video on my YouTube channel (title, description and, if there is one, what is said in it)"}
 
 
 class EngagementComment(BaseModel):
@@ -88,6 +92,7 @@ PROMPT_VERSION = prompts.register("engagement", PROMPT, EngagementComment, {"hum
 class EngageState(TypedDict, total=False):
     post: dict  # the FacebookPost or YouTubeUpload (as JSON, for the checkpointer)
     platform: Platform  # missing in runs from before YouTube: facebook
+    transcript: str  # a video's spoken text ("" = none), fetched for the first draft
     source_ids: list[str]
     source_id: str
     chunk_ids: list[str]  # the passages the comment is drawn from (kept for revisions)
@@ -290,15 +295,20 @@ def _graph():
 def _draft(state: EngageState) -> EngageState:
     """Write the comment (first draft, or a rewrite following the author's feedback)."""
     platform = _platform(state)
-    text = clean_text(_text(_target(state)))[:POST_TEXT]
+    target = _target(state)
     feedback = state.get("feedback", "")
     update: EngageState = {}
-    if state.get("chunk_ids"):  # a rewrite: the same passages
+    if state.get("chunk_ids"):  # a rewrite: the same passages (and the same transcript)
+        transcript = state.get("transcript", "")
+        text = clean_text(_text(target, transcript))
         source_id = state["source_id"]
         passages = [(db.chunks[c], 0.0) for c in state["chunk_ids"] if c in db.chunks]
     else:
-        source_id, passages = _best_book(state["source_ids"], text)
-        update = {"source_id": source_id, "chunk_ids": [chunk.id for chunk, _ in passages]}
+        transcript = _transcript(target) if isinstance(target, YouTubeUpload) else ""
+        text = clean_text(_text(target, transcript))
+        source_id, passages = _best_book(state["source_ids"], text[:POST_TEXT])
+        update = {"source_id": source_id, "chunk_ids": [chunk.id for chunk, _ in passages], "transcript": transcript}
+    text = text[:VIDEO_TEXT if platform == "youtube" else POST_TEXT]
     with usage.tagged(source_id=source_id):
         result, _ = structured(PROMPT, {
             "style": style_guidance(humanize := state.get("humanize", HUMANIZE)),
@@ -339,7 +349,9 @@ def _propose(state: EngageState) -> EngageState:
     if isinstance(target, YouTubeUpload):
         lines = [inbox.PLATFORM_TAG["youtube"], "💡 A question to start a discussion under your video"
                  + (inbox.TEST_HEAD if state.get("test") else ""),
-                 f"Your video ({target.published_at:%d %b}): {inbox._excerpt(target.title, EXCERPT)}", target.url]
+                 f"Your video ({target.published_at:%d %b}): {inbox._excerpt(target.title, EXCERPT)}", target.url,
+                 "📝 Drawn from what is said in the video (transcript)" if state.get("transcript")
+                 else "📝 No transcript (no captions, or YouTube refused them): drawn from title and description"]
     else:
         lines = [inbox.PLATFORM_TAG["facebook"], "💡 No new comments, so here is a question to start a discussion "
                  "under your post"
@@ -439,11 +451,26 @@ def _target(state: EngageState) -> Target:
     return model.model_validate(state["post"])
 
 
-def _text(target: Target) -> str:
-    """What the question is drawn from: the post's text, or the video's title and description."""
+def _text(target: Target, transcript: str = "") -> str:
+    """What the question is drawn from: the post's text, or the video's title, description and transcript."""
     if isinstance(target, YouTubeUpload):
-        return f"Title: {target.title}\n\n{target.description}".strip()
+        text = f"Title: {target.title}\n\nDescription: {target.description}".strip()
+        return f"{text}\n\nWhat is said in the video (transcript):\n{transcript}" if transcript else text
     return target.message
+
+
+def _transcript(video: YouTubeUpload) -> str:
+    """The video's transcript, or "" when it has none or it cannot be fetched (the question is then drawn from title
+    and description; logged, never an error)."""
+    try:
+        channel = inbox.channel_for_inbox()
+        if channel is None:
+            return ""
+        with youtube.as_channel(channel):
+            return youtube.video_transcript(video.id)
+    except (youtube.YouTubeError, ValueError, OSError) as e:
+        logger.info("Engagement: no transcript for video %s: %s", video.id, e)
+        return ""
 
 
 def _thing(state: EngageState) -> str:

@@ -254,6 +254,59 @@ def test_comment_on_video_refuses_an_invalid_video_id(api, video_id):
     assert not api.requests
 
 
+# ---------- transcripts ----------
+def test_srt_text_drops_numbers_timings_markup_sound_notes_and_repeats():
+    srt = """1\n00:00:00,000 --> 00:00:02,000\n<c>welcome to</c> [music] the city\n\n2\n00:00:02,000 --> 00:00:04,000\nwelcome to the city\nwhere rings of green\n\n3\n00:00:04,000 --> 00:00:06,000\nwhere rings of green\nhold the sprawl\n"""
+    assert yt.srt_text(srt) == "welcome to the city where rings of green hold the sprawl"
+
+
+def test_video_transcript_prefers_the_authors_own_captions(api):
+    api.answers["captions"] = {"items": [
+        {"id": "asr1", "snippet": {"trackKind": "asr", "status": "serving"}},
+        {"id": "own1", "snippet": {"trackKind": "standard", "status": "serving"}},
+        {"id": "bad1", "snippet": {"trackKind": "standard", "status": "failed"}}]}
+    original = yt._client
+
+    def client():
+        c = original()
+        transport = c._transport
+
+        class Text(httpx.BaseTransport):
+            def handle_request(self, request):
+                if request.url.path.endswith("/captions/own1"):
+                    api.requests.append(request)
+                    return httpx.Response(200, text="1\n00:00:00,000 --> 00:00:01,000\nRings of green.\n")
+                return transport.handle_request(request)
+
+        return httpx.Client(base_url=yt.API_URL, transport=Text())
+
+    yt._client = client
+    try:
+        assert yt.video_transcript(VIDEO) == "Rings of green."
+    finally:
+        yt._client = original
+    listing, download = api.requests
+    assert listing.url.params["videoId"] == VIDEO and download.url.params["tfmt"] == "srt"
+
+
+def test_a_video_without_captions_has_no_transcript(api):
+    api.answers["captions"] = {"items": []}
+    assert yt.video_transcript(VIDEO) == "" and len(api.requests) == 1
+
+
+def test_a_refused_caption_download_is_an_error(api):
+    api.answers["captions"] = {"items": [{"id": "asr1", "snippet": {"trackKind": "asr"}}]}
+    api.answers["asr1"] = (403, {"error": {"message": "forbidden", "errors": [{"reason": "forbidden"}]}})
+    with pytest.raises(yt.YouTubeError):
+        yt.video_transcript(VIDEO)
+
+
+def test_video_transcript_refuses_an_invalid_video_id(api):
+    with pytest.raises(ValueError):
+        yt.video_transcript("../channels")
+    assert not api.requests
+
+
 # ---------- writing ----------
 def test_reply_to_comment(api):
     api.answers["comments"] = {"id": f"{TOP}.new", "snippet": {"parentId": TOP}}

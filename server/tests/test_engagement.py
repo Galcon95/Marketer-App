@@ -78,6 +78,16 @@ def world(monkeypatch):
     monkeypatch.setattr(eng.inbox, "channel_for_inbox", lambda: w.channel)
     w.videos, w.commented, w.youtube_error = [], [], None
     monkeypatch.setattr(eng.youtube, "recent_videos", lambda limit: w.videos)
+    w.transcript, w.transcript_calls = "", []
+
+    def video_transcript(video_id):
+        assert eng.youtube.is_configured()  # inside as_channel
+        w.transcript_calls.append(video_id)
+        if isinstance(w.transcript, Exception):
+            raise w.transcript
+        return w.transcript
+
+    monkeypatch.setattr(eng.youtube, "video_transcript", video_transcript)
 
     def comment_on_video(video_id, text):
         assert eng.youtube.is_configured()  # inside as_channel
@@ -222,6 +232,23 @@ def test_a_question_under_a_video_is_drafted_from_title_and_description(world):
     assert world.commented == [("vid00000001", "What would a garden city look like where you live?")]
     assert world.posted == [] and "Posted under your video" in world.sent[-1][0]
     assert eng.posted_url(thread_id) == "https://www.youtube.com/watch?v=vid00000001&lc=UgzNEW"
+
+
+def test_the_transcript_is_used_once_and_kept_for_revisions(world):
+    world.transcript = "Today I walk through a city built in rings of green."
+    thread_id = eng.start(_video())
+    message_id = eng.waiting_run()[1]
+    assert "What is said in the video (transcript):\nToday I walk" in world.calls[0]["post"]
+    assert "Drawn from what is said in the video" in world.sent[0][0]
+    assert eng.resume(thread_id, message_id, "feedback", "shorter") == "waiting"
+    assert "Today I walk" in world.calls[1]["post"] and world.transcript_calls == ["vid00000001"]  # fetched once
+
+
+def test_without_a_transcript_the_question_uses_title_and_description(world):
+    world.transcript = eng.youtube.YouTubeError(503, "forbidden")
+    eng.start(_video())
+    assert "transcript" not in world.calls[0]["post"] and "Rings, belts" in world.calls[0]["post"]
+    assert "No transcript" in world.sent[0][0]
 
 
 def test_a_skipped_video_is_not_tried_again(world):
