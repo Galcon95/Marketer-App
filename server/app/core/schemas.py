@@ -878,7 +878,8 @@ class AutomationSettings(AutomationSchedule):
 class AutomationStatus(BaseModel):
     """Response of GET /automation: the user's schedule and what the agent does with it. `active`: the agent runs
     for this user (Telegram and the inbox books are set up on the server, and the books are this user's); `note`
-    says why not."""
+    says why not. `available` False: the agent on this server works for another user (one agent per server for now),
+    so the app shows this user no schedule at all."""
 
     schedule: AutomationSchedule
     saved: bool
@@ -886,6 +887,7 @@ class AutomationStatus(BaseModel):
     next_run: datetime | None = None  # None: manual or paused
     last_run: datetime | None = None
     active: bool
+    available: bool = True
     books: list[str] = Field(default_factory=list)  # the books the agent uses now (the chosen ones, or the default)
     without_summary: list[str] = Field(default_factory=list)  # of those: no summary, so no topics for book posts
     note: str = ""

@@ -60,7 +60,8 @@ def run_now(user: User = Depends(current_user)) -> dict[str, str]:
         raise HTTPException(409, "The agent is not running on the server (Telegram and FACEBOOK_INBOX_BOOKS in "
                                  "server/.env).")
     if automation.inbox_owner() != user.id:
-        raise HTTPException(409, "The agent on this server works for the owner of other books.")
+        raise HTTPException(409, "The marketing agent is not available for your account yet: on this server it "
+                                 "works for one user only (the admin).")
     page_inbox_worker.request_run()
     return {"status": "Run requested: watch Telegram."}
 

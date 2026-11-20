@@ -227,11 +227,13 @@ def status(user_id: str) -> AutomationStatus:
     settings = schedule_of(user_id, fresh=True)
     schedule = AutomationSchedule(**settings.model_dump(include=set(AutomationSchedule.model_fields)))
     owner, running = inbox_owner(), page_inbox_worker.is_running()
-    if not running:
+    available = owner in (None, user_id)  # one agent per server for now: it works for the inbox books' owner only
+    if not available:
+        note = ("The marketing agent is not available for your account yet: on this server it works for one user "
+                "only (the admin).")
+    elif not running:
         note = ("The agent is not running on the server: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID and "
                 "FACEBOOK_INBOX_BOOKS must be set in server/.env.")
-    elif owner != user_id:
-        note = "The agent on this server works for the owner of other books; your schedule is saved but not used."
     else:
         note = ""
     with _lock:
@@ -239,7 +241,8 @@ def status(user_id: str) -> AutomationStatus:
     books = _books_in_use(user_id, owner, settings)
     return AutomationStatus(schedule=schedule, saved=settings.saved_at is not None, paused=settings.paused,
                             next_run=None if settings.paused else next_run(settings), last_run=last,
-                            active=running and owner == user_id, note=note, books=books,
+                            active=running and owner == user_id, available=available, note=note,
+                            books=books,
                             without_summary=[b for b in books if b not in state.summaries])
 
 

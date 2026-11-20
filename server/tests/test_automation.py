@@ -153,6 +153,7 @@ def test_get_returns_defaults_and_why_it_does_not_run(client):
     _, c = client
     body = c.get("/automation").json()
     assert body["saved"] is False and body["active"] is False and "not running" in body["note"]
+    assert body["available"]  # the owner's own agent, only switched off
 
 
 def test_put_saves_and_reports_the_next_run(client, monkeypatch):
@@ -171,12 +172,12 @@ def test_put_refuses_an_invalid_schedule(client):
     assert c.put("/automation", json={"mode": "scheduled", "times": [], "every_minutes": 0}).status_code == 422
 
 
-def test_schedule_of_another_user_is_saved_but_not_active(client, monkeypatch):
+def test_agent_is_not_available_for_another_user(client, monkeypatch):
     monkeypatch.setattr(page_inbox_worker, "_worker", object())
     app, c = client
     sign_in(app, STRANGER)
     body = c.put("/automation", json={"mode": "manual"}).json()
-    assert body["saved"] and not body["active"] and "other books" in body["note"]
+    assert body["saved"] and not body["active"] and not body["available"] and "not available" in body["note"]
     assert c.post("/automation/run").status_code == 409
 
 

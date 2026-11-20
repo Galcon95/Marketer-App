@@ -227,7 +227,10 @@ export interface AutomationCycle {
   entries: CycleEntry[];
   note: string;
 }
-/** Response of GET/PUT /automation. `active`: the agent on the server runs for this user; `note` says why not. */
+/**
+ * Response of GET/PUT /automation. `active`: the agent on the server runs for this user; `note` says why not.
+ * `available` false: the agent works for another user (one agent per server for now), so no schedule is shown.
+ */
 export interface AutomationStatus {
   schedule: AutomationSchedule;
   saved: boolean;
@@ -235,6 +238,7 @@ export interface AutomationStatus {
   next_run: string | null; // null: manual or paused
   last_run: string | null;
   active: boolean;
+  available: boolean;
   note: string;
   books: string[]; // the books the agent uses now (the chosen ones, or the server's default)
   without_summary: string[]; // of those: no summary yet, so no topics for book posts

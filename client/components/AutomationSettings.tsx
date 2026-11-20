@@ -8,7 +8,7 @@
  */
 
 import { useMemo, useState } from "react";
-import { Bot, Check, Clock, ExternalLink, History, Pause, Play, Plus, RefreshCw, Save, X } from "lucide-react";
+import { Bot, Check, Clock, ExternalLink, History, Lock, Pause, Play, Plus, RefreshCw, Save, X } from "lucide-react";
 import {
   api, bookTitle, errorMessage, humanizeLabel, type AutomationCycle, type AutomationSchedule, type AutomationStatus, type CycleEntry,
   type CycleOutcome,
@@ -227,6 +227,17 @@ export default function AutomationSettings() {
   const scheduled = draft?.mode === "scheduled";
   const useInterval = !!draft && draft.every_minutes > 0;
   const zone = s?.schedule.timezone ?? "UTC";
+
+  // One agent per server for now: for everyone but its user, the page only says so.
+  if (s && !s.available) {
+    return (
+      <div className="bc-stack" style={{ maxWidth: 720 }}>
+        <Card title="Marketing agent" icon={Clock} meta={<Badge>not available</Badge>}>
+          <Placeholder icon={Lock}>{s.note}</Placeholder>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="bc-stack" style={{ maxWidth: 720 }}>
