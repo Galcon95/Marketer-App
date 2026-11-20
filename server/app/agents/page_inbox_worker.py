@@ -191,16 +191,18 @@ class InboxWorker:
             settings = automation.schedule_of(owner)
             if not settings.engage:
                 return "none"
-            if engagement.posted_today(owner, settings.timezone) >= settings.daily_limit:
+            limit = settings.youtube_daily_limit if platform == "youtube" else settings.daily_limit
+            if engagement.posted_today(owner, settings.timezone, platform) >= limit:
                 if asked:
-                    self._say(f"Daily limit reached ({settings.daily_limit} own comments or posts today), so no "
-                              f"question under a {thing}.")
+                    where = "YouTube" if platform == "youtube" else "Facebook"
+                    self._say(f"{where} daily limit reached ({limit} own comments or posts today), so no question "
+                              f"under a {thing}.")
                 return "none"
             post = engagement.pick_video(settings) if platform == "youtube" else engagement.pick_post(settings)
             if post is None:
                 if asked:
-                    self._say(f"No {thing} of yours from the last {settings.engage_days} days is waiting for a first "
-                              "comment.")
+                    days = settings.youtube_engage_days if platform == "youtube" else settings.engage_days
+                    self._say(f"No {thing} of yours from the last {days} days is waiting for a first comment.")
                 return "none"
             if asked:
                 self._say(f"Drafting a question for your {thing}…")
@@ -223,10 +225,10 @@ class InboxWorker:
             settings = automation.schedule_of(owner)
             if not settings.book_post:
                 return "none"
-            if engagement.posted_today(owner, settings.timezone) >= settings.daily_limit:
+            if engagement.posted_today(owner, settings.timezone, "facebook") >= settings.daily_limit:
                 if asked:
-                    self._say(f"Daily limit reached ({settings.daily_limit} own comments or posts today), so no "
-                              "new post about your book.")
+                    self._say(f"Facebook daily limit reached ({settings.daily_limit} own comments or posts today), "
+                              "so no new post about your book.")
                 return "none"
             topic = book_post.next_topic(settings)
             if topic is None:

@@ -131,6 +131,25 @@ def test_posted_today_counts_only_own_comments_and_posts():
     assert eng.posted_today(OWNER.id, "Europe/Berlin") == 1
 
 
+def test_each_platform_counts_only_its_own():
+    cycle = Cycle(OWNER.id, "app")
+    cycle.proposed_comment("eng:1:run1", _post("1"))
+    cycle.decided("eng:1:run1", "posted")
+    cycle.proposed_comment("eng:vid00000001:run2", _video())
+    cycle.decided("eng:vid00000001:run2", "posted")
+    cycle.proposed_comment("eng:vid00000002:run3", _video("vid00000002"))
+    cycle.decided("eng:vid00000002:run3", "posted")
+    assert eng.posted_today(OWNER.id, "Europe/Berlin", "facebook") == 1
+    assert eng.posted_today(OWNER.id, "Europe/Berlin", "youtube") == 2
+
+
+def test_videos_have_their_own_age_window(world):
+    world.videos = [_video(days_old=40)]
+    settings = AutomationSettings(user_id=OWNER.id, every_minutes=30, engage_days=14)
+    assert eng.pick_video(settings).id == "vid00000001"  # within YouTube's 90 days, not Facebook's 14
+    assert eng.pick_video(settings.model_copy(update={"youtube_engage_days": 30})) is None
+
+
 # ---------- the graph ----------
 def test_start_drafts_from_the_best_book_and_waits(world):
     thread_id, message_id = _start()

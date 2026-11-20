@@ -41,7 +41,9 @@ def env(monkeypatch):
     monkeypatch.setattr(eng, "pick_post", lambda settings: e.engage_post)
     e.engage_video = None  # phase 2 on YouTube: no video unless a test sets env.engage_video
     monkeypatch.setattr(eng, "pick_video", lambda settings: e.engage_video)
-    monkeypatch.setattr(eng, "posted_today", lambda user_id, timezone: e.posted_today)
+    e.youtube_posted_today = 0
+    monkeypatch.setattr(eng, "posted_today", lambda user_id, timezone, platform="facebook":
+                        e.youtube_posted_today if platform == "youtube" else e.posted_today)
     monkeypatch.setattr(eng, "waiting_run", lambda: e.engage_waiting)
 
     def engage_start(post, test=False, humanize=80):
@@ -598,6 +600,23 @@ def test_after_the_post_a_question_under_a_video_follows(engage):
     assert saved.entries[1].excerpt == "Why cities sprawl"
 
 
+def test_the_facebook_limit_does_not_stop_the_video_question(engage):
+    engage.posted_today = 2  # Facebook's limit (2) reached
+    engage.engage_video = _own_video()
+    engage.worker.handle(_text("/next"))
+    assert engage.engaged == ["vid00000001"]
+    assert any("Facebook daily limit reached" in text for text, _ in engage.said)
+
+
+def test_the_youtube_limit_stops_only_the_video_question(engage):
+    engage.youtube_posted_today = 2  # YouTube's limit (2) reached
+    engage.engage_video = _own_video()
+    engage.worker.handle(_text("/next"))
+    assert engage.engaged == ["111_7"]
+    engage.worker.handle(_button("go", message_id=201))
+    assert engage.engaged == ["111_7"]  # no video question after the post's
+
+
 def test_without_a_post_the_question_goes_under_a_video(engage):
     engage.engage_post, engage.engage_video = None, _own_video()
     engage.worker.handle(_text("/next"))
@@ -630,7 +649,7 @@ def test_no_question_when_the_cycle_had_comments(engage):
 def test_no_question_beyond_the_daily_limit(engage):
     engage.posted_today = 2
     engage.worker.handle(_text("/next"))
-    assert engage.engaged == [] and "Daily limit reached" in engage.said[-1][0]
+    assert engage.engaged == [] and "Facebook daily limit reached" in engage.said[-1][0]
 
 
 def test_no_question_when_engagement_is_off(engage):
@@ -704,7 +723,7 @@ def test_no_book_post_when_off_or_beyond_the_limit(post_phase):
     from tests.conftest import OWNER
     post_phase.posted_today = 2
     post_phase.worker.handle(_text("/next"))
-    assert post_phase.book_posted == [] and "Daily limit reached" in post_phase.said[-1][0]
+    assert post_phase.book_posted == [] and "Facebook daily limit reached" in post_phase.said[-1][0]
     post_phase.posted_today = 0
     worker_module.automation.save(OWNER.id, AutomationSchedule(every_minutes=60, book_post=False))
     post_phase.worker.handle(_text("/next"))

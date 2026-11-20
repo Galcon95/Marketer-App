@@ -8,7 +8,8 @@ one inviting question drafted from the books, posted only after the author's "ma
                          └─ revise ◄┘(feedback)
 
     pick_post    Facebook: the newest own post (from_page) of the last `engage_days` with no comments and text
-    pick_video   YouTube: the newest own upload of the last `engage_days` with no comments (comments not turned off),
+    pick_video   YouTube: the newest own upload of the last `youtube_engage_days` with no comments (comments not
+                 turned off),
                  on the channel the inbox owner connected (page_inbox.channel_for_inbox)
                  Both: never had an engagement proposal (any outcome: one try per post or video; from the cycle log,
                  and in memory)
@@ -139,7 +140,7 @@ def pick_video(settings: AutomationSettings) -> YouTubeUpload | None:
         return None
     with youtube.as_channel(channel):
         videos = youtube.recent_videos(SCAN_VIDEOS)
-    found = video_candidates(videos, settings.engage_days, tried_posts(settings.user_id), db.now())
+    found = video_candidates(videos, settings.youtube_engage_days, tried_posts(settings.user_id), db.now())
     return found[0] if found else None
 
 
@@ -167,9 +168,10 @@ def tried_posts(user_id: str) -> set[str]:
     return done
 
 
-def posted_today(user_id: str, timezone: str) -> int:
-    """How many comments and posts the agent made on its own initiative today (in the user's time zone): what the
-    daily limit counts. Replies to readers do not count.
+def posted_today(user_id: str, timezone: str, platform: Platform = "facebook") -> int:
+    """How many comments and posts the agent made on its own initiative today on one platform (in the user's time
+    zone): what that platform's daily limit counts (Facebook: questions and book posts; YouTube: questions). Replies
+    to readers do not count.
 
     Raises:
         DatabaseError: If the cycle log cannot be read.
@@ -177,8 +179,8 @@ def posted_today(user_id: str, timezone: str) -> int:
     zone = ZoneInfo(timezone)
     today = db.now().astimezone(zone).date()
     return sum(1 for cycle in records.list_cycles(user_id, LOG_CYCLES) for e in cycle.entries
-               if e.kind in ("comment", "post") and e.outcome == "posted" and e.decided_at
-               and e.decided_at.astimezone(zone).date() == today)
+               if e.kind in ("comment", "post") and e.platform == platform and e.outcome == "posted"
+               and e.decided_at and e.decided_at.astimezone(zone).date() == today)
 
 
 # ---------- runs ----------

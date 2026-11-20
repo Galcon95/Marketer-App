@@ -395,13 +395,22 @@ export default function AutomationSettings() {
                       has no comments yet, to start a discussion</span>
                   </label>
                   {draft.engage && (
-                    <label className="bc-row" style={{ gap: 6 }}>
-                      <span className="bc-hint" style={{ margin: 0 }}>Posts and videos from the last</span>
-                      <select className="bc-select" style={{ width: 90 }} value={draft.engage_days}
-                        onChange={(e) => edit({ engage_days: Number(e.target.value) })}>
-                        {[3, 7, 14, 30, 60].map((d) => <option key={d} value={d}>{d} days</option>)}
-                      </select>
-                    </label>
+                    <div className="bc-row" style={{ gap: 16 }}>
+                      <label className="bc-row" style={{ gap: 6 }}>
+                        <span className="bc-hint" style={{ margin: 0 }}>Facebook posts from the last</span>
+                        <select className="bc-select" style={{ width: 90 }} value={draft.engage_days}
+                          onChange={(e) => edit({ engage_days: Number(e.target.value) })}>
+                          {[3, 7, 14, 30, 60].map((d) => <option key={d} value={d}>{d} days</option>)}
+                        </select>
+                      </label>
+                      <label className="bc-row" style={{ gap: 6 }}>
+                        <span className="bc-hint" style={{ margin: 0 }}>YouTube videos from the last</span>
+                        <select className="bc-select" style={{ width: 100 }} value={draft.youtube_engage_days}
+                          onChange={(e) => edit({ youtube_engage_days: Number(e.target.value) })}>
+                          {[30, 60, 90, 180, 365].map((d) => <option key={d} value={d}>{d} days</option>)}
+                        </select>
+                      </label>
+                    </div>
                   )}
                   <span className="bc-hint">Each post or video gets at most one such question.</span>
                 </div>
@@ -436,13 +445,22 @@ export default function AutomationSettings() {
 
               <div className="bc-stack" style={{ gap: 8, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
                 <label className="bc-row" style={{ gap: 6 }}>
-                  <span className="bc-hint" style={{ margin: 0 }}>At most</span>
+                  <span className="bc-hint" style={{ margin: 0 }}>Facebook: at most</span>
                   <select className="bc-select" style={{ width: 70 }} value={draft.daily_limit}
                     onChange={(e) => edit({ daily_limit: Number(e.target.value) })}>
                     {[0, 1, 2, 3, 5, 10].map((n) => <option key={n} value={n}>{n}</option>)}
                   </select>
-                  <span className="bc-hint" style={{ margin: 0 }}>own questions or posts per day (replies to readers are not limited)</span>
+                  <span className="bc-hint" style={{ margin: 0 }}>own questions or book posts per day</span>
                 </label>
+                <label className="bc-row" style={{ gap: 6 }}>
+                  <span className="bc-hint" style={{ margin: 0 }}>YouTube: at most</span>
+                  <select className="bc-select" style={{ width: 70 }} value={draft.youtube_daily_limit}
+                    onChange={(e) => edit({ youtube_daily_limit: Number(e.target.value) })}>
+                    {[0, 1, 2, 3, 5, 10].map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                  <span className="bc-hint" style={{ margin: 0 }}>own questions under videos per day</span>
+                </label>
+                <span className="bc-hint">Replies to readers are not limited on either.</span>
                 <label className="bc-row" style={{ gap: 8, flexWrap: "nowrap" }}>
                   <input type="checkbox" checked={draft.test_mode} onChange={(e) => edit({ test_mode: e.target.checked })} />
                   <span><strong>Test mode</strong>: everything is proposed in Telegram as usual, but nothing is published,

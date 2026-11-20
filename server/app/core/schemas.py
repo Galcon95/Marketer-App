@@ -813,7 +813,9 @@ class AutomationSchedule(BaseModel):
     `book_links` (book id → where to get it). `books`: the books the agent uses for all phases (of the user's client;
     [] = FACEBOOK_INBOX_BOOKS). `test_mode`: everything runs and is proposed, but nothing is published.
     `humanize`: how human the agent's texts sound (0-100, as the Discussions slider): replies, questions and book
-    posts."""
+    posts. YouTube has its own: `youtube_engage_days` (how recent a video without comments may be; videos stay
+    relevant longer than posts) and `youtube_daily_limit` (own questions under videos per day); `engage_days` and
+    `daily_limit` are Facebook's (questions and book posts)."""
 
     mode: Literal["manual", "scheduled"] = "scheduled"
     every_minutes: int = Field(default=0, ge=0, le=1440)  # 0: at `times`; else at least 15
@@ -830,6 +832,8 @@ class AutomationSchedule(BaseModel):
     book_links: dict[str, str] = Field(default_factory=dict, max_length=20)
     test_mode: bool = False
     humanize: int = Field(default=80, ge=0, le=100)
+    youtube_engage_days: int = Field(default=90, ge=1, le=365)
+    youtube_daily_limit: int = Field(default=2, ge=0, le=10)
 
     @model_validator(mode="after")
     def _check(self) -> "AutomationSchedule":
