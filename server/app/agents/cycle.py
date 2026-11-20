@@ -40,6 +40,7 @@ class Cycle:
     def __init__(self, user_id: str, trigger: CycleTrigger):
         self.record = AutomationCycle(id=db.new_id("cyc"), user_id=user_id, trigger=trigger, started_at=db.now())
         self.post_tried = False  # phase 3 ran in this cycle (once per cycle)
+        self.engage_tried: set[str] = set()  # the platforms phase 2 ran for in this cycle (once each)
 
     @classmethod
     def of(cls, record: AutomationCycle) -> "Cycle":
@@ -47,6 +48,7 @@ class Cycle:
         cycle = cls(record.user_id, record.trigger)
         cycle.record = record
         cycle.post_tried = any(e.kind == "post" for e in record.entries)
+        cycle.engage_tried = {e.platform for e in record.entries if e.kind == "comment"}
         return cycle
 
     @property
@@ -63,10 +65,13 @@ class Cycle:
         self._save()
 
     def proposed_comment(self, thread_id: str, post) -> None:
-        """A question under the author's own post (a FacebookPost) was proposed (phase 2)."""
-        text = " ".join(post.message.split())
+        """A question under the author's own post (a FacebookPost) or video (a YouTubeUpload) was proposed
+        (phase 2)."""
+        youtube = getattr(post, "platform", "facebook") == "youtube"
+        text = " ".join((post.title if youtube else post.message).split())
         self.record.entries.append(CycleEntry(
-            kind="comment", platform="facebook", item_id=post.id, thread_id=thread_id, author="",
+            kind="comment", platform="youtube" if youtube else "facebook", item_id=post.id, thread_id=thread_id,
+            author="",
             excerpt=text[:EXCERPT] + ("…" if len(text) > EXCERPT else ""), proposed_at=db.now()))
         self._save()
 

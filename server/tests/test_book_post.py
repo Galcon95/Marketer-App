@@ -128,6 +128,7 @@ def test_start_drafts_the_topic_and_waits(world):
     assert world.searches == [("The Magnet\nAbout The Magnet.", [VOL1])]
     text, buttons = world.sent[0]
     assert [d for _, d in buttons] == [bp.inbox.BUTTON_GO, bp.inbox.BUTTON_SKIP]
+    assert text.startswith("🟦 FACEBOOK PAGE\n📣 A new post about your book")
     assert "📖 Volume 1 · The Magnet" in text and "Why do cities sprawl?" in text and f"🔗 {LINK}" in text
     assert "TEST MODE" not in text and world.published == []
 

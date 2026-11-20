@@ -22,8 +22,9 @@ proposes the open items one at a time (each after the author's decision on the p
 left: then a summary goes to Telegram ("Cycle done: 2 posted, 1 skipped.") and the cycle is logged. Phases:
 
     1 replies   readers' new comments on the Page and the channel (page_inbox.py)
-    2 comment   only when phase 1 found nothing in this cycle: a question under an own recent post without comments
-                (engagement.py), if the schedule allows it (`engage`) and the daily limit is not reached
+    2 comment   only when phase 1 found no reader's comment in this cycle: a question under an own recent post
+                without comments, then one under an own recent video without comments (engagement.py; once per
+                platform and cycle), if the schedule allows it (`engage`) and the daily limit is not reached
     3 post      once per cycle, after phases 1 and 2: a new post about the next topic of the books with a call to
                 action (book_post.py), if the schedule allows it (`book_post`) and the daily limit is not reached
 
@@ -164,10 +165,14 @@ class InboxWorker:
         result = self.propose_next(asked)
         if result in ("proposed", "waiting") or self.cycle is None:
             return
-        if result == "none" and not self.cycle.record.entries:  # phase 2: no comments in this cycle
-            result = self.propose_engagement(asked)
-            if result == "proposed":
-                return
+        if result == "none" and not any(e.kind == "reply" for e in self.cycle.record.entries):
+            for platform in ("facebook", "youtube"):  # phase 2: no reader's comment in this cycle; once per platform
+                if result != "none" or platform in self.cycle.engage_tried:
+                    continue
+                self.cycle.engage_tried.add(platform)
+                result = self.propose_engagement(asked, platform)
+                if result == "proposed":
+                    return
         if result == "none" and not self.cycle.post_tried:  # phase 3: once per cycle
             self.cycle.post_tried = True
             result = self.propose_book_post(asked)
@@ -175,11 +180,13 @@ class InboxWorker:
                 return
         self._end_cycle(error=result == "error")
 
-    def propose_engagement(self, asked: bool) -> Step:
-        """Phase 2: a question under an own recent post without comments, when the schedule allows it."""
+    def propose_engagement(self, asked: bool, platform: str = "facebook") -> Step:
+        """Phase 2: a question under an own recent Facebook post or YouTube video without comments, when the
+        schedule allows it."""
         owner = automation.inbox_owner()
-        if not owner or not facebook.is_configured():
+        if not owner or (platform == "facebook" and not facebook.is_configured()):
             return "none"
+        thing = "video" if platform == "youtube" else "post"
         try:
             settings = automation.schedule_of(owner)
             if not settings.engage:
@@ -187,24 +194,24 @@ class InboxWorker:
             if engagement.posted_today(owner, settings.timezone) >= settings.daily_limit:
                 if asked:
                     self._say(f"Daily limit reached ({settings.daily_limit} own comments or posts today), so no "
-                              "question under a post.")
+                              f"question under a {thing}.")
                 return "none"
-            post = engagement.pick_post(settings)
+            post = engagement.pick_video(settings) if platform == "youtube" else engagement.pick_post(settings)
             if post is None:
                 if asked:
-                    self._say(f"No post of yours from the last {settings.engage_days} days is waiting for a first "
+                    self._say(f"No {thing} of yours from the last {settings.engage_days} days is waiting for a first "
                               "comment.")
                 return "none"
             if asked:
-                self._say("Drafting a question for your post…")
-            thread_id = engagement.start(post, test=settings.test_mode)
+                self._say(f"Drafting a question for your {thing}…")
+            thread_id = engagement.start(post, test=settings.test_mode, humanize=settings.humanize)
             if thread_id and self.cycle:
                 self.cycle.proposed_comment(thread_id, post)
             self.last_error = ""
             return "proposed" if thread_id else "none"
-        except (facebook.FacebookError, telegram.TelegramError, GenerationError, inbox.InboxConfigError,
-                LookupError, OSError) as e:
-            self._report(f"Could not prepare a question for your post: {e}", asked)
+        except (facebook.FacebookError, youtube.YouTubeError, telegram.TelegramError, GenerationError,
+                inbox.InboxConfigError, LookupError, OSError) as e:
+            self._report(f"Could not prepare a question for your {thing}: {e}", asked)
             return "error"
 
     def propose_book_post(self, asked: bool) -> Step:
@@ -291,7 +298,8 @@ class InboxWorker:
                 return "error" if failed and not items else "none"
             if asked:
                 self._say("Drafting a reply…")
-            thread_id = inbox.start(item, test=_test_mode())
+            test, humanize = _style()
+            thread_id = inbox.start(item, test=test, humanize=humanize)
             if thread_id and self.cycle:
                 self.cycle.proposed(thread_id, item)
             self.last_error = ""
@@ -454,13 +462,16 @@ def _agent_of(thread_id: str):
     return inbox
 
 
-def _test_mode() -> bool:
-    """The schedule's test mode (False when it cannot be read)."""
+def _style() -> tuple[bool, int]:
+    """The schedule's test mode and how human the texts sound (off and the default when it cannot be read)."""
     owner = automation.inbox_owner()
     try:
-        return bool(owner) and automation.schedule_of(owner).test_mode
+        if owner:
+            settings = automation.schedule_of(owner)
+            return settings.test_mode, settings.humanize
     except OSError:
-        return False
+        pass
+    return False, inbox.HUMANIZE
 
 
 def _when(moment: datetime, timezone: str) -> str:

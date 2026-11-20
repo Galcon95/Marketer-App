@@ -11,7 +11,8 @@ from app.agents import engagement as eng
 from app.agents.cycle import Cycle
 from app.core import config
 from app.core import state as db
-from app.core.schemas import AutomationSettings, ChunkLocation, Chunk, FacebookPost, FacebookPosts, FacebookPublished
+from app.core.schemas import (AutomationSettings, ChunkLocation, Chunk, FacebookPost, FacebookPosts,
+                              FacebookPublished, YouTubePublished, YouTubeUpload)
 from tests.conftest import OWNER
 
 PROJECT = "prj_test"
@@ -21,6 +22,12 @@ VOL1, VOL2 = "src_vol1", "src_vol2"
 def _post(id="111_1", days_old=1, comments=0, from_page=True, message="Cities should grow in rings."):
     return FacebookPost(id=id, message=message, created_time=db.now() - timedelta(days=days_old),
                         comment_count=comments, from_page=from_page, permalink_url=f"https://www.facebook.com/{id}")
+
+
+def _video(id="vid00000001", days_old=1, comments=0, title="Why cities sprawl"):
+    return YouTubeUpload(id=id, title=title, description="Rings, belts and garden cities.",
+                         url=f"https://www.youtube.com/watch?v={id}", published_at=db.now() - timedelta(days=days_old),
+                         comment_count=comments)
 
 
 def _chunk(id, source_id):
@@ -66,6 +73,20 @@ def world(monkeypatch):
         return FacebookPublished(id=f"{post_id}_c", url=f"https://www.facebook.com/{post_id}_c")
 
     monkeypatch.setattr(eng.facebook, "comment_on_post", comment_on_post)
+
+    w.channel = eng.youtube.ChannelAccess("UCchannel", "token")
+    monkeypatch.setattr(eng.inbox, "channel_for_inbox", lambda: w.channel)
+    w.videos, w.commented, w.youtube_error = [], [], None
+    monkeypatch.setattr(eng.youtube, "recent_videos", lambda limit: w.videos)
+
+    def comment_on_video(video_id, text):
+        assert eng.youtube.is_configured()  # inside as_channel
+        if w.youtube_error:
+            raise w.youtube_error
+        w.commented.append((video_id, text))
+        return YouTubePublished(id="UgzNEW", url=f"https://www.youtube.com/watch?v={video_id}&lc=UgzNEW")
+
+    monkeypatch.setattr(eng.youtube, "comment_on_video", comment_on_video)
     return w
 
 
@@ -108,7 +129,8 @@ def test_start_drafts_from_the_best_book_and_waits(world):
     assert values["current"] == "(none yet)" and values["feedback"] == "(none)"
     text, buttons = world.sent[0]
     assert buttons == [eng.inbox.BUTTON_GO, eng.inbox.BUTTON_SKIP]
-    assert "No new comments" in text and "Cities should grow in rings." in text and "📖 Volume 2" in text
+    assert text.startswith("🟦 FACEBOOK PAGE\n💡 No new comments")
+    assert "Cities should grow in rings." in text and "📖 Volume 2" in text
     assert "where you live?" in text and "[1]" not in text  # markers removed, as posted
     assert world.posted == []
 
@@ -167,6 +189,65 @@ def test_a_facebook_error_is_reported(world):
     thread_id, message_id = _start()
     assert eng.resume(thread_id, message_id, "approve") == "failed"
     assert "token expired" in world.sent[-1][0]
+
+
+# ---------- YouTube videos ----------
+def test_video_candidates_are_recent_uploads_without_comments_newest_first():
+    now = db.now()
+    videos = [_video("vid00000001", days_old=3), _video("vid00000002", days_old=1),
+              _video("vid00000003", comments=2), _video("vid00000004", comments=None),  # comments off
+              _video("vid00000005", days_old=40), _video("vid00000006", title=" "), _video("vid00000007")]
+    found = eng.video_candidates(videos, days=14, done={"vid00000007"}, now=now)
+    assert [v.id for v in found] == ["vid00000002", "vid00000001"]
+
+
+def test_pick_video_needs_a_connected_channel(world):
+    world.videos = [_video()]
+    assert eng.pick_video(AutomationSettings(user_id=OWNER.id, every_minutes=30)).id == "vid00000001"
+    world.channel = None
+    assert eng.pick_video(AutomationSettings(user_id=OWNER.id, every_minutes=30)) is None
+
+
+def test_a_question_under_a_video_is_drafted_from_title_and_description(world):
+    thread_id = eng.start(_video())
+    message_id = eng.waiting_run()[1]
+    values = world.calls[0]
+    assert "YouTube channel" in values["where"] and "My video" in values["label"]
+    assert "Title: Why cities sprawl" in values["post"] and "garden cities" in values["post"]
+    text, buttons = world.sent[0]
+    assert text.startswith("🟥 YOUTUBE CHANNEL\n💡 A question to start a discussion under your video")
+    assert "Why cities sprawl" in text and "watch?v=vid00000001" in text
+    assert "post it as your channel" in text and buttons == [eng.inbox.BUTTON_GO, eng.inbox.BUTTON_SKIP]
+    assert eng.resume(thread_id, message_id, "approve") == "posted"
+    assert world.commented == [("vid00000001", "What would a garden city look like where you live?")]
+    assert world.posted == [] and "Posted under your video" in world.sent[-1][0]
+    assert eng.posted_url(thread_id) == "https://www.youtube.com/watch?v=vid00000001&lc=UgzNEW"
+
+
+def test_a_skipped_video_is_not_tried_again(world):
+    thread_id = eng.start(_video())
+    assert eng.resume(thread_id, eng.waiting_run()[1], "skip") == "skipped"
+    assert "this video" in world.sent[-1][0] and "vid00000001" in eng.tried_posts(OWNER.id)
+
+
+def test_a_youtube_error_is_reported(world):
+    world.youtube_error = eng.youtube.YouTubeError(404, "Comments are turned off for this video.")
+    thread_id = eng.start(_video())
+    assert eng.resume(thread_id, eng.waiting_run()[1], "approve") == "failed"
+    assert "YouTube said: Comments are turned off" in world.sent[-1][0]
+
+
+def test_a_disconnected_channel_posts_nothing(world):
+    thread_id = eng.start(_video())
+    world.channel = None
+    assert eng.resume(thread_id, eng.waiting_run()[1], "approve") == "failed"
+    assert world.commented == [] and "no longer connected" in world.sent[-1][0]
+
+
+def test_test_mode_posts_nothing_under_a_video(world):
+    thread_id = eng.start(_video(), test=True)
+    assert eng.resume(thread_id, eng.waiting_run()[1], "approve") == "tested"
+    assert world.commented == []
 
 
 def test_test_mode_posts_nothing(world):

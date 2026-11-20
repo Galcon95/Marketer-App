@@ -326,7 +326,7 @@ def test_a_follow_up_comes_with_its_thread(world):
         "- Me (the author): By analysing data.") < discussion.index(
         "The follow-up to answer now, by Ana:\nGive us some examples.")
     text, _ = world.sent[0]
-    assert text.startswith("↪️ Follow-up by Ana in a thread on your Page")
+    assert text.startswith("🟦 FACEBOOK PAGE\n↪️ Follow-up by Ana in a thread on your Page")
     assert "• Ana: How can AI support decisions?" in text and "• You: By analysing data." in text
     assert "➡️ Ana: Give us some examples." in text
 
@@ -387,7 +387,8 @@ def test_a_youtube_comment_is_drafted_in_own_channel_mode(world, channel):
     assert "My video on my YouTube channel: New Atlantis One" in request.discussion
     assert "Comment by Ben:" in request.discussion
     text, buttons = world.sent[0]
-    assert "▶️ 💬 New comment by Ben under your YouTube video" in text and "Your video: New Atlantis One" in text
+    assert text.startswith("🟥 YOUTUBE CHANNEL\n💬 New comment by Ben under your YouTube video")
+    assert "Your video: New Atlantis One" in text
     assert buttons == [inbox.BUTTON_GO, inbox.BUTTON_SKIP]
 
 

@@ -202,6 +202,58 @@ def test_list_replies_of_a_reply_asks_for_its_top_comment(api):
     assert api.requests[0].url.params["parentId"] == TOP
 
 
+# ---------- uploads ----------
+def _uploads(api, videos):
+    api.answers["channels"] = {"items": [{"id": CHANNEL, "contentDetails": {"relatedPlaylists": {"uploads": "UUx"}}}]}
+    api.answers["playlistItems"] = {"items": [{"contentDetails": {"videoId": v["id"]}} for v in videos]}
+    api.answers["videos"] = {"items": videos}
+
+
+def _upload(video_id, at, comments="0", title="Garden cities", description="Why cities grow in rings."):
+    stats = {} if comments is None else {"commentCount": comments}
+    return {"id": video_id, "snippet": {"title": title, "description": description, "publishedAt": at},
+            "statistics": stats}
+
+
+def test_recent_videos_newest_first_with_comment_counts(api):
+    _uploads(api, [_upload("aaaaaaaaaaa", "2026-11-01T10:00:00Z", "3"),
+                   _upload("bbbbbbbbbbb", "2026-11-10T10:00:00Z"),
+                   _upload("ccccccccccc", "2026-11-05T10:00:00Z", None)])  # comments turned off: no count
+    videos = yt.recent_videos(5)
+    assert [(v.id, v.comment_count) for v in videos] == [("bbbbbbbbbbb", 0), ("ccccccccccc", None),
+                                                          ("aaaaaaaaaaa", 3)]
+    assert videos[0].description == "Why cities grow in rings." and videos[0].url.endswith("v=bbbbbbbbbbb")
+    playlist = api.requests[1]
+    assert playlist.url.params["playlistId"] == "UUx" and playlist.url.params["maxResults"] == "5"
+    assert api.requests[2].url.params["part"] == "snippet,statistics" and len(api.requests) == 3
+
+
+def test_recent_videos_of_a_channel_without_uploads(api):
+    _uploads(api, [])
+    assert yt.recent_videos() == [] and len(api.requests) == 2
+    api.answers["channels"] = {"items": []}
+    with pytest.raises(yt.YouTubeError) as e:
+        yt.recent_videos()
+    assert e.value.status_code == 404
+
+
+def test_comment_on_video(api):
+    api.answers["commentThreads"] = {"id": "UgzNEW"}
+    posted = yt.comment_on_video(VIDEO, "  What would you change?  ")
+    request = api.requests[0]
+    assert request.method == "POST" and request.url.params["part"] == "snippet"
+    assert json.loads(request.content) == {"snippet": {"videoId": VIDEO, "topLevelComment": {
+        "snippet": {"textOriginal": "What would you change?"}}}}
+    assert posted.id == "UgzNEW" and posted.url == f"https://www.youtube.com/watch?v={VIDEO}&lc=UgzNEW"
+
+
+@pytest.mark.parametrize("video_id", ["", "short", "../channels", "x" * 12])
+def test_comment_on_video_refuses_an_invalid_video_id(api, video_id):
+    with pytest.raises(ValueError):
+        yt.comment_on_video(video_id, "Hi")
+    assert not api.requests
+
+
 # ---------- writing ----------
 def test_reply_to_comment(api):
     api.answers["comments"] = {"id": f"{TOP}.new", "snippet": {"parentId": TOP}}

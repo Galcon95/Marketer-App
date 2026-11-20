@@ -88,6 +88,7 @@ class PostState(TypedDict, total=False):
     topic: dict  # the Topic (as JSON, for the checkpointer)
     link: str  # where to get the book ("" = none)
     test: bool  # test mode: publish nothing
+    humanize: int  # how human the post sounds (the schedule's humanize when the run started)
     chunk_ids: list[str]  # the passages the post is drawn from (kept for revisions)
     post: str
     reason: str
@@ -165,7 +166,8 @@ def start(topic: Topic, settings: AutomationSettings) -> str | None:
         _used[topic.key] = db.now()
     with tracing.scope():
         _graph().invoke({"topic": topic.model_dump(mode="json"), "link": settings.book_links.get(topic.source_id, ""),
-                         "test": settings.test_mode, "revisions": 0}, _config(thread_id))
+                         "test": settings.test_mode, "humanize": settings.humanize, "revisions": 0},
+                        _config(thread_id))
     if _waiting(thread_id):
         with _lock:
             _runs[topic.key] = thread_id
@@ -267,12 +269,13 @@ def _draft(state: PostState) -> PostState:
         update = {"chunk_ids": [chunk.id for chunk, _ in passages]}
     with usage.tagged(source_id=topic.source_id):
         result, _ = structured(PROMPT, {
-            "style": style_guidance(HUMANIZE), "book": source_name(topic.source_id) or topic.source_id,
+            "style": style_guidance(humanize := state.get("humanize", HUMANIZE)),
+            "book": source_name(topic.source_id) or topic.source_id,
             "topic": topic.title, "summary": topic.summary, "link": state.get("link") or "(none)",
             "context": format_context(passages) or "(no passages)", "recent": _recent_posts(),
             "current": facebook.publishable_text(state.get("post", "")) or "(none yet)",
             "feedback": feedback or "(none)",
-        }, BookPost, "book post", temperature_for(HUMANIZE))
+        }, BookPost, "book post", temperature_for(humanize))
     update.update({"post": result.post, "reason": result.reason, "feedback": ""})
     if feedback:
         update["revisions"] = state.get("revisions", 0) + 1
@@ -302,7 +305,7 @@ def _propose(state: PostState) -> PostState:
     buttons = [TelegramButton(label="Skip", data=inbox.BUTTON_SKIP)]
     if post and not blocked:
         buttons.insert(0, TelegramButton(label=inbox.go_label(test), data=inbox.BUTTON_GO))
-    lines = ["📣 A new post about your book" + (inbox.TEST_HEAD if test else ""),
+    lines = [inbox.PLATFORM_TAG["facebook"], "📣 A new post about your book" + (inbox.TEST_HEAD if test else ""),
              f"📖 {source_name(topic.source_id) or topic.source_id} · {topic.title}",
              f"Why: {facebook.publishable_text(state.get('reason', ''))}"]
     if state.get("revisions"):

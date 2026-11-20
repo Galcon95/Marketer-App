@@ -10,7 +10,7 @@
 import { useMemo, useState } from "react";
 import { Bot, Check, Clock, ExternalLink, History, Pause, Play, Plus, RefreshCw, Save, X } from "lucide-react";
 import {
-  api, bookTitle, errorMessage, type AutomationCycle, type AutomationSchedule, type AutomationStatus, type CycleEntry,
+  api, bookTitle, errorMessage, humanizeLabel, type AutomationCycle, type AutomationSchedule, type AutomationStatus, type CycleEntry,
   type CycleOutcome,
 } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
@@ -73,7 +73,7 @@ const OUTCOMES: Record<CycleOutcome, { label: string; tone: "success" | "neutral
 
 /** What a cycle entry was about, before its excerpt. */
 function entryLabel(e: CycleEntry): string {
-  if (e.kind === "comment") return "💡 Question under your post: ";
+  if (e.kind === "comment") return e.platform === "youtube" ? "▶️ 💡 Question under your video: " : "💡 Question under your post: ";
   if (e.kind === "post") return "📣 New post about ";
   return `${e.platform === "youtube" ? "▶️ " : ""}${e.author || "A reader"}: `;
 }
@@ -391,18 +391,19 @@ export default function AutomationSettings() {
                 <div className="bc-stack" style={{ gap: 8 }}>
                   <label className="bc-row" style={{ gap: 8, flexWrap: "nowrap" }}>
                     <input type="checkbox" checked={draft.engage} onChange={(e) => edit({ engage: e.target.checked })} />
-                    <span>Propose a question under one of my recent posts that has no comments yet, to start a discussion</span>
+                    <span>Propose a question under one of my recent posts, and one under one of my recent videos, that
+                      has no comments yet, to start a discussion</span>
                   </label>
                   {draft.engage && (
                     <label className="bc-row" style={{ gap: 6 }}>
-                      <span className="bc-hint" style={{ margin: 0 }}>Posts from the last</span>
+                      <span className="bc-hint" style={{ margin: 0 }}>Posts and videos from the last</span>
                       <select className="bc-select" style={{ width: 90 }} value={draft.engage_days}
                         onChange={(e) => edit({ engage_days: Number(e.target.value) })}>
                         {[3, 7, 14, 30, 60].map((d) => <option key={d} value={d}>{d} days</option>)}
                       </select>
                     </label>
                   )}
-                  <span className="bc-hint">Each post gets at most one such question.</span>
+                  <span className="bc-hint">Each post or video gets at most one such question.</span>
                 </div>
               </fieldset>
 
@@ -419,6 +420,19 @@ export default function AutomationSettings() {
                   )}
                 </div>
               </fieldset>
+
+              <div className="bc-field" style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+                <div className="bc-range-head">
+                  <label className="bc-label" htmlFor="agent-humanize">How human should the agent sound?</label>
+                  <span className="bc-mono bc-range-value">{draft.humanize} · {humanizeLabel(draft.humanize)}</span>
+                </div>
+                <input id="agent-humanize" type="range" min={0} max={100} step={5} value={draft.humanize}
+                  onChange={(e) => edit({ humanize: Number(e.target.value) })}
+                  style={{ width: "100%", accentColor: "var(--accent)" }} />
+                <div className="bc-range-ends" aria-hidden><span>Polished marketing</span><span>Very human, casual</span></div>
+                <span className="bc-hint">For everything the agent writes: replies to readers, questions under posts and
+                  videos, and book posts.</span>
+              </div>
 
               <div className="bc-stack" style={{ gap: 8, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
                 <label className="bc-row" style={{ gap: 6 }}>

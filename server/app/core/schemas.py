@@ -690,6 +690,16 @@ class YouTubeVideo(BaseModel):
     thumbnail: str | None = None
 
 
+class YouTubeUpload(YouTubeVideo):
+    """One of the channel's own uploads with what the engagement agent needs (youtube.recent_videos). The title and
+    description are the author's own text."""
+
+    platform: Literal["youtube"] = "youtube"
+    description: str = ""
+    published_at: datetime
+    comment_count: int | None = None  # None when YouTube hides the number (comments off)
+
+
 class YouTubeComment(BaseModel):
     """A comment under a video of the channel, or a reply to one (parent_id set). Someone else's text: untrusted."""
 
@@ -801,7 +811,9 @@ class AutomationSchedule(BaseModel):
     own initiative per day (replies to readers do not count; 0 = none). `book_post`: at the end of a cycle, propose a
     new post about the next topic of the books (phase 3), with a call to action and the book's link from
     `book_links` (book id → where to get it). `books`: the books the agent uses for all phases (of the user's client;
-    [] = FACEBOOK_INBOX_BOOKS). `test_mode`: everything runs and is proposed, but nothing is published."""
+    [] = FACEBOOK_INBOX_BOOKS). `test_mode`: everything runs and is proposed, but nothing is published.
+    `humanize`: how human the agent's texts sound (0-100, as the Discussions slider): replies, questions and book
+    posts."""
 
     mode: Literal["manual", "scheduled"] = "scheduled"
     every_minutes: int = Field(default=0, ge=0, le=1440)  # 0: at `times`; else at least 15
@@ -817,6 +829,7 @@ class AutomationSchedule(BaseModel):
     books: list[str] = Field(default_factory=list, max_length=20)
     book_links: dict[str, str] = Field(default_factory=dict, max_length=20)
     test_mode: bool = False
+    humanize: int = Field(default=80, ge=0, le=100)
 
     @model_validator(mode="after")
     def _check(self) -> "AutomationSchedule":

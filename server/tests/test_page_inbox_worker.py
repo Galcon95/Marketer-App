@@ -9,7 +9,7 @@ import pytest
 
 from app.agents import page_inbox_worker as worker_module
 from app.core import config
-from app.core.schemas import FacebookInboxItem, FacebookPost, TelegramUpdate, YouTubeInboxItem, YouTubeVideo
+from app.core.schemas import FacebookInboxItem, FacebookPost, TelegramUpdate, YouTubeInboxItem, YouTubeUpload, YouTubeVideo
 
 inbox = worker_module.inbox
 NOW = datetime(2026, 11, 12, tzinfo=timezone.utc)
@@ -39,17 +39,20 @@ def env(monkeypatch):
     e.engage_post, e.engaged, e.engage_waiting, e.posted_today = None, [], None, 0
     eng = worker_module.engagement
     monkeypatch.setattr(eng, "pick_post", lambda settings: e.engage_post)
+    e.engage_video = None  # phase 2 on YouTube: no video unless a test sets env.engage_video
+    monkeypatch.setattr(eng, "pick_video", lambda settings: e.engage_video)
     monkeypatch.setattr(eng, "posted_today", lambda user_id, timezone: e.posted_today)
     monkeypatch.setattr(eng, "waiting_run", lambda: e.engage_waiting)
 
-    def engage_start(post, test=False):
+    def engage_start(post, test=False, humanize=80):
+        e.humanized.append(humanize)
         e.engaged.append(post.id)
         e.engage_waiting = (f"eng:{post.id}:run1", 201)
         return e.engage_waiting[0]
 
     monkeypatch.setattr(eng, "start", engage_start)
     # phase 3: no topic for a book post unless a test sets env.post_topic
-    e.post_topic, e.book_posted, e.post_waiting, e.tests = None, [], None, []
+    e.post_topic, e.book_posted, e.post_waiting, e.tests, e.humanized = None, [], None, [], []
     bp = worker_module.book_post
     monkeypatch.setattr(bp, "next_topic", lambda settings: e.post_topic)
     monkeypatch.setattr(bp, "waiting_run", lambda: e.post_waiting)
@@ -57,6 +60,7 @@ def env(monkeypatch):
     def post_start(topic, settings):
         e.book_posted.append(topic.key)
         e.tests.append(settings.test_mode)
+        e.humanized.append(settings.humanize)
         e.post_waiting = (f"post:{topic.key}:run1", 301)
         return e.post_waiting[0]
 
@@ -90,7 +94,8 @@ def env(monkeypatch):
     monkeypatch.setattr(inbox, "waiting_run", lambda: e.waiting)
     monkeypatch.setattr(inbox, "is_open", lambda item: item.id not in e.decided)
 
-    def start(item, test=False):
+    def start(item, test=False, humanize=80):
+        e.humanized.append(humanize)
         e.tests.append(test)
         if e.start_error:
             raise e.start_error
@@ -402,8 +407,9 @@ def cycles(env, monkeypatch):
     monkeypatch.setattr(inbox, "posted_url", lambda thread_id: f"https://facebook.com/{thread_id}")
     count = iter(range(1, 100))
 
-    def start(item, test=False):
+    def start(item, test=False, humanize=80):
         env.tests.append(test)
+        env.humanized.append(humanize)
         thread = f"{item.id}:run{next(count)}"
         env.started.append(item.id)
         env.decided.add(item.id)  # no longer open once it has a run
@@ -574,6 +580,38 @@ def test_no_comments_leads_to_a_question_under_an_own_post(engage):
         ("comment", "111_7", "posted", "https://www.facebook.com/111_7_c")]
 
 
+def _own_video(id="vid00000001"):
+    return YouTubeUpload(id=id, title="Why cities sprawl", url=f"https://www.youtube.com/watch?v={id}",
+                         published_at=NOW, comment_count=0)
+
+
+def test_after_the_post_a_question_under_a_video_follows(engage):
+    engage.engage_video = _own_video()
+    engage.worker.handle(_text("/next"))
+    assert engage.engaged == ["111_7"]  # Facebook first
+    engage.worker.handle(_button("go", message_id=201))
+    assert engage.engaged == ["111_7", "vid00000001"]  # then YouTube, in the same cycle
+    engage.worker.handle(_button("skip", message_id=201))
+    [saved] = engage.saved()
+    assert [(e.kind, e.platform, e.item_id, e.outcome) for e in saved.entries] == [
+        ("comment", "facebook", "111_7", "posted"), ("comment", "youtube", "vid00000001", "skipped")]
+    assert saved.entries[1].excerpt == "Why cities sprawl"
+
+
+def test_without_a_post_the_question_goes_under_a_video(engage):
+    engage.engage_post, engage.engage_video = None, _own_video()
+    engage.worker.handle(_text("/next"))
+    assert engage.engaged == ["vid00000001"]
+    assert ("No post of yours from the last 14 days is waiting for a first comment.", None) in engage.said
+
+
+def test_a_restored_cycle_knows_which_platforms_had_their_question(engage):
+    engage.worker.handle(_text("/next"))
+    from app.agents.cycle import Cycle
+    [saved] = engage.saved()
+    assert Cycle.of(saved).engage_tried == {"facebook"}
+
+
 def test_feedback_on_the_question_goes_to_the_engagement_agent(engage):
     engage.worker.handle(_text("/next"))
     engage.worker.handle(_text("make it a yes/no question"))
@@ -677,6 +715,24 @@ def test_no_topics_says_how_to_get_them(post_phase):
     post_phase.post_topic = None
     post_phase.worker.handle(_text("/next"))
     assert "summarize your book" in post_phase.said[-1][0]
+
+
+def test_how_human_reaches_every_agent(post_phase, monkeypatch):
+    from app.core.schemas import AutomationSchedule
+    from tests.conftest import OWNER
+    worker_module.automation.save(OWNER.id, AutomationSchedule(every_minutes=60, humanize=35))
+    post_phase.open = [_item("222_1")]
+    post_phase.worker.handle(_text("/next"))
+    post_phase.worker.handle(_button("go", message_id=101))
+    assert post_phase.humanized == [35, 35]  # the reply, then the book post
+
+
+def test_how_human_reaches_the_question(engage):
+    from app.core.schemas import AutomationSchedule
+    from tests.conftest import OWNER
+    worker_module.automation.save(OWNER.id, AutomationSchedule(every_minutes=60, humanize=10))
+    engage.worker.handle(_text("/next"))
+    assert engage.engaged == ["111_7"] and engage.humanized == [10]
 
 
 def test_test_mode_reaches_every_agent(post_phase):

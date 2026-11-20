@@ -197,6 +197,7 @@ export interface AutomationSchedule {
   books: string[]; // the books the agent uses (ids); [] = the server's default (FACEBOOK_INBOX_BOOKS)
   book_links: Record<string, string>; // book id → where to get it (the book post's link)
   test_mode: boolean; // propose everything, publish nothing
+  humanize: number; // 0-100: how human the agent's replies, questions and book posts sound
 }
 /** What became of a proposal; "waiting" until the author answers. */
 export type CycleOutcome = "waiting" | "posted" | "skipped" | "failed" | "blocked" | "gave_up" | "answered" | "tested";

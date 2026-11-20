@@ -5,18 +5,22 @@
                                       (answered = the channel replied)
     open_items(comments)              what waits for an answer: viewers' comments the channel has not answered
     list_replies(comment_id)          all replies under a top comment
+    recent_videos(limit)              the channel's latest uploads with title, description and comment count
     reply_to_comment(id, message)     a reply as the channel under a comment          (writes)
+    comment_on_video(id, message)     a new top comment as the channel under a video  (writes)
 
 Which channel: the one set with `as_channel(channel)` for the current request (a user's own channel, connected with
 Google sign-in). There is no channel in server/.env: without `as_channel` every call answers 503. The access token
 (short-lived, made from the user's refresh token by the connection code) goes in the Authorization header, never in a
-URL, and is never logged. reply_to_comment only runs on the author's decision: nothing here posts by itself.
+URL, and is never logged. reply_to_comment and comment_on_video only run on the author's decision: nothing here
+posts by itself.
 
 YouTube threads are two levels deep: a top comment and the replies under it (a reply to a reply also hangs under the
 top comment). A comment counts as answered when the channel wrote in its thread at or after it.
 
 Quota: the API gives a project 10,000 units a day. Reading costs 1 unit per request (recent_threads: one for the
-threads, one for the video titles, one more for each thread with more replies than YouTube includes); a reply costs 50.
+threads, one for the video titles, one more for each thread with more replies than YouTube includes; recent_videos:
+three); a reply or a new comment costs 50.
 
 Comments are other people's text: whoever passes them to a model quotes them as untrusted data (guard.py).
 Plain HTTP (httpx) next to the LangChain stack; no model call here.
@@ -36,7 +40,7 @@ from typing import Any
 import httpx
 
 from app.core.schemas import (YouTubeChannel, YouTubeComment, YouTubeInboxItem, YouTubePublished, YouTubeThread,
-                              YouTubeVideo)
+                              YouTubeUpload, YouTubeVideo)
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +49,7 @@ TIMEOUT = 20  # seconds per request
 MAX_MESSAGE = 10000  # YouTube's limit for a comment
 MAX_LIMIT = 100  # items per request (videos: 50)
 _ID = re.compile(r"^[A-Za-z0-9_-]{10,64}(\.[A-Za-z0-9_-]{5,64})?$")  # a comment id, or "<top comment>.<reply>"
+_VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
 # `reason` of an API error → our status (https://developers.google.com/youtube/v3/docs/errors)
 _QUOTA_REASONS = {"quotaExceeded", "dailyLimitExceeded"}
@@ -186,6 +191,51 @@ def list_replies(comment_id: str, video_id: str = "") -> list[YouTubeComment]:
     data = _request("GET", "comments", {"part": "snippet", "parentId": _top(comment_id), "maxResults": MAX_LIMIT,
                                         "textFormat": "plainText"})
     return [_comment(r, video_id) for r in data.get("items", [])]
+
+
+def recent_videos(limit: int = 10) -> list[YouTubeUpload]:
+    """The channel's latest uploads, newest first, with title, description and comment count (three reads: the
+    uploads playlist, its latest items, the videos). Videos YouTube does not return (private, deleted) are left out.
+
+    Args:
+        limit: How many of the latest uploads (1-50).
+    """
+    data = _request("GET", "channels", {"part": "contentDetails", "id": _channel_id()})
+    items = data.get("items") or []
+    uploads = (((items[0].get("contentDetails") or {}).get("relatedPlaylists") or {}).get("uploads")
+               if items else None)
+    if not uploads:
+        raise YouTubeError(404, "YouTube could not find the channel's uploads.")
+    data = _request("GET", "playlistItems", {"part": "contentDetails", "playlistId": uploads,
+                                             "maxResults": max(1, min(limit, 50))})
+    ids = [i["contentDetails"]["videoId"] for i in data.get("items", []) if (i.get("contentDetails") or {}).get(
+        "videoId")]
+    if not ids:
+        return []
+    data = _request("GET", "videos", {"part": "snippet,statistics", "id": ",".join(ids), "maxResults": 50})
+    videos = []
+    for v in data.get("items", []):
+        snippet, stats = v.get("snippet") or {}, v.get("statistics") or {}
+        if not snippet.get("publishedAt"):
+            continue
+        videos.append(YouTubeUpload(**_video(v["id"], snippet).model_dump(), description=snippet.get("description", ""),
+                                    published_at=snippet["publishedAt"], comment_count=_int(stats.get("commentCount"))))
+    return sorted(videos, key=lambda v: v.published_at, reverse=True)
+
+
+def comment_on_video(video_id: str, message: str) -> YouTubePublished:
+    """A new top comment as the channel under one of its videos. Only on the author's decision. Costs 50 quota
+    units.
+
+    Raises:
+        ValueError: If the video id is invalid or the message is empty or too long.
+        YouTubeError: 404 if the video is unknown or its comments are turned off.
+    """
+    if not _VIDEO_ID.match(video_id or ""):
+        raise ValueError("Invalid YouTube video id.")
+    body = {"snippet": {"videoId": video_id, "topLevelComment": {"snippet": {"textOriginal": _check_message(message)}}}}
+    data = _request("POST", "commentThreads", {"part": "snippet"}, json=body)
+    return YouTubePublished(id=data["id"], url=_comment_url(video_id, data["id"]) or "")
 
 
 def reply_to_comment(comment_id: str, message: str, video_id: str = "") -> YouTubePublished:

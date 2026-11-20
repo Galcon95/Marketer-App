@@ -149,6 +149,7 @@ class AutomationSettingsRow(Base):
     books: Mapped[list] = mapped_column(Json, server_default=text("'[]'"))
     book_links: Mapped[dict] = mapped_column(Json, server_default=text("'{}'"))
     test_mode: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    humanize: Mapped[int] = mapped_column(Integer, server_default=text("80"))
 
 
 class AutomationCycleRow(Base):

@@ -71,7 +71,7 @@ InboxItem = FacebookInboxItem | YouTubeInboxItem
 
 logger = logging.getLogger(__name__)
 
-HUMANIZE = 80  # "how human" the replies sound (as the Discussions default)
+HUMANIZE = 80  # "how human" the texts sound when the schedule does not say (its `humanize`; the Discussions default)
 MAX_DISCUSSION = 8000  # characters: the Discussion agent's limit (DiscussionRequest.discussion)
 EXCERPT = 600  # characters of the reader's text shown in Telegram
 POST_EXCERPT = 200  # characters of the Page's post shown above it
@@ -84,6 +84,8 @@ APPROVE = "make it so"
 BUTTON_GO, BUTTON_SKIP = "go", "skip"
 OTHER_AGENTS = ("eng:", "post:")  # thread id prefixes of engagement.py and book_post.py (same checkpointer)
 TEST_HEAD = " (TEST MODE: nothing will be posted)"
+# The first line of every proposal in Telegram (all agents): where the text would go, recognizable at a glance.
+PLATFORM_TAG = {"facebook": "🟦 FACEBOOK PAGE", "youtube": "🟥 YOUTUBE CHANNEL"}
 TEST_NOT_POSTED = ("🧪 Test mode: NOT posted. Turn test mode off in the app (Phase 4 · Agent Workspace) to post for "
                    "real.")
 
@@ -117,6 +119,7 @@ class InboxState(TypedDict, total=False):
     outcome: Outcome
     posted_url: str
     test: bool  # test mode (the schedule's test_mode when the run started): nothing is posted
+    humanize: int  # how human the reply sounds (the schedule's humanize when the run started)
 
 
 class InboxConfigError(RuntimeError):
@@ -188,9 +191,9 @@ def channel_for_inbox() -> youtube.ChannelAccess | None:
     return channel_connections.channel_for(owner) if owner else None
 
 
-def start(item: InboxItem, test: bool = False) -> str | None:
+def start(item: InboxItem, test: bool = False, humanize: int = HUMANIZE) -> str | None:
     """Start a run for one item: choose the book, draft the reply, send the proposal to Telegram and wait. `test`:
-    test mode, the approved reply is not posted.
+    test mode, the approved reply is not posted; `humanize`: how human the reply sounds (0-100).
 
     Returns:
         The run's thread id (the run now waits for the author), or None when it ended without waiting (it should not;
@@ -205,7 +208,7 @@ def start(item: InboxItem, test: bool = False) -> str | None:
     thread_id = f"{item.id}:{db.new_id('run')}"
     with tracing.scope():
         _graph().invoke({"item": item.model_dump(mode="json"), "source_ids": source_ids, "revisions": 0,
-                         "test": test}, _config(thread_id))
+                         "test": test, "humanize": humanize}, _config(thread_id))
     if _waiting(thread_id):
         with _lock:
             _runs[item.id] = thread_id
@@ -386,7 +389,7 @@ def _analyze(state: InboxState) -> InboxState:
     ids = {"youtube_comment_id": item.id} if item.platform == "youtube" else {"facebook_comment_id": item.id}
     request = DiscussionRequest(
         source_id=state["source_id"], discussion=_as_discussion(item), url=item.permalink_url or "",
-        platform=item.platform, humanize=HUMANIZE, **ids)
+        platform=item.platform, humanize=state.get("humanize", HUMANIZE), **ids)
     analysis = discussion.analyze_discussion(project_id, request)
     records.save_discussion(analysis)
     return {"analysis_id": analysis.id}
@@ -437,11 +440,12 @@ def _revise(state: InboxState) -> InboxState:
     platform = _item(state).platform
     passages = [(db.chunks[c.chunk_id], c.score) for c in analysis.citations if c.chunk_id in db.chunks]
     revision, _ = structured(REVISE_PROMPT, {
-        "style": style_guidance(HUMANIZE), "book": source_name(analysis.source_id) or analysis.source_id,
+        "style": style_guidance(humanize := state.get("humanize", HUMANIZE)),
+        "book": source_name(analysis.source_id) or analysis.source_id,
         "discussion": quote_untrusted(analysis.discussion, "post", platform=platform),
         "context": format_context(passages) or "(no passages)",
         "reply": facebook.publishable_text(analysis.reply) or "(none yet)", "feedback": state["feedback"],
-    }, Revision, "revised reply", temperature_for(HUMANIZE))
+    }, Revision, "revised reply", temperature_for(humanize))
     records.save_discussion(analysis.model_copy(update={"reply": revision.reply, "edited": True,
                                                         "updated_at": db.now()}))
     return {"revisions": state.get("revisions", 0) + 1, "feedback": ""}
@@ -587,7 +591,7 @@ def _proposal_text(item: InboxItem, analysis: DiscussionAnalysis, reply: str, bl
         head = f"↪️ Follow-up by {who} in a thread {where}"
     else:
         head = f"💬 New comment by {who} {where}"
-    lines = [("▶️ " if youtube_item else "") + head + (TEST_HEAD if state.get("test") else "")]
+    lines = [PLATFORM_TAG[item.platform], head + (TEST_HEAD if state.get("test") else "")]
     if youtube_item:
         lines.append(f"Your video: {_excerpt(item.video.title, POST_EXCERPT) or item.video.url}")
     elif item.kind == "comment" and item.post.message:
