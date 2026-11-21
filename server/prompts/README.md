@@ -45,7 +45,7 @@ in the Python code. The loader is `app/core/prompt_files.py`.
 | Ask your book | `qa_answer`, `qa_tools_note`, `qa_condense`, `qa_filters` |
 | Book summaries | `summary_chapter`, `summary_book` |
 | Generator | `generation_grounded`, `generation_zero_shot`, `generation_plan_query`, `generation_asset_types`, `generation_format_examples` |
-| Style and platforms | `style_rewrite`, `style_levels`, `style_avoid_phrases`, `platform_posts`, `platform_replies`, `platform_videos`, `tones` |
+| Style and platforms | `style_rewrite`, `style_levels`, `style_avoid_phrases`, `platform_posts`, `platform_replies`, `platform_replies_short`, `platform_replies_long`, `platform_videos`, `tones` |
 | Campaign kit | `campaign_personas`, `campaign_audience`, `campaign_posts`, `campaign_blurb` |
 | Discussion Relevance Agent | `discussion_research`, `discussion_assess`, `discussion_draft`, `discussion_reply_rules`, `discussion_situation`, `discussion_role` |
 | Reddit scan | `discussion_scan_triage` |

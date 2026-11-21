@@ -169,7 +169,7 @@ export default function AssetCard({ asset, onChange, facebook }: {
         {asset.angle && <Badge tone="accent">{asset.angle}</Badge>}
         {asset.persona && <Badge icon={Users}>for {asset.persona}</Badge>}
         {asset.tone !== "neutral" && <Badge>{asset.tone}</Badge>}
-        {!platform && asset.length !== "standard" && <Badge>{asset.length}</Badge>}
+        {(!platform || asset.asset_type === "social_reply") && asset.length !== "standard" && <Badge>{asset.length}</Badge>}
         {asset.edited && <Badge tone="warning" icon={Pencil}>edited</Badge>}
         {asset.published_url && <Badge tone="success" icon={Send}>published</Badge>}
         <span title={`Generated with "how human" ${asset.humanize} (${humanizeLabel(asset.humanize)}). ${asset.ai_tells.length ? "AI-typical wording left: " + asset.ai_tells.join(", ") : "No AI-typical wording found."}`}>

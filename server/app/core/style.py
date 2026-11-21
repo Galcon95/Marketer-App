@@ -5,7 +5,8 @@ Relevance Agent's replies (agents/discussion.py). The texts are in prompt files 
 loads them and holds the logic around them:
 
     PLATFORM_*     length and style rules per social platform (posts, replies, short videos)
-                   (prompts/platform_posts.md, platform_replies.md, platform_videos.md)
+                   (prompts/platform_posts.md, platform_replies.md, platform_videos.md; replies also
+                   by length: platform_replies_short.md, platform_replies_long.md)
     TONES          wording of the tone options (prompts/tones.md)
     HUMAN_LEVELS   style guidance per humanize level (0-100), added to the system prompt (prompts/style_levels.md)
     AI_TELLS       AI-typical phrases ("AI slop"): avoided in the prompt from humanize 50 on,
@@ -26,11 +27,18 @@ import re
 
 
 from app.core import prompt_files
-from app.core.schemas import Platform, Tone
+from app.core.schemas import Length, Platform, Tone
 
 # Social posts and replies: the platform decides length and style.
 PLATFORM_POST: dict[Platform, str] = prompt_files.table("platform_posts")
 PLATFORM_REPLY: dict[Platform, str] = prompt_files.table("platform_replies")
+# Replies by chosen length ("Reply to a post" in the Content Studio); "standard" is PLATFORM_REPLY, which the
+# agents use as well.
+PLATFORM_REPLY_LENGTH: dict[Length, dict[Platform, str]] = {
+    "short": prompt_files.table("platform_replies_short"),
+    "standard": PLATFORM_REPLY,
+    "long": prompt_files.table("platform_replies_long"),
+}
 # Short video scripts: where the video is published.
 PLATFORM_VIDEO: dict[Platform, str] = prompt_files.table("platform_videos")
 TONES: dict[Tone, str] = prompt_files.table("tones")  # prompts/tones.md; neutral = ""

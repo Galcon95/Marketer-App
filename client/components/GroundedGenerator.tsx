@@ -73,7 +73,7 @@ export default function GroundedGenerator({ refresh, bookId, onChange }: {
         humanize: Number(get("humanize") || 60),
         ...(bookId ? { source_ids: [bookId] } : {}),
         ...(usesPlatform(assetType) ? { platform: get("platform") as Platform } : { length: get("length") as Length }),
-        ...(isReply ? { reply_to: get("reply_to") } : {}),
+        ...(isReply ? { reply_to: get("reply_to"), length: get("length") as Length } : {}),
       });
       onChange();
     } catch (err) {
@@ -122,6 +122,8 @@ export default function GroundedGenerator({ refresh, bookId, onChange }: {
                 ? <Field key={`platform-${isReaderQuestion}`} name="platform" as="select" label="Platform"
                     options={PLATFORMS} defaultValue={isReaderQuestion ? "facebook" : undefined} />
                 : <Segmented name="length" label="Length" options={LENGTHS} defaultValue="standard" />}
+              {/* Replies: the platform sets the style, the length is chosen (X and TikTok keep their character limit). */}
+              {isReply && <Segmented name="length" label="Reply length" options={LENGTHS} defaultValue="standard" />}
               <Field name="tone" as="select" label="Tone" options={TONES} />
               <Field name="audience" label="Target audience (optional)" placeholder="e.g. young urban planners" />
               <RangeField name="humanize" label="How human?" defaultValue={60} describe={humanizeLabel}

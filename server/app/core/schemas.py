@@ -22,7 +22,7 @@ AssetType = Literal["blurb", "social_post", "social_reply", "video_script", "you
                     "ad_copy", "lead_magnet", "persona", "reader_question"]
 # Writing style options for generated assets (see generation.py for what each one means).
 Tone = Literal["neutral", "inspiring", "friendly", "professional", "punchy", "literary"]
-Length = Literal["short", "standard", "long"]  # ignored for social posts and replies (the platform decides)
+Length = Literal["short", "standard", "long"]  # ignored for social posts (the platform decides); replies: platform + length
 # For social posts, replies and short video scripts.
 Platform = Literal["x", "linkedin", "instagram", "facebook", "tiktok", "youtube"]
 

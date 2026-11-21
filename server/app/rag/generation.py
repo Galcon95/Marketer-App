@@ -48,7 +48,7 @@ from app.core.llm import (
 )
 from app.core.schemas import Asset, AssetType, Chunk, Citation, GenerateRequest, Length
 from app.core.style import (
-    PLATFORM_POST, PLATFORM_REPLY, PLATFORM_VIDEO, REWRITE_PROMPT, TONES, find_ai_tells, should_rewrite,
+    PLATFORM_POST, PLATFORM_REPLY_LENGTH, PLATFORM_VIDEO, REWRITE_PROMPT, TONES, find_ai_tells, should_rewrite,
     style_guidance, tells_for_prompt, temperature_for,
 )
 from app.db import records
@@ -58,7 +58,7 @@ from app.rag.retrieval import format_background, format_context, keep_cited, ret
 logger = logging.getLogger(__name__)
 
 # What to write, per asset type; {size} is filled from SIZES by the chosen length, {platform} from
-# PLATFORM_POST / PLATFORM_REPLY (inserted into the system prompt).
+# PLATFORM_POST / PLATFORM_REPLY_LENGTH (replies: by the chosen length too), inserted into the system prompt.
 ASSET_INSTRUCTIONS: dict[AssetType, str] = prompt_files.table("generation_asset_types")
 
 # One worked example per complex format, appended to the instructions: one example shows the layout better than a
@@ -133,7 +133,7 @@ class GenerationState(TypedDict, total=False):
 
 # Version of this feature's prompts, e.g. "generation@3f9a1c2e"; changes by itself when a prompt changes (core/prompts.py).
 PROMPT_VERSION = prompts.register("generation", GROUNDED_PROMPT, ZERO_SHOT_PROMPT, PLAN_QUERY_PROMPT, ASSET_INSTRUCTIONS,
-                                 FORMAT_EXAMPLES, GeneratedText, SearchQuery, {"plan_query": TEMPERATURES["plan_query"]}, REWRITE_PROMPT, style.PLATFORM_POST, style.PLATFORM_REPLY,
+                                 FORMAT_EXAMPLES, GeneratedText, SearchQuery, {"plan_query": TEMPERATURES["plan_query"]}, REWRITE_PROMPT, style.PLATFORM_POST, style.PLATFORM_REPLY_LENGTH,
                                  style.PLATFORM_VIDEO, style.TONES, style.HUMAN_LEVELS, style.AI_TELLS)
 
 
@@ -232,7 +232,7 @@ def build_instructions(req: GenerateRequest) -> str:
     if req.asset_type in ("social_post", "reader_question"):
         text = template.format(platform=PLATFORM_POST[req.platform])
     elif req.asset_type == "social_reply":
-        text = template.format(platform=PLATFORM_REPLY[req.platform])
+        text = template.format(platform=PLATFORM_REPLY_LENGTH[req.length][req.platform])
     elif req.asset_type == "video_script":
         text = template.format(platform=PLATFORM_VIDEO[req.platform])
     else:

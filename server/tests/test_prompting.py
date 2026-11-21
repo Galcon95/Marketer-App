@@ -67,6 +67,15 @@ def test_examples_go_into_the_instructions_of_their_format_only():
     assert "<example>" not in generation.build_instructions(GenerateRequest(asset_type="blurb", brief="A blurb."))
 
 
+def test_reply_length_changes_the_platform_rule():
+    def reply(length):
+        return generation.build_instructions(
+            GenerateRequest(asset_type="social_reply", platform="youtube", reply_to="A post.", length=length))
+    assert "20-80 words" in reply("standard")  # the default: as before
+    assert "150-300 words" in reply("long")
+    assert "10-25 words" in reply("short")
+
+
 def test_a_draft_without_its_headings_is_written_once_more():
     state = {"req": GenerateRequest(asset_type="youtube_video", humanize=0, brief="A review."), "draft": "Title options:\n1. A\n\nTags:\nx",
              "context": []}

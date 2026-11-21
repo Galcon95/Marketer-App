@@ -7,7 +7,7 @@ import pytest
 
 from app.core import prompt_files, style
 from app.core.prompt_files import PromptFileError
-from app.core.schemas import AssetType, DiscussionPlatform, Platform, Tone
+from app.core.schemas import AssetType, DiscussionPlatform, Length, Platform, Tone
 from app.rag import generation
 
 
@@ -79,7 +79,8 @@ def test_every_prompt_file_loads_without_leftover_comments_or_includes():
 
 def test_every_tone_platform_and_asset_type_has_its_text():
     assert set(style.TONES) == set(get_args(Tone))
-    for table in (style.PLATFORM_POST, style.PLATFORM_REPLY, style.PLATFORM_VIDEO):
+    assert set(style.PLATFORM_REPLY_LENGTH) == set(get_args(Length))
+    for table in (style.PLATFORM_POST, style.PLATFORM_REPLY, style.PLATFORM_VIDEO, *style.PLATFORM_REPLY_LENGTH.values()):
         assert set(table) == set(get_args(Platform))
     assert set(generation.ASSET_INSTRUCTIONS) == set(get_args(AssetType))
     from app.agents import discussion
