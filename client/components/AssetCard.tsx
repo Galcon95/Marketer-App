@@ -262,7 +262,7 @@ export default function AssetCard({ asset, onChange, facebook }: {
         {asset.cost != null && <span title="Cost of the model calls that wrote it">· {formatUsd(asset.cost)}</span>}
         <span style={{ flex: 1 }} />
         <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copy}
-          title="Copy the text without citation markers">{copied ? "Copied" : "Copy"}</Button>
+          title="Copy the text without citation markers, ready to post">{copied ? "Copied" : "Copy for posting"}</Button>
         <Button variant="ghost" size="sm" icon={Pencil} onClick={() => setDraft(asset.text)} disabled={draft !== null}>Edit</Button>
         <Button variant="ghost" size="sm" icon={ShieldCheck} loading={verifying} onClick={verify}>Verify</Button>
         <Button variant="ghost" size="sm" icon={Trash2} aria-label="Delete asset" title="Delete" onClick={remove} />

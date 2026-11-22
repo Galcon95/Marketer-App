@@ -26,6 +26,9 @@ describe("cleanText", () => {
   it("removes citation markers without leaving a space before punctuation", () => {
     expect(cleanText("Buy below intrinsic value [1]. Sell in booms [2] [3].")).toBe("Buy below intrinsic value. Sell in booms.");
   });
+  it("removes grouped markers such as [2, 3, 4] and [2-4]", () => {
+    expect(cleanText("Capital is owned [2, 3, 4]. Labour goes [2-4], too [5–6]!")).toBe("Capital is owned. Labour goes, too!");
+  });
   it("leaves text without markers unchanged", () => {
     expect(cleanText("  Plain text.  ")).toBe("Plain text.");
   });

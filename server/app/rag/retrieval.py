@@ -107,6 +107,21 @@ def source_name(source_id: str) -> str | None:
     return name if " — " in name or not source.author else f"{name} — {source.author}"
 
 
+# A marker that cites several excerpts at once, e.g. "[2, 3, 4]" or "[2-4]" (models write these despite the prompt).
+GROUPED_MARKER = re.compile(r"\[(\d+(?:\s*[,;–-]\s*\d+)+)\]")
+
+
+def split_grouped_markers(text: str) -> str:
+    """Write grouped markers as single ones: "[2, 3, 4]" and "[2-4]" become "[2][3][4]"."""
+    def split(m: re.Match) -> str:
+        numbers: list[int] = []
+        for part in re.split(r"\s*[,;]\s*", m.group(1)):
+            bounds = [int(b) for b in re.split(r"\s*[–-]\s*", part)]
+            numbers += list(range(bounds[0], bounds[-1] + 1)) if len(bounds) == 2 and bounds[1] - bounds[0] < 20 else bounds
+        return "".join(f"[{n}]" for n in numbers)
+    return GROUPED_MARKER.sub(split, text)
+
+
 def keep_cited(text: str, context: list[tuple[Chunk, float]], also_cited: list[int] | None = None) -> dict:
     """Turn the excerpts cited as [n] into Citations and renumber the markers 1, 2, ... in the order
     they first appear in the text.
@@ -120,6 +135,7 @@ def keep_cited(text: str, context: list[tuple[Chunk, float]], also_cited: list[i
         context: The numbered excerpts that were in the prompt.
         also_cited: Optional further excerpt numbers the text is based on.
     """
+    text = split_grouped_markers(text)
     cited: list[int] = []  # original excerpt numbers, in order of first appearance
     for n in [*map(int, re.findall(r"\[(\d+)\]", text)), *(also_cited or [])]:
         if 1 <= n <= len(context) and n not in cited:

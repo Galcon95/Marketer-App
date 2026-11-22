@@ -23,6 +23,13 @@ def test_keep_cited_renumbers_markers_in_order_of_appearance():
     assert [c.chunk_id for c in result["citations"]] == ["chk_0003", "chk_0001"]
 
 
+def test_keep_cited_splits_grouped_markers():
+    context = [(_chunk(n), 0.9) for n in range(1, 5)]
+    result = keep_cited("Capital is owned [2, 3, 4]. And a range [3-4].", context)
+    assert result["text"] == "Capital is owned [1][2][3]. And a range [2][3]."
+    assert [c.chunk_id for c in result["citations"]] == ["chk_0002", "chk_0003", "chk_0004"]
+
+
 def test_keep_cited_removes_markers_that_point_to_no_passage():
     result = keep_cited("A claim [7].", [(_chunk(1), 0.9)])
     assert result["text"] == "A claim."

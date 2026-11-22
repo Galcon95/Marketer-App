@@ -682,7 +682,8 @@ export function hasCharLimit(type: AssetType) {
  * @param text Generated text with markers.
  */
 export function cleanText(text: string) {
-  return text.replace(/[ \t]*\[\d+\]/g, "").replace(/[ \t]+([.,;:!?])/g, "$1").trim();
+  // Also grouped markers such as [2, 3, 4] or [2-4].
+  return text.replace(/[ \t]*\[\d+(?:\s*[,;–-]\s*\d+)*\]/g, "").replace(/[ \t]+([.,;:!?])/g, "$1").trim();
 }
 
 /**
