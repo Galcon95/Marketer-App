@@ -220,8 +220,8 @@ def test_an_uploaded_jpeg_cover_is_stored_as_png_and_used_from_then_on(client, m
 
 def test_a_large_cover_is_scaled_down(client):
     assert _upload(client, _picture(1200, 3400)).status_code == 204
-    # Halved until at most UPLOADED_COVER_MAX_HEIGHT (1600 px) high: 3400 → 1700 → 850, the shape kept.
-    assert images.image_size(client.get("/sources/src_a/cover").content) == (300, 850)
+    # Scaled to UPLOADED_COVER_MAX_HEIGHT (1600 px) high, the shape kept: 1200 × 3400 → 565 × 1600.
+    assert images.image_size(client.get("/sources/src_a/cover").content) == (565, 1600)
 
 
 @pytest.mark.parametrize("data, status", [
@@ -255,6 +255,47 @@ def test_another_user_cannot_change_a_cover(client, library):
     old = library.objects[f"{PROJECT}/src_a/cover.png"]
     sign_in(client.app, STRANGER)
     assert _upload(client, _picture()).status_code == 404
+    assert library.objects[f"{PROJECT}/src_a/cover.png"] == old
+
+
+# ---------- the author's covers folder ----------
+def test_a_picture_in_the_covers_folder_becomes_the_cover_everywhere(client, made, library, tmp_path):
+    folder = tmp_path / "covers"
+    folder.mkdir()
+    (folder / "SRC_A.jpg").write_bytes(_picture(600, 900, "jpg"))  # named like src_a.pdf; case does not matter
+    cover = client.get("/sources/src_a/cover").content
+    assert cover.startswith(b"\x89PNG") and images.image_size(cover) == (600, 900)
+    assert library.objects[f"{PROJECT}/src_a/cover.png"] == cover  # also in Storage, for the hosted server
+    _create(client)
+    assert made[-1]["cover"] == cover  # and in the ad pictures
+
+
+def test_a_changed_picture_in_the_folder_replaces_the_cover(client, tmp_path):
+    folder = tmp_path / "covers"
+    folder.mkdir()
+    picture = folder / "src_a.png"
+    picture.write_bytes(_picture(300, 450))
+    assert images.image_size(client.get("/sources/src_a/cover").content) == (300, 450)
+    picture.write_bytes(_picture(400, 600, "jpg"))
+    assert images.image_size(client.get("/sources/src_a/cover").content) == (400, 600)
+
+
+def test_the_folder_wins_over_an_uploaded_cover(client, tmp_path):
+    folder = tmp_path / "covers"
+    folder.mkdir()
+    (folder / "src_a.png").write_bytes(_picture(300, 450))
+    client.get("/sources/src_a/cover")
+    assert _upload(client, _picture(500, 750)).status_code == 204
+    assert images.image_size(client.get("/sources/src_a/cover").content) == (300, 450)
+
+
+def test_an_unusable_picture_in_the_folder_is_skipped(client, library, tmp_path):
+    folder = tmp_path / "covers"
+    folder.mkdir()
+    (folder / "src_a.png").write_bytes(b"not a picture")
+    (folder / "src_b.jpg").write_bytes(_picture(20, 30, "jpg"))  # too small
+    old = library.objects[f"{PROJECT}/src_a/cover.png"]
+    assert client.get("/sources/src_a/cover").content == old
     assert library.objects[f"{PROJECT}/src_a/cover.png"] == old
 
 

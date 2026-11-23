@@ -9,7 +9,7 @@ import { signOut } from "../lib/supabase";
 const TOKEN = "test-access-token";
 vi.mock("../lib/supabase", () => ({ accessToken: async () => TOKEN, signOut: vi.fn() }));
 import {
-  API_URL, ApiError, api, assetTypeLabel, bookTitle, cleanText, errorMessage, fileBlobUrl, filePath, hasCharLimit, humanizeLabel,
+  adHeadlines, API_URL, ApiError, api, assetTypeLabel, bookTitle, cleanText, errorMessage, fileBlobUrl, filePath, hasCharLimit, humanizeLabel,
   locationLabel, platformFromUrl, usesPlatform,
 } from "../lib/api";
 
@@ -176,5 +176,31 @@ describe("platformFromUrl", () => {
     expect(platformFromUrl("https://notreddit.com/r/x")).toBeNull();
     expect(platformFromUrl("reddit.com/r/x")).toBeNull();
     expect(platformFromUrl("")).toBeNull();
+  });
+});
+
+describe("adHeadlines", () => {
+  it("finds the headline of every variant, in the styles the model writes", () => {
+    const text = [
+      "Variant 1",
+      "Headline: Life in 2045 Is Already Here [1]",
+      "Body: A city that thinks with you.",
+      "",
+      "**Headline:** \"Who Runs a Smart City?\"",
+      "Body: ...",
+      "",
+      "3. Headline – What if your city listened? [2][3]",
+      "Variant 4: Headline: Meet the Civic Mind",
+      "Headline 5: Cities With a Conscience",
+    ].join("\n");
+    expect(adHeadlines(text)).toEqual([
+      "Life in 2045 Is Already Here", "Who Runs a Smart City?", "What if your city listened?", "Meet the Civic Mind",
+      "Cities With a Conscience",
+    ]);
+  });
+  it("finds nothing in an ad copy without headline lines, and lists a repeated headline once", () => {
+    expect(adHeadlines("Government influences production [1]. Mill explains it.")).toEqual([]);
+    expect(adHeadlines("Headline: Same\nHeadline: Same")).toEqual(["Same"]);
+    expect(adHeadlines("The headline: of this story is long")).toEqual([]);
   });
 });

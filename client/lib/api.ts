@@ -129,6 +129,40 @@ export interface Asset {
   published_at?: string | null; // when it was published (ISO 8601, UTC)
   cost?: number | null; // USD of the model calls that wrote it; null = not recorded (older assets, campaign kits)
 }
+
+/** Shapes of an ad picture (server core/images.FORMATS): feed square or portrait, stories, wide for link ads. */
+export type ImageFormat = "square" | "portrait" | "story" | "landscape";
+export const IMAGE_FORMATS: Array<{ value: ImageFormat; label: string; ratio: string; hint: string }> = [
+  { value: "square", label: "Square", ratio: "1:1", hint: "Facebook and Instagram feed" },
+  { value: "portrait", label: "Portrait", ratio: "4:5", hint: "Feed, takes more space on phones" },
+  { value: "story", label: "Story", ratio: "9:16", hint: "Stories and reels" },
+  { value: "landscape", label: "Wide", ratio: "16:9", hint: "Link ads and posts with a link" },
+];
+/** Longest headline the server draws into a picture. */
+export const MAX_IMAGE_HEADLINE = 80;
+
+/** A generated ad picture of an asset (POST /assets/{id}/images); the PNG itself is at adImagePath(id). */
+export interface AdImage {
+  id: string;
+  project_id: string;
+  asset_id: string;
+  source_id: string | null; // the book whose cover it shows; null after that book was deleted
+  format: ImageFormat;
+  headline: string; // "" = no text in the picture
+  scene: string;
+  model: string;
+  prompt_version: string;
+  cost: number | null; // USD
+  created_at: string;
+}
+
+/** Request body of POST /assets/{id}/images. */
+export interface AdImageRequest {
+  source_id?: string; // needed when the asset is about several books (or all)
+  headline: string;
+  scene: string;
+  format: ImageFormat;
+}
 /** The author's own Facebook Page (server/.env FACEBOOK_PAGE_*). */
 export interface FacebookPage { id: string; name: string; followers: number | null; link: string | null }
 /** A post on the author's Facebook Page. */
@@ -723,6 +757,29 @@ export function coverPath(sourceId: string) {
 }
 
 /**
+ * API path of an ad picture (PNG); load it with fileBlobUrl, since it needs the access token.
+ * @param imageId The picture.
+ */
+export function adImagePath(imageId: string) {
+  return `/ad-images/${imageId}`;
+}
+
+/**
+ * The headlines of an ad copy's variants ("Headline: …" lines, also numbered or in bold), without citation markers
+ * and quotes, for one-click use as the picture's headline. Empty if the text has none (e.g. older ad copies).
+ * @param text The ad copy.
+ */
+export function adHeadlines(text: string) {
+  const found: string[] = [];
+  for (const line of text.split("\n")) {
+    const m = /^[\s>*#\-\d.)]*(?:\*\*)?\s*(?:variant\s*\d+\s*[:.\-–]\s*)?headline\s*(?:\d+)?\s*(?:\*\*)?\s*[:\-–]\s*(?:\*\*)?(.+?)(?:\*\*)?\s*$/i.exec(line);
+    const headline = m && cleanText(m[1]).replace(/^["'“”]+|["'“”]+$/g, "").trim();
+    if (headline && !found.includes(headline)) found.push(headline);
+  }
+  return found;
+}
+
+/**
  * API path of a source's uploaded file (the PDF); load it with fileBlobUrl, since it needs the access token.
  * @param sourceId The source.
  */
@@ -1027,6 +1084,21 @@ export const api = {
   /** POST /assets/{assetId}/publish/facebook: publish the asset on the user's Facebook Page, once. */
   publishToFacebook: (assetId: string) =>
     request<Asset>(`/assets/${assetId}/publish/facebook`, { method: "POST" }),
+  /** GET /assets/{assetId}/images: the ad pictures of an asset, oldest first. */
+  listAdImages: (assetId: string) => request<AdImage[]>(`/assets/${assetId}/images`),
+  /** POST /assets/{assetId}/images: make an ad picture with the image model (about 15 s, about $0.07). */
+  createAdImage: (assetId: string, body: AdImageRequest) => request<AdImage>(`/assets/${assetId}/images`, postJson(body)),
+  /** DELETE /ad-images/{imageId}: delete an ad picture. */
+  deleteAdImage: (imageId: string) => request<void>(`/ad-images/${imageId}`, { method: "DELETE" }),
+  /**
+   * PUT /sources/{sourceId}/cover: replace a book's cover with the author's own picture (PNG or JPEG, max 10 MB).
+   * @param file The picture (sent as form field "file").
+   */
+  uploadCover: async (sourceId: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    await send(`/sources/${sourceId}/cover`, { method: "PUT", body: form });
+  },
   /** DELETE /assets/{assetId}: delete a generated asset. */
   deleteAsset: (assetId: string) => request<void>(`/assets/${assetId}`, { method: "DELETE" }),
 

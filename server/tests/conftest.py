@@ -18,7 +18,7 @@ from app.core.auth import User
 from app.core.schemas import Project, UsageTotals
 from app.db import database, records
 from app.db.tables import PRIVATE, Base
-from app.rag import vectorstore
+from app.rag import ingestion, vectorstore
 
 OWNER = User(id="user-owner", email="owner@example.com")  # owns the default project
 STRANGER = User(id="user-stranger", email="stranger@example.com")  # another signed-in user
@@ -91,6 +91,9 @@ def stored_files(monkeypatch, tmp_path) -> MemoryFiles:
     memory = MemoryFiles()
     monkeypatch.setattr(files, "_backend", memory)
     monkeypatch.setattr(files, "_server", files.LocalFiles(tmp_path / "server-files"))
+    # The author's covers folder (server/assets/covers) is never read: an empty temporary one instead.
+    monkeypatch.setattr(config, "COVERS_DIR", tmp_path / "covers")
+    monkeypatch.setattr(ingestion, "_folder_seen", {})
     return memory
 
 

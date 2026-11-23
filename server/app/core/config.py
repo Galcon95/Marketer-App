@@ -63,6 +63,8 @@ Read once on import from environment variables (and server/.env, if present), fi
     SUPABASE_SECRET_KEY → the Supabase project's secret key ("sb_secret_..."): the server stores the uploaded books
                           and their covers with it in the private Storage bucket "books" (files.py); never sent to
                           the browser
+    COVERS_DIR          → optional, folder of the author's own cover pictures (default server/assets/covers): a picture
+                          named like a book's file ("My-Book.png" or ".jpg" for "My-Book.pdf") becomes its cover
     LOCAL_FILES_DIR     → optional, folder on the server's disk for books larger than Supabase Storage accepts, when
                           the user chooses "store on this server" (default server/data/books; see files.py)
     DATABASE_URL       → connection string of the PostgreSQL database (Supabase), e.g.
@@ -133,6 +135,9 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
 SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "").strip()
 DEFAULT_CLIENT_OWNER = os.getenv("DEFAULT_CLIENT_OWNER", "").strip().lower()
 LOCAL_FILES_DIR = Path(os.getenv("LOCAL_FILES_DIR", "").strip() or SERVER_DIR / "data" / "books")
+# The author's own cover pictures, named like the book's file ("My-Book.pdf" → "My-Book.png" or ".jpg"): used instead of
+# the cover taken from the PDF (rag/ingestion.py folder_cover). Not committed (server/assets/ is git-ignored).
+COVERS_DIR = Path(os.getenv("COVERS_DIR", "").strip() or SERVER_DIR / "assets" / "covers")
 
 
 def _sqlalchemy_url(url: str) -> str:

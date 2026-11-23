@@ -30,7 +30,7 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.core import state as db
-from app.core import files, images
+from app.core import config, files, images
 from app.core.schemas import Chunk, ChunkLocation, Source
 from app.db import records
 from app.rag import vectorstore
@@ -60,6 +60,10 @@ MIN_IMAGE_SIDE = 100  # px; a smaller picture is no usable cover
 _chunks_lock = threading.Lock()
 # Cover images (PNG) by source id, so the GUI's book list does not fetch them from Storage on every page load.
 _covers: dict[str, bytes] = {}
+# The covers folder's picture each book's cover was last taken from, and its PNG: source id → ((path, modified time,
+# size), PNG). Kept apart from _covers, so the folder's picture wins over one uploaded in the GUI.
+_folder_seen: dict[str, tuple[tuple[str, float, int], bytes]] = {}
+COVER_EXTENSIONS = (".png", ".jpg", ".jpeg")
 
 
 class IngestionError(Exception):
@@ -188,6 +192,8 @@ def cover(source: Source, timeout: float = 10) -> bytes | None:
     Raises:
         FileStoreError: If Storage cannot be reached.
     """
+    if (own := folder_cover(source)) is not None:
+        return own
     if source.id in _covers:
         return _covers[source.id]
     if image := files.get(files.cover_path(source.project_id, source.id)):
@@ -207,6 +213,53 @@ def cover(source: Source, timeout: float = 10) -> bytes | None:
     finally:
         _ingest_lock.release()
     return _covers.get(source.id)
+
+
+def folder_cover(source: Source) -> bytes | None:
+    """The author's own cover from the covers folder (config.COVERS_DIR), if a picture there is named like the book's
+    file: "TheBook_v2.pdf" → "TheBook_v2.png", ".jpg" or ".jpeg" (letter case does not matter).
+
+    A new or changed picture is checked and made into a PNG (to_png) and becomes the book's cover in Storage too
+    (set_cover), so it is also used where the folder is not, e.g. on the hosted server. An unchanged one is answered
+    from memory. A picture that cannot be used is logged and skipped (the cover stays as it was).
+
+    Returns:
+        The PNG, or None if the folder has no picture for this book (or it cannot be used).
+    """
+    path = _folder_picture(source.filename)
+    if path is None:
+        return None
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    seen = (str(path), stat.st_mtime, stat.st_size)
+    if (known := _folder_seen.get(source.id)) and known[0] == seen:
+        return known[1]
+    try:
+        data = path.read_bytes()
+        if images.image_type(data) is None:
+            raise ValueError("not a PNG or JPEG picture")
+        png = to_png(data)
+        set_cover(source, png)
+    except (OSError, ValueError, TimeoutError) as e:  # FileStoreError is an OSError
+        logger.warning("Cover picture %s not used for %s: %s", path.name, source.id, e)
+        return None
+    _folder_seen[source.id] = (seen, png)
+    logger.info("Cover of %s taken from %s", source.id, path.name)
+    return png
+
+
+def _folder_picture(book_filename: str) -> Path | None:
+    """The picture in the covers folder named like this book's file, or None."""
+    folder = config.COVERS_DIR
+    if not folder.is_dir():
+        return None
+    stem = Path(book_filename).stem.lower()
+    for path in folder.iterdir():
+        if path.is_file() and path.suffix.lower() in COVER_EXTENSIONS and path.stem.lower() == stem:
+            return path
+    return None
 
 
 def _download_book(source: Source, folder: Path) -> Path:
@@ -249,13 +302,14 @@ def _make_cover(source: Source, book: Path) -> None:
 
 
 def _png(pixmap: "pymupdf.Pixmap", max_height: int) -> bytes:
-    """A picture as an RGB PNG without transparency, halved until it is at most max_height px high."""
+    """A picture as an RGB PNG without transparency, scaled down (keeping its shape) to at most max_height px high."""
     if pixmap.n - pixmap.alpha > 3:  # CMYK etc. → RGB, which PNG needs
         pixmap = pymupdf.Pixmap(pymupdf.csRGB, pixmap)
     if pixmap.alpha:
         pixmap = pymupdf.Pixmap(pixmap, 0)  # drop transparency
-    while pixmap.height > max_height:
-        pixmap.shrink(1)  # halves width and height
+    if pixmap.height > max_height:
+        width = max(1, round(pixmap.width * max_height / pixmap.height))
+        pixmap = pymupdf.Pixmap(pixmap, width, max_height)  # a scaled copy
     return pixmap.tobytes("png")
 
 

@@ -19,7 +19,7 @@ import {
 import { useApi } from "@/lib/useApi";
 import { CitationList } from "../AssetCard";
 import ToolCallCard from "../ToolCallCard";
-import BookCover, { PageLink } from "../BookCover";
+import BookCover, { ChangeCoverButton, PageLink } from "../BookCover";
 import BookPicker, { readyBooks } from "../BookPicker";
 import { Badge, Button, Card, Drawer, ErrorNote, Field, Placeholder, ProgressBar, Score, SectionHeading } from "../ui";
 
@@ -317,6 +317,7 @@ function BookCard({ source, refresh, selected, onSelect, onBrowse, onDelete }: {
               {s ? "Summary" : "Create summary"}
             </Button>
             <Button size="sm" variant="ghost" icon={Database} onClick={() => onBrowse(source, "chunks")}>Chunks</Button>
+            <ChangeCoverButton sourceId={source.id} title={title} />
             <Button size="sm" variant={selected ? "primary" : "ghost"} icon={selected ? Check : Target} onClick={onSelect}
               title={selected ? "Stop working on only this book" : "Ask and generate for this book only"}>
               {selected ? "Working on this book" : "Work on this book"}

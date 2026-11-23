@@ -13,6 +13,7 @@ import {
   api, assetTypeLabel, cleanText, errorMessage, hasCharLimit, humanizeLabel, isFacebookPost, locationLabel, PLATFORMS,
   type Asset, type Citation, type FacebookStatus, type VerifyItem,
 } from "@/lib/api";
+import AdImagePanel from "./AdImagePanel";
 import { PageLink } from "./BookCover";
 import { formatUsd } from "./UsagePanel";
 import { Badge, Button, ErrorNote, Score } from "./ui";
@@ -68,7 +69,7 @@ export function TextWithMarkers({ text }: { text: string }) {
  * for social posts and replies), and actions: Copy (publishable text without markers), Edit (save
  * a changed text), Verify (check each sentence against the project's sources, POST /verify) and
  * Delete. Reader questions and Facebook posts also get "Publish to my Facebook Page" when the Page is connected
- * (admin only); once published, the card links to the post instead.
+ * (admin only); once published, the card links to the post instead. Ad copies get their ad pictures (AdImagePanel).
  * @param asset The asset to display.
  * @param onChange Called after the asset was edited, deleted or published, to reload the asset list.
  * @param facebook The user's Facebook Page status (undefined = not loaded: no Publish button).
@@ -229,6 +230,8 @@ export default function AssetCard({ asset, onChange, facebook }: {
         </div>
       )}
       {error && <ErrorNote>{error}</ErrorNote>}
+
+      {asset.asset_type === "ad_copy" && <AdImagePanel asset={asset} />}
 
       {isFacebookPost(asset) && (asset.published_url ? (
         <span className="bc-hint">
