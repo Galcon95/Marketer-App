@@ -57,13 +57,16 @@ def bot_info() -> str:
     return _request("getMe").get("username", "")
 
 
-def send_message(text: str, buttons: list[TelegramButton] | None = None, reply_to: int | None = None) -> int:
+def send_message(text: str, buttons: list[TelegramButton] | None = None, reply_to: int | None = None,
+                 copyable: bool = False) -> int:
     """Send a text to the author's chat. A text over MAX_TEXT characters goes as several messages.
 
     Args:
         text: Plain text (no formatting).
         buttons: Buttons in one row under the (last) message.
         reply_to: A message in the chat this one answers (shown quoted above it).
+        copyable: Show the text as one block that Telegram copies with a single tap (a "pre" entity: no parse_mode,
+            so the text itself never becomes formatting).
 
     Returns:
         The id of the (last) message sent: the one the buttons are under.
@@ -80,6 +83,8 @@ def send_message(text: str, buttons: list[TelegramButton] | None = None, reply_t
     for i, part in enumerate(parts):
         body: dict[str, Any] = {"chat_id": config.TELEGRAM_CHAT_ID, "text": part, "link_preview_options": {
             "is_disabled": True}}
+        if copyable:  # the entity's length counts UTF-16 code units, as Telegram does
+            body["entities"] = [{"type": "pre", "offset": 0, "length": len(part.encode("utf-16-le")) // 2}]
         if reply_to and i == 0:
             body["reply_parameters"] = {"message_id": reply_to, "allow_sending_without_reply": True}
         if markup and i == len(parts) - 1:

@@ -5,7 +5,8 @@ one inviting question drafted from the books, posted only after the author's "ma
     START ─► draft ─► propose ─► wait ⏸ ─(make it so)─► publish ─► END
                          ▲          │
                          │          ├─(skip)───────────► skip ────► END
-                         └─ revise ◄┘(feedback)
+                         ├─ revise ◄┤(feedback)
+                         └─ use_text ◄┘(edit: the author's own text, used as it is; no model call)
 
     pick_post    Facebook: the newest own post (from_page) of the last `engage_days` with no comments and text
     pick_video   YouTube: the newest own upload of the last `youtube_engage_days` with no comments (comments not
@@ -47,7 +48,7 @@ from app.core import prompt_files, prompts, tracing, usage
 from app.core import state as db
 from app.core.guard import clean_text, output_blocked
 from app.core.llm import structured
-from app.core.schemas import AutomationSettings, FacebookPost, TelegramButton, YouTubeUpload
+from app.core.schemas import AutomationSettings, FacebookPost, YouTubeUpload
 from app.core.style import style_guidance, temperature_for
 from app.db import records
 from app.rag.retrieval import format_context, retrieve_chunks, source_name
@@ -101,7 +102,8 @@ class EngageState(TypedDict, total=False):
     reason: str
     revisions: int
     proposal_message_id: int
-    decision: str  # approve | skip | feedback
+    decision: str  # approve | skip | feedback | edit
+    own_text: bool  # the comment is the author's own text (Edit), not a model's
     feedback: str
     outcome: Outcome
     posted_url: str
@@ -282,13 +284,15 @@ def _graph():
     builder.add_node("propose", _propose)
     builder.add_node("wait", _wait)
     builder.add_node("revise", _draft)  # the same writer, now with the feedback and the current comment
+    builder.add_node("use_text", _use_text)
     builder.add_node("publish", _publish)
     builder.add_node("skip", _skip)
     builder.add_edge(START, "draft")
     builder.add_edge("draft", "propose")
     builder.add_edge("propose", "wait")
-    builder.add_conditional_edges("wait", _after_wait, ["publish", "skip", "revise", END])
+    builder.add_conditional_edges("wait", _after_wait, ["publish", "skip", "revise", "use_text", END])
     builder.add_edge("revise", "propose")
+    builder.add_edge("use_text", "propose")
     builder.add_edge("publish", END)
     builder.add_edge("skip", END)
     return builder.compile(checkpointer=checkpoints.checkpointer())
@@ -320,7 +324,7 @@ def _draft(state: EngageState) -> EngageState:
             "current": facebook.publishable_text(state.get("comment", "")) or "(none yet)",
             "feedback": feedback or "(none)",
         }, EngagementComment, "engagement comment", temperature_for(humanize))
-    update.update({"comment": result.comment, "reason": result.reason, "feedback": ""})
+    update.update({"comment": result.comment, "reason": result.reason, "feedback": "", "own_text": False})
     if feedback:
         update["revisions"] = state.get("revisions", 0) + 1
     return update
@@ -345,9 +349,7 @@ def _propose(state: EngageState) -> EngageState:
     blocked = bool(comment) and output_blocked(comment)
     if old := state.get("proposal_message_id"):
         inbox._quietly(telegram.remove_buttons, old)
-    buttons = [TelegramButton(label="Skip", data=inbox.BUTTON_SKIP)]
-    if comment and not blocked:
-        buttons.insert(0, TelegramButton(label=inbox.go_label(state.get("test", False)), data=inbox.BUTTON_GO))
+    buttons = inbox.proposal_buttons(bool(comment) and not blocked, state.get("test", False))
     if isinstance(target, YouTubeUpload):
         lines = [inbox.PLATFORM_TAG["youtube"], "💡 A question to start a discussion under your video"
                  + (inbox.TEST_HEAD if state.get("test") else ""),
@@ -363,14 +365,14 @@ def _propose(state: EngageState) -> EngageState:
             lines.append(target.permalink_url)
     lines += ["", f"📖 {source_name(state['source_id']) or state['source_id']}",
               f"Why: {facebook.publishable_text(state.get('reason', ''))}"]
-    if state.get("revisions"):
-        lines.append(f"(revised {state['revisions']}×)")
+    lines += inbox.revision_note(state)
     if blocked:
         lines += ["", "⚠️ The comment looks like it contains instructions to an AI and will not be posted. Answer "
-                      "with feedback to rewrite it, or skip."]
+                      "with feedback to rewrite it, ✏️ Edit to write it yourself, or skip."]
     else:
-        lines += ["", "Proposed comment:", comment, "",
-                  f"Answer “make it so” to post it as your {_as(state)}, “skip”, or write what to change."]
+        lines += ["", "Your comment:" if state.get("own_text") else "Proposed comment:", comment, "",
+                  f"Answer “make it so” to post it as your {_as(state)}, “skip”, write what to change, or ✏️ Edit "
+                  "to write it yourself."]
     return {"proposal_message_id": telegram.send_message("\n".join(lines), buttons=buttons)}
 
 
@@ -386,6 +388,8 @@ def _after_wait(state: EngageState) -> str:
         return "publish"
     if decision in ("skip", "answered"):
         return "skip"
+    if decision == "edit":  # the author's own text: no limit, it costs no model call
+        return "use_text"
     if state.get("revisions", 0) >= MAX_REVISIONS:
         inbox._quietly(telegram.remove_buttons, state["proposal_message_id"])
         inbox._quietly(telegram.send_message, f"That was {MAX_REVISIONS} rounds of changes; I leave this "
@@ -393,6 +397,16 @@ def _after_wait(state: EngageState) -> str:
                                               f"{_site(state)} if you like.")
         return END
     return "revise"
+
+
+def _use_text(state: EngageState) -> EngageState:
+    """The author's own text (after "Edit") becomes the comment as it is."""
+    return {"comment": state["feedback"].strip(), "own_text": True, "feedback": ""}
+
+
+def current_text(thread_id: str) -> str:
+    """The comment a run proposes now, as it would be posted."""
+    return facebook.publishable_text(_graph().get_state(_config(thread_id)).values.get("comment", ""))
 
 
 def _publish(state: EngageState) -> EngageState:

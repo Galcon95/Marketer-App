@@ -7,7 +7,8 @@ and the graph (agents/page_inbox.py) while the server runs.
     /status           the schedule, the next and the last run, the running cycle
     /pause, /resume   stop the schedule for now, and start it again (the schedule itself is kept)
     /start, /help     what the bot does, all commands (COMMANDS, also the bot's "/" menu) and how to answer
-    a button          "Make it so" / "Skip" under the current proposal
+    a button          "Make it so" / "Edit" / "Skip" under the current proposal ("Edit": the next text is the
+                      author's own version, used as it is)
     a text            "make it so", "skip", or feedback for the current proposal (a Telegram "Reply" to an older
                       proposal is refused: only the current one counts)
 
@@ -87,6 +88,8 @@ HELP = ("I am your marketing agent. I watch your Facebook Page and your YouTube 
         "Commands:\n" + "\n".join(f"/{name} – {text}" for name, text in COMMANDS) + "\n\n"
         "Under a proposal:\n"
         "✅ Make it so (button, or write “make it so”) – post it as your Page or channel\n"
+        "✏️ Edit (button, or write “edit”) – tap the text I send to copy it, paste it into the message field, change it and send it: "
+        "that exact text is proposed\n"
         "Skip (button, or write “skip”) – post nothing, do not propose it again\n"
         "Any other text, e.g. “shorter, mention volume 2” – I rewrite the reply and ask again\n\n"
         "A proposal waits until you answer it; the next one follows your answer, and a cycle ends with a summary. "
@@ -106,6 +109,8 @@ class InboxWorker:
         self._thread: threading.Thread | None = None
         self._run_requested = threading.Event()  # "Run now" in the app
         self.cycle: Cycle | None = None  # the running cycle
+        self._editing: int | None = None  # message id of the proposal whose "Edit" was pressed: the next text is
+        # the author's own version
 
     # ----- lifecycle -----
     def start(self) -> None:
@@ -386,8 +391,28 @@ class InboxWorker:
             self._answer(update, "This proposal is already decided.")
             _remove(update.message_id)
             return
+        if decision == "edit":
+            self._answer(update, "Send your version")
+            self._start_edit(waiting[0], update.message_id)
+            return
         self._answer(update, "Posting…" if decision == "approve" else "Skipping…")
         self._decide(waiting[0], update.message_id, decision, "")
+
+    def _start_edit(self, thread_id: str, message_id: int) -> None:
+        """After "Edit": send the current text on its own (easy to copy) and take the next text as the author's
+        version."""
+        self._editing = message_id
+        try:
+            text = _agent_of(thread_id).current_text(thread_id)
+        except (LookupError, OSError) as e:
+            logger.warning("Page inbox: the current text cannot be read: %s", e)
+            text = ""
+        self._say("✏️ Write the text exactly as it should be posted and send it to me; I show it once more for "
+                  "“make it so”."
+                  + (" To start from the current one: tap the text below (it is copied), paste it into the message "
+                     "field, change it and send it." if text else ""), reply_to=message_id)
+        if text:
+            self._say(text, copyable=True)
 
     def _text(self, update: TelegramUpdate) -> None:
         command = update.text.strip().split()[0].split("@")[0].lower() if update.text.strip() else ""
@@ -412,12 +437,18 @@ class InboxWorker:
             self._say("That proposal is no longer current; answer the latest one.", reply_to=message_id)
             return
         decision, feedback = inbox.parse_answer(update.text)
-        if decision == "feedback":
+        if decision == "edit":  # "edit" written instead of the button (e.g. when the buttons are gone)
+            self._start_edit(thread_id, message_id)
+            return
+        if decision == "feedback" and self._editing == message_id:
+            decision = "edit"  # after "Edit": the author's own version, used as it is
+        elif decision == "feedback":
             self._say("Rewriting…")
         self._decide(thread_id, message_id, decision, feedback)
 
     def _decide(self, thread_id: str, message_id: int, decision: str, feedback: str) -> None:
         """Resume the run; after a final decision, propose the next open item."""
+        self._editing = None  # any answer ends the edit (a new proposal gets a new message id anyway)
         try:
             agent = _agent_of(thread_id)
             result = agent.resume(thread_id, message_id, decision, feedback)
@@ -437,9 +468,9 @@ class InboxWorker:
         self.cycle.decided(thread_id, result, agent.posted_url(thread_id) if result == "posted" else "")
         self._step(asked=False)
 
-    def _say(self, text: str, reply_to: int | None = None) -> None:
+    def _say(self, text: str, reply_to: int | None = None, copyable: bool = False) -> None:
         try:
-            telegram.send_message(text, reply_to=reply_to)
+            telegram.send_message(text, reply_to=reply_to, copyable=copyable)
         except telegram.TelegramError as e:
             logger.warning("Page inbox: could not send a Telegram message: %s", e)
 

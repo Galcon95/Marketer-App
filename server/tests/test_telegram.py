@@ -101,6 +101,14 @@ def test_send_message_goes_to_the_authors_chat_as_plain_text(bot):
     assert "reply_markup" not in body and "reply_parameters" not in body
 
 
+def test_copyable_text_is_one_tap_to_copy_block_without_parse_mode(bot):
+    bot.answer = {"message_id": 9}
+    tg.send_message("Café 🙂 <b>", copyable=True)
+    body = _body(bot.requests[0])
+    assert body["entities"] == [{"type": "pre", "offset": 0, "length": 11}]  # UTF-16 units: the emoji counts 2
+    assert "parse_mode" not in body
+
+
 def test_send_message_with_buttons_and_reply(bot):
     bot.answer = {"message_id": 8}
     tg.send_message("Proposal", buttons=[TelegramButton(label="Make it so", data="go:1"),

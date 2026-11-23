@@ -34,7 +34,7 @@ def env(monkeypatch):
     open items; what the worker did is recorded."""
     e = SimpleNamespace(said=[], answered=[], removed=[], started=[], resumed=[], waiting=None, open=[_item()],
                         decided=set(), resume_result="posted", start_error=None, open_error=None, withdrawn=[],
-                        channel=None, youtube_open=[], youtube_error=None, due=False, ran=[])
+                        channel=None, youtube_open=[], youtube_error=None, due=False, ran=[], copied=[])
     # phase 2: no post to engage under unless a test sets env.engage_post
     e.engage_post, e.engaged, e.engage_waiting, e.posted_today = None, [], None, 0
     eng = worker_module.engagement
@@ -70,7 +70,8 @@ def env(monkeypatch):
     monkeypatch.setattr(worker_module.automation, "inbox_due", lambda now: e.due)
     monkeypatch.setattr(worker_module.automation, "inbox_ran", lambda now: e.ran.append(now))
     monkeypatch.setattr(worker_module.telegram, "send_message",
-                        lambda text, buttons=None, reply_to=None: e.said.append((text, reply_to)) or 1)
+                        lambda text, buttons=None, reply_to=None, copyable=False:
+                        (copyable and e.copied.append(text)) or e.said.append((text, reply_to)) or 1)
     monkeypatch.setattr(worker_module.telegram, "answer_button", lambda cid, text=None: e.answered.append(text))
     monkeypatch.setattr(worker_module.telegram, "remove_buttons", lambda mid: e.removed.append(mid))
 
@@ -207,6 +208,39 @@ def test_feedback_does_not_propose_the_next(env):
     env.resume_result = "waiting"
     env.worker.handle(_text("shorter please"))
     assert env.said == [("Rewriting…", None)] and env.started == []
+
+
+def test_edit_button_sends_the_text_and_takes_the_next_text_as_it_is(env, monkeypatch):
+    env.waiting = ("thread", 101)
+    env.resume_result = "waiting"
+    monkeypatch.setattr(inbox, "current_text", lambda thread_id: "The current reply.")
+    env.worker.handle(_button("edit"))
+    assert env.answered == ["Send your version"] and env.resumed == []
+    assert env.said[0][1] == 101 and env.said[1] == ("The current reply.", None)  # the text alone, to copy
+    assert env.copied == ["The current reply."]  # as a tap-to-copy block
+    env.worker.handle(_text("My own reply, shorter."))
+    assert env.resumed == [("thread", 101, "edit", "My own reply, shorter.")]
+    assert ("Rewriting…", None) not in env.said
+    env.worker.handle(_text("now shorter"))  # the edit is over: text is feedback again
+    assert env.resumed[-1] == ("thread", 102, "feedback", "now shorter")
+
+
+def test_writing_edit_works_like_the_button(env, monkeypatch):
+    env.waiting = ("thread", 101)
+    monkeypatch.setattr(inbox, "current_text", lambda thread_id: "The current reply.")
+    env.worker.handle(_text("Edit"))
+    assert env.resumed == [] and env.copied == ["The current reply."]
+    env.worker.handle(_text("My version."))
+    assert env.resumed == [("thread", 101, "edit", "My version.")]
+
+
+def test_skip_after_edit_still_skips(env, monkeypatch):
+    env.waiting = ("thread", 101)
+    env.open = []
+    monkeypatch.setattr(inbox, "current_text", lambda thread_id: "")
+    env.worker.handle(_button("edit"))
+    env.worker.handle(_text("skip"))
+    assert env.resumed == [("thread", 101, "skip", "")]
 
 
 def test_text_without_a_waiting_proposal(env):

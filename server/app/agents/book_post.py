@@ -5,7 +5,8 @@ Telegram. Always newly written (never a post from Content Studio).
     START ─► draft ─► propose ─► wait ⏸ ─(make it so)─► publish ─► END
                          ▲          │
                          │          ├─(skip)───────────► skip ────► END
-                         └─ revise ◄┘(feedback)
+                         ├─ revise ◄┤(feedback)
+                         └─ use_text ◄┘(edit: the author's own text, used as it is; no model call)
 
     next_topic   the topics are the chapters of the books' summaries (made in the app, Knowledge); the rotation takes
                  a topic never proposed before, the books taking turns (book 1 chapter 1, book 2 chapter 1, book 1
@@ -41,7 +42,7 @@ from app.core import prompt_files, prompts, tracing, usage
 from app.core import state as db
 from app.core.guard import output_blocked, quote_untrusted
 from app.core.llm import structured
-from app.core.schemas import AutomationSettings, TelegramButton
+from app.core.schemas import AutomationSettings
 from app.core.style import style_guidance, temperature_for
 from app.db import records
 from app.rag.retrieval import format_context, retrieve_chunks, source_name
@@ -94,7 +95,8 @@ class PostState(TypedDict, total=False):
     reason: str
     revisions: int
     proposal_message_id: int
-    decision: str  # approve | skip | feedback
+    decision: str  # approve | skip | feedback | edit
+    own_text: bool  # the post is the author's own text (Edit), not a model's
     feedback: str
     outcome: Outcome
     posted_url: str
@@ -243,13 +245,15 @@ def _graph():
     builder.add_node("propose", _propose)
     builder.add_node("wait", _wait)
     builder.add_node("revise", _draft)  # the same writer, now with the feedback and the current post
+    builder.add_node("use_text", _use_text)
     builder.add_node("publish", _publish)
     builder.add_node("skip", _skip)
     builder.add_edge(START, "draft")
     builder.add_edge("draft", "propose")
     builder.add_edge("propose", "wait")
-    builder.add_conditional_edges("wait", _after_wait, ["publish", "skip", "revise", END])
+    builder.add_conditional_edges("wait", _after_wait, ["publish", "skip", "revise", "use_text", END])
     builder.add_edge("revise", "propose")
+    builder.add_edge("use_text", "propose")
     builder.add_edge("publish", END)
     builder.add_edge("skip", END)
     return builder.compile(checkpointer=checkpoints.checkpointer())
@@ -276,7 +280,7 @@ def _draft(state: PostState) -> PostState:
             "current": facebook.publishable_text(state.get("post", "")) or "(none yet)",
             "feedback": feedback or "(none)",
         }, BookPost, "book post", temperature_for(humanize))
-    update.update({"post": result.post, "reason": result.reason, "feedback": ""})
+    update.update({"post": result.post, "reason": result.reason, "feedback": "", "own_text": False})
     if feedback:
         update["revisions"] = state.get("revisions", 0) + 1
     return update
@@ -302,22 +306,20 @@ def _propose(state: PostState) -> PostState:
     test = state.get("test", False)
     if old := state.get("proposal_message_id"):
         inbox._quietly(telegram.remove_buttons, old)
-    buttons = [TelegramButton(label="Skip", data=inbox.BUTTON_SKIP)]
-    if post and not blocked:
-        buttons.insert(0, TelegramButton(label=inbox.go_label(test), data=inbox.BUTTON_GO))
+    buttons = inbox.proposal_buttons(bool(post) and not blocked, test)
     lines = [inbox.PLATFORM_TAG["facebook"], "📣 A new post about your book" + (inbox.TEST_HEAD if test else ""),
              f"📖 {source_name(topic.source_id) or topic.source_id} · {topic.title}",
              f"Why: {facebook.publishable_text(state.get('reason', ''))}"]
-    if state.get("revisions"):
-        lines.append(f"(revised {state['revisions']}×)")
+    lines += inbox.revision_note(state)
     if blocked:
         lines += ["", "⚠️ The post looks like it contains instructions to an AI and will not be published. Answer "
-                      "with feedback to rewrite it, or skip."]
+                      "with feedback to rewrite it, ✏️ Edit to write it yourself, or skip."]
     else:
-        lines += ["", "Proposed post:", post]
+        lines += ["", "Your post:" if state.get("own_text") else "Proposed post:", post]
         if state.get("link"):
             lines.append(f"🔗 {state['link']}")
-        lines += ["", "Answer “make it so” to publish it on your Page, “skip”, or write what to change."]
+        lines += ["", "Answer “make it so” to publish it on your Page, “skip”, write what to change, or ✏️ Edit to "
+                      "write it yourself."]
     return {"proposal_message_id": telegram.send_message("\n".join(lines), buttons=buttons)}
 
 
@@ -333,12 +335,24 @@ def _after_wait(state: PostState) -> str:
         return "publish"
     if decision in ("skip", "answered"):
         return "skip"
+    if decision == "edit":  # the author's own text: no limit, it costs no model call
+        return "use_text"
     if state.get("revisions", 0) >= MAX_REVISIONS:
         inbox._quietly(telegram.remove_buttons, state["proposal_message_id"])
         inbox._quietly(telegram.send_message, f"That was {MAX_REVISIONS} rounds of changes; I leave this topic for "
                                               "now. Write the post yourself in the app if you like.")
         return END
     return "revise"
+
+
+def _use_text(state: PostState) -> PostState:
+    """The author's own text (after "Edit") becomes the post as it is."""
+    return {"post": state["feedback"].strip(), "own_text": True, "feedback": ""}
+
+
+def current_text(thread_id: str) -> str:
+    """The post a run proposes now, as it would be posted."""
+    return facebook.publishable_text(_graph().get_state(_config(thread_id)).values.get("post", ""))
 
 
 def _publish(state: PostState) -> PostState:

@@ -5,7 +5,8 @@ post, facebook.open_items; a viewer's comment, youtube.open_items):
     START ─► choose_book ─► analyze ─► propose ─► wait ⏸ ─(make it so)─► publish ─► END
                                           ▲         │
                                           │         ├─(skip)───────────► skip ────► END
-                                          └─ revise ◄┘(feedback)
+                                          ├─ revise ◄┤(feedback)
+                                          └─ use_text ◄┘(edit: the author's own text)
 
     choose_book  which of the configured books (FACEBOOK_INBOX_BOOKS) fits the item best: one vector search per book
                  for the reader's text, the best top similarity wins (no model call; one book: that one)
@@ -14,12 +15,14 @@ post, facebook.open_items; a viewer's comment, youtube.open_items):
                  is saved as a discussion analysis, so it also shows in the app. An analysis already made for this
                  item and not posted yet is reused (no second model run after a restart)
     propose      sends the item, the agent's recommendation and the proposed reply to the author's Telegram chat, with
-                 the buttons "Make it so" and "Skip" (only "Skip" when there is nothing to post, or when the output
-                 guard refuses the reply)
+                 the buttons "Make it so", "Edit" and "Skip" (no "Make it so" when there is nothing to post, or when the
+                 output guard refuses the reply)
     wait         interrupt(): the run stops here and is stored by the checkpointer until the author answers. The
                  answer resumes it (resume()): approve, skip, or feedback with the author's words
     revise       one model call rewrites the reply to follow the feedback, from the same passages
                  (prompts/page_inbox_revise.md); saved in the analysis as the author's edit; then propose again
+    use_text     after "Edit": the author's own text replaces the reply as it is (no model call); saved in the
+                 analysis; then propose again, so the author confirms it with "Make it so"
     publish      the output guard once more, then the reply goes up as the Page: under the comment's thread
                  (facebook.reply_to_comment) or under the visitor post (facebook.comment_on_post); or as the channel
                  under the YouTube comment's thread (youtube.reply_to_comment); the analysis gets replied_id/url/at;
@@ -81,7 +84,7 @@ MAX_REVISIONS = 5  # feedback rounds per item; then the author finishes the repl
 BOOK_SEARCH_K = 3  # passages per book when choosing the book
 
 APPROVE = "make it so"
-BUTTON_GO, BUTTON_SKIP = "go", "skip"
+BUTTON_GO, BUTTON_SKIP, BUTTON_EDIT = "go", "skip", "edit"
 OTHER_AGENTS = ("eng:", "post:")  # thread id prefixes of engagement.py and book_post.py (same checkpointer)
 TEST_HEAD = " (TEST MODE: nothing will be posted)"
 # The first line of every proposal in Telegram (all agents): where the text would go, recognizable at a glance.
@@ -100,7 +103,8 @@ class Revision(BaseModel):
 
 PROMPT_VERSION = prompts.register("page_inbox", REVISE_PROMPT, Revision, {"humanize": HUMANIZE})
 
-Decision = Literal["approve", "skip", "feedback", "answered"]  # answered: not the author's; see withdraw()
+# edit: the author's own text (after the Edit button), used as it is; answered: not the author's, see withdraw()
+Decision = Literal["approve", "skip", "feedback", "edit", "answered"]
 Outcome = Literal["posted", "skipped", "failed", "blocked", "gave_up", "answered", "tested"]  # gave_up: too many
 # revisions; tested: approved in test mode, nothing posted
 
@@ -120,6 +124,7 @@ class InboxState(TypedDict, total=False):
     posted_url: str
     test: bool  # test mode (the schedule's test_mode when the run started): nothing is posted
     humanize: int  # how human the reply sounds (the schedule's humanize when the run started)
+    own_text: bool  # the reply is the author's own text (Edit), not a model's
 
 
 class InboxConfigError(RuntimeError):
@@ -315,18 +320,33 @@ def is_open(item: InboxItem) -> bool:
 
 def parse_answer(text: str) -> tuple[Decision, str]:
     """The author's text in Telegram as a decision: "make it so" approves, "skip" skips (case, spaces and closing
-    punctuation do not matter), anything else is feedback for the reply."""
+    punctuation do not matter), "edit" asks for the author's own version, anything else is feedback for the reply."""
     plain = re.sub(r"[\s.!]+$", "", " ".join(text.split()).lower())
     if plain == APPROVE:
         return "approve", ""
     if plain == "skip":
         return "skip", ""
+    if plain == "edit":  # the author writes their own version next (the worker asks for it)
+        return "edit", ""
     return "feedback", text.strip()
 
 
 def button_decision(data: str) -> Decision | None:
     """A button's data as a decision, None for an unknown button."""
-    return {BUTTON_GO: "approve", BUTTON_SKIP: "skip"}.get(data)
+    return {BUTTON_GO: "approve", BUTTON_SKIP: "skip", BUTTON_EDIT: "edit"}.get(data)
+
+
+def proposal_buttons(can_post: bool, test: bool) -> list[TelegramButton]:
+    """The buttons under a proposal (all agents): "Make it so" (only when there is a text that may be posted), "Edit"
+    (the author writes the text themselves) and "Skip"."""
+    buttons = [TelegramButton(label="✏️ Edit", data=BUTTON_EDIT), TelegramButton(label="Skip", data=BUTTON_SKIP)]
+    return [TelegramButton(label=go_label(test), data=BUTTON_GO), *buttons] if can_post else buttons
+
+
+def current_text(thread_id: str) -> str:
+    """The reply a run proposes now, as it would be posted ("" if there is none yet)."""
+    values = _graph().get_state(_config(thread_id)).values
+    return facebook.publishable_text(_analysis(values).reply) if values.get("analysis_id") else ""
 
 
 def _is_decided(values: dict) -> bool:
@@ -350,6 +370,7 @@ def _graph():
     builder.add_node("propose", _propose)
     builder.add_node("wait", _wait)
     builder.add_node("revise", _revise)
+    builder.add_node("use_text", _use_text)
     builder.add_node("publish", _publish)
     builder.add_node("skip", _skip)
     builder.add_node("withdraw", _withdraw)
@@ -357,8 +378,9 @@ def _graph():
     builder.add_edge("choose_book", "analyze")
     builder.add_edge("analyze", "propose")
     builder.add_edge("propose", "wait")
-    builder.add_conditional_edges("wait", _after_wait, ["publish", "skip", "withdraw", "revise", END])
+    builder.add_conditional_edges("wait", _after_wait, ["publish", "skip", "withdraw", "revise", "use_text", END])
     builder.add_edge("revise", "propose")
+    builder.add_edge("use_text", "propose")
     builder.add_edge("publish", END)
     builder.add_edge("skip", END)
     builder.add_edge("withdraw", END)
@@ -403,9 +425,7 @@ def _propose(state: InboxState) -> InboxState:
     blocked = bool(reply) and output_blocked(reply)
     if old := state.get("proposal_message_id"):
         _quietly(telegram.remove_buttons, old)
-    buttons = [TelegramButton(label="Skip", data=BUTTON_SKIP)]
-    if reply and not blocked:
-        buttons.insert(0, TelegramButton(label=go_label(state.get("test", False)), data=BUTTON_GO))
+    buttons = proposal_buttons(bool(reply) and not blocked, state.get("test", False))
     message_id = telegram.send_message(_proposal_text(item, analysis, reply, blocked, state), buttons=buttons)
     return {"proposal_message_id": message_id}
 
@@ -426,6 +446,8 @@ def _after_wait(state: InboxState) -> str:
         return "skip"
     if decision == "answered":
         return "withdraw"
+    if decision == "edit":  # the author's own text: no limit, it costs no model call
+        return "use_text"
     if state.get("revisions", 0) >= MAX_REVISIONS:  # ends without an outcome: handed to the app
         _quietly(telegram.remove_buttons, state["proposal_message_id"])
         _quietly(telegram.send_message, f"That was {MAX_REVISIONS} rounds of changes. Please finish this reply in the "
@@ -448,7 +470,15 @@ def _revise(state: InboxState) -> InboxState:
     }, Revision, "revised reply", temperature_for(humanize))
     records.save_discussion(analysis.model_copy(update={"reply": revision.reply, "edited": True,
                                                         "updated_at": db.now()}))
-    return {"revisions": state.get("revisions", 0) + 1, "feedback": ""}
+    return {"revisions": state.get("revisions", 0) + 1, "feedback": "", "own_text": False}
+
+
+def _use_text(state: InboxState) -> InboxState:
+    """The author's own text (after "Edit") becomes the reply as it is; saved as the author's edit."""
+    analysis = _analysis(state)
+    records.save_discussion(analysis.model_copy(update={"reply": state["feedback"].strip(), "edited": True,
+                                                        "updated_at": db.now()}))
+    return {"own_text": True, "feedback": ""}
 
 
 def _publish(state: InboxState) -> InboxState:
@@ -606,17 +636,23 @@ def _proposal_text(item: InboxItem, analysis: DiscussionAnalysis, reply: str, bl
         lines.append(item.permalink_url)
     lines += ["", f"📖 {source_name(analysis.source_id) or analysis.source_id}",
               f"Agent: {analysis.recommendation} – {facebook.publishable_text(analysis.reason)}"]
-    if state.get("revisions"):
-        lines.append(f"(revised {state['revisions']}×)")
+    lines += revision_note(state)
     if blocked:
         lines += ["", "⚠️ The reply looks like it contains instructions to an AI and will not be posted. Answer with "
-                      "feedback to rewrite it, or skip."]
+                      "feedback to rewrite it, ✏️ Edit to write it yourself, or skip."]
     elif reply:
-        lines += ["", "Proposed reply:", reply, "",
-                  "Answer “make it so” to post it, “skip”, or write what to change."]
+        lines += ["", "Your reply:" if state.get("own_text") else "Proposed reply:", reply, "",
+                  "Answer “make it so” to post it, “skip”, write what to change, or ✏️ Edit to write it yourself."]
     else:
         lines += ["", "No reply proposed. Write what the reply should say, or skip."]
     return "\n".join(lines)
+
+
+def revision_note(state: dict) -> list[str]:
+    """The proposal's line about earlier changes (all agents): "(your own text)" after Edit, else "(revised n×)"."""
+    if state.get("own_text"):
+        return ["(your own text, as you wrote it)"]
+    return [f"(revised {state['revisions']}×)"] if state.get("revisions") else []
 
 
 def go_label(test: bool) -> str:
