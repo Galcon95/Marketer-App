@@ -129,7 +129,7 @@ Press `Ctrl+C` in each terminal.
 - **Facebook Page and YouTube inbox with approval in Telegram:** set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` and
   `FACEBOOK_INBOX_BOOKS` in `server/.env`, plus `FACEBOOK_PAGE_*` for the Page and/or connect your YouTube channel in
   the app, then send `/next` to your bot. See [docs/PAGE_INBOX.md](docs/PAGE_INBOX.md).
-- **Different server URL** for the client: set `NEXT_PUBLIC_API_URL` (default `http://127.0.0.1:8000`).
+- **Different server URL** for the client: `npm run dev` uses the local server, `npm run dev:render` the one on Render (a badge next to the page title shows which); any other: set `NEXT_PUBLIC_API_URL`.
 
 More details: [docs/AGENT.md](docs/AGENT.md) (the agent), [server/README.md](server/README.md) (layout, MCP tools)
 and [eval/README.md](eval/README.md).

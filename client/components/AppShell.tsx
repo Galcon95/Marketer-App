@@ -25,7 +25,17 @@ import YouTubeConnection from "./YouTubeConnection";
 import AutomationSettings from "./AutomationSettings";
 import KeysDrawer from "./KeysPanel";
 import UsageDrawer, { formatTokens, formatUsd } from "./UsagePanel";
-import { Button, ErrorNote, Sidebar, StatusRow, Tabs, type NavGroup, type TabItem } from "./ui";
+import { Badge, Button, ErrorNote, Sidebar, StatusRow, Tabs, type NavGroup, type TabItem } from "./ui";
+
+/**
+ * Which API server the app talks to, shown next to the breadcrumb in development only (npm run dev = local,
+ * npm run dev:render = Render; see scripts/dev.mjs), so a test never goes to the wrong server unnoticed.
+ */
+const DEV_SERVER = process.env.NODE_ENV === "development"
+  ? (/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(API_URL)
+    ? { local: true, label: "local server" }
+    : { local: false, label: `server: ${new URL(API_URL).host}` })
+  : null;
 
 /** localStorage key of the chosen theme; the theme-init script in app/layout.tsx reads the same key. */
 const THEME_KEY = "theme";
@@ -59,10 +69,10 @@ type PhaseProps = { refresh: number; onChange: () => void; bookId: string | null
 
 /** Tab bar entries, one per phase. */
 const TABS: TabItem<PhaseId>[] = [
-  { id: "p1", kicker: "PHASE 1", label: "Knowledge Hub", icon: Database },
-  { id: "p2", kicker: "PHASE 2", label: "Content Studio", icon: Sparkles },
-  { id: "p3", kicker: "PHASE 3", label: "Community", icon: MessagesSquare },
-  { id: "p4", kicker: "PHASE 4", label: "Agent Workspace", icon: Cpu },
+  { id: "p1", label: "Knowledge Hub", icon: Database },
+  { id: "p2", label: "Content Studio", icon: Sparkles },
+  { id: "p3", label: "Community", icon: MessagesSquare },
+  { id: "p4", label: "Agent Workspace", icon: Cpu },
 ];
 
 /** Page title and breadcrumb subtitle shown in the top bar for each view. */
@@ -218,7 +228,10 @@ export default function AppShell() {
         <div className="bc-top">
           <Button variant="ghost" size="sm" icon={Menu} className="bc-menu-btn" aria-label="Open navigation" onClick={() => setNavOpen(!navOpen)} />
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="bc-crumb">{p?.id ?? "…"} / {TITLES[tab][1]}</div>
+            <div className="bc-crumb">
+              {TITLES[tab][1]}
+              {DEV_SERVER && <> <Badge tone={DEV_SERVER.local ? "success" : "warning"} mono dot>{DEV_SERVER.label}</Badge></>}
+            </div>
             <h1>{TITLES[tab][0]}</h1>
           </div>
           <Button variant="success" size="sm" icon={Cpu} onClick={() => setUsageOpen((n) => n + 1)}

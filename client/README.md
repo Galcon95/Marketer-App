@@ -12,14 +12,15 @@ How to run the whole app (server and client): [../README.md](../README.md).
 ```sh
 cp .env.example .env.local   # then fill in the Supabase URL and publishable key
 npm install                  # first time, and after package.json changes
-npm run dev                  # http://localhost:3000 (the server must run on http://127.0.0.1:8000)
+npm run dev                  # http://localhost:3000, talks to the local server on http://127.0.0.1:8000
+npm run dev:render           # the same, but talks to the server on Render (scripts/dev.mjs)
 ```
 
 | Variable | Meaning |
 |---|---|
 | `NEXT_PUBLIC_SUPABASE_URL` | The Supabase project URL (sign-in). |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | The publishable key. It is public (sent to the browser); the secret key never goes here. |
-| `NEXT_PUBLIC_API_URL` | Optional. URL of the FastAPI server, default `http://127.0.0.1:8000`. |
+| `NEXT_PUBLIC_API_URL` | Optional. URL of the FastAPI server, default `http://127.0.0.1:8000`. In development set by `npm run dev` / `npm run dev:render`; on Vercel set in the project settings. |
 
 ## Layout
 
