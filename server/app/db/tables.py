@@ -205,6 +205,26 @@ class AssetRow(Base):
     cost: Mapped[float | None] = mapped_column(Double)  # USD of the model calls that wrote it; None = not recorded
 
 
+class AdImageRow(Base):
+    """A generated ad picture of an asset; one column per field of schemas.AdImage (a test checks they match). The
+    picture is in Storage (core/ad_images.py). Deleted with its asset or project; keeps no book after the book's
+    deletion."""
+
+    __tablename__ = "ad_images"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)  # "img_1a2b3c4d"
+    project_id: Mapped[str] = project_fk()
+    asset_id: Mapped[str] = mapped_column(Text, ForeignKey("assets.id", ondelete="CASCADE"), index=True)
+    source_id: Mapped[str | None] = mapped_column(Text, ForeignKey("sources.id", ondelete="SET NULL"))
+    format: Mapped[str] = mapped_column(Text)
+    headline: Mapped[str] = mapped_column(Text)
+    scene: Mapped[str] = mapped_column(Text)
+    model: Mapped[str] = mapped_column(Text)
+    prompt_version: Mapped[str] = mapped_column(Text)
+    cost: Mapped[float | None] = mapped_column(Double)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime)
+
+
 class ConversationRow(Base):
     """An "Ask your book" chat; see schemas.Conversation. The turns (question, answer, citations, passages) are one
     JSON list: they are always read and written together with their chat."""

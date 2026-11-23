@@ -13,11 +13,11 @@ from pydantic import BaseModel
 from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy import inspect as sa_inspect
 
-from app.core.schemas import (ApiKey, Asset, AutomationCycle, AutomationSettings, BookSummary, Chunk, ChunkLocation,
+from app.core.schemas import (AdImage, ApiKey, Asset, AutomationCycle, AutomationSettings, BookSummary, Chunk, ChunkLocation,
                               Conversation, DiscussionAnalysis, FacebookConnection, Project, Source, UsageRecord,
                               UsageTotals, YouTubeConnection)
 from app.db.database import session
-from app.db.tables import (ApiKeyRow, AssetRow, AutomationCycleRow, AutomationSettingsRow, Base, ChunkRow,
+from app.db.tables import (AdImageRow, ApiKeyRow, AssetRow, AutomationCycleRow, AutomationSettingsRow, Base, ChunkRow,
                            ConversationRow, DiscussionRow, FacebookConnectionRow, ProjectRow, SourceRow, SummaryRow,
                            UsageRow, YouTubeConnectionRow)
 
@@ -201,7 +201,38 @@ def delete_assets(asset_ids: Iterable[str]) -> None:
     ids = list(asset_ids)
     if ids:
         with session() as s:
+            s.execute(delete(AdImageRow).where(AdImageRow.asset_id.in_(ids)))
             s.execute(delete(AssetRow).where(AssetRow.id.in_(ids)))
+
+
+# ---------- Ad pictures of the assets ----------
+def save_ad_image(image: AdImage) -> None:
+    """Insert or update an ad picture's record."""
+    with session() as s:
+        s.merge(to_row(AdImageRow, image, set()))
+
+
+def get_ad_image(image_id: str) -> AdImage | None:
+    """One ad picture's record, or None if unknown."""
+    with session() as s:
+        row = s.get(AdImageRow, image_id)
+        return _record(AdImage, row) if row else None
+
+
+def ad_images(asset_ids: Iterable[str]) -> list[AdImage]:
+    """The ad pictures of these assets, oldest first."""
+    ids = list(asset_ids)
+    if not ids:
+        return []
+    with session() as s:
+        rows = s.scalars(select(AdImageRow).where(AdImageRow.asset_id.in_(ids)).order_by(AdImageRow.created_at))
+        return [_record(AdImage, row) for row in rows]
+
+
+def delete_ad_image(image_id: str) -> None:
+    """Delete one ad picture's record; an unknown id is ignored."""
+    with session() as s:
+        s.execute(delete(AdImageRow).where(AdImageRow.id == image_id))
 
 
 # ---------- "Ask your book" conversations ----------
@@ -394,7 +425,9 @@ def delete_source(source_id: str, asset_ids: Iterable[str] = (), conversation_id
     with session() as s:
         s.execute(delete(DiscussionRow).where(DiscussionRow.source_id == source_id))  # also without foreign keys
         if asset_ids:
+            s.execute(delete(AdImageRow).where(AdImageRow.asset_id.in_(asset_ids)))
             s.execute(delete(AssetRow).where(AssetRow.id.in_(asset_ids)))
+        s.execute(update(AdImageRow).where(AdImageRow.source_id == source_id).values(source_id=None))
         if conversation_ids:
             s.execute(delete(ConversationRow).where(ConversationRow.id.in_(conversation_ids)))
         s.execute(delete(SummaryRow).where(SummaryRow.source_id == source_id))  # also without foreign keys (SQLite)

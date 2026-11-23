@@ -270,6 +270,12 @@ def exists(path: str) -> bool:
     return name in _server.names(folder) or name in _backend.names(folder)
 
 
+def delete(paths: list[str]) -> None:
+    """Delete these files (missing ones are ignored), on the server's disk and in Storage."""
+    for store in (_server, _backend):
+        store.delete(paths)
+
+
 def delete_source_files(project_id: str, source_id: str) -> None:
     """Delete all stored files of a source (its book and cover), on the server's disk and in Storage."""
     folder = f"{project_id}/{source_id}"

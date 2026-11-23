@@ -263,6 +263,35 @@ class Asset(BaseModel):
     cost: float | None = None  # USD of the model calls that wrote it (single assets); None = not recorded (older, kits)
 
 
+ImageFormat = Literal["square", "portrait", "story", "landscape"]  # 1:1, 4:5, 9:16, 16:9 (core/images.FORMATS)
+
+
+class AdImageRequest(BaseModel):
+    """Request body for POST /assets/{id}/images: one ad picture for an asset (e.g. one variant of an ad copy)."""
+
+    source_id: str | None = None  # the book whose cover and summary are used; None = the asset's only book
+    headline: str = Field("", max_length=300)  # drawn into the picture ("" = no text); checked to 80 characters
+    scene: str = Field("", max_length=300)  # the author's own wish for the scene, optional
+    format: ImageFormat = "square"
+
+
+class AdImage(BaseModel):
+    """A generated ad picture of an asset. The picture itself (PNG) is in Storage at
+    {project_id}/ads/{id}.png (core/ad_images.py); this record says what it shows and what it cost."""
+
+    id: str  # "img_1a2b3c4d"
+    project_id: str
+    asset_id: str  # the asset it was made for; deleted with it
+    source_id: str | None = None  # the book whose cover it shows; None after that book was deleted
+    format: ImageFormat
+    headline: str  # "" = a picture without text
+    scene: str
+    model: str
+    prompt_version: str
+    cost: float | None = None  # USD as reported by OpenRouter; None = not reported
+    created_at: datetime
+
+
 class CampaignRequest(BaseModel):
     """Request body for POST /projects/{id}/campaigns: a short book brief for a zero-shot campaign kit.
 

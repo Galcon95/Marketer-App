@@ -15,7 +15,7 @@ from app.core import state as db
 from app.core.auth import User, current_user
 from app.core.limits import LIMITS
 from app.core.llm import model_failure
-from app.core.schemas import Asset, Chunk, Conversation, DiscussionAnalysis, Project, Source
+from app.core.schemas import AdImage, Asset, Chunk, Conversation, DiscussionAnalysis, Project, Source
 from app.db import records
 from app.rag import vectorstore
 from app.rag.retrieval import retrieve_chunks
@@ -175,6 +175,22 @@ def owned_discussion(discussion_id: str, user: User = Depends(current_user)) -> 
     if analysis is None or not _owns_project(user, analysis.project_id):
         raise HTTPException(404, f"Discussion '{discussion_id}' not found")
     return analysis
+
+
+def owned_ad_image(image_id: str, user: User = Depends(current_user)) -> AdImage:
+    """FastAPI dependency for routes with {image_id}: an ad picture's record, if its project belongs to the signed-in
+    user. Read from the database (pictures are not kept in memory).
+
+    Raises:
+        HTTPException: 404 if the picture is unknown or not the user's; 500 if the database cannot be read.
+    """
+    try:
+        image = records.get_ad_image(image_id)
+    except OSError as e:  # DatabaseError
+        raise HTTPException(500, "The picture could not be loaded, please try again.") from e
+    if image is None or not _owns_project(user, image.project_id):
+        raise HTTPException(404, f"Picture '{image_id}' not found")
+    return image
 
 
 def admin_only(user: User = Depends(current_user)) -> User:

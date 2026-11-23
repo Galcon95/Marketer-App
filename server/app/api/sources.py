@@ -10,7 +10,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from app.api.deps import llm_limits, owned_project, owned_source
 from app.core import state as db
-from app.core import files, storage
+from app.core import ad_images, files, images, storage
 from app.core.limits import LIMITS
 from app.core.schemas import Asset, ChunkPage, Conversation, Source, SourceDeletion
 from app.db import records
@@ -178,6 +178,7 @@ def delete_source(source_id: str, source: Source = Depends(owned_source)):
     name = source_name(source.id) or source.filename
     assets, conversations = _dependents(source)
     discussions = _discussions(source_id)
+    pictures = ad_images.paths_of([a.id for a in assets])  # the ad pictures of those assets go with them
     # The database first, in one transaction (book, summary, assets, chats): if that fails, everything is still there.
     try:
         records.delete_source(source_id, (a.id for a in assets), (c.id for c in conversations))
@@ -187,6 +188,7 @@ def delete_source(source_id: str, source: Source = Depends(owned_source)):
     db.sources.pop(source_id, None)
     ingestion.delete_source_data(source)
     _delete_files(source)
+    ad_images.delete_files(pictures)
     for asset in assets:
         db.assets.pop(asset.id, None)
     for conversation in conversations:
@@ -272,7 +274,44 @@ def get_cover(source: Source = Depends(owned_source)):
         raise HTTPException(503, "The file storage cannot be reached, please try again.") from e
     if cover is None:
         raise HTTPException(404, "No cover available")
-    return Response(cover, media_type="image/png")
+    return Response(cover, media_type="image/png", headers={"Cache-Control": "no-cache"})  # it can be replaced
+
+
+MAX_COVER_BYTES = 10 * 1024 * 1024
+
+
+@router.put("/sources/{source_id}/cover", response_class=Response, status_code=204)
+def upload_cover(file: UploadFile = File(...), source: Source = Depends(owned_source)):
+    """Replace a book's cover with the author's own picture (e.g. the newest front cover), used in the library and in
+    every ad picture made from now on.
+
+    The file must be a PNG or JPEG (checked by its first bytes, not its name) of at most 10 MB and at least 100 px
+    on each side; it is decoded and stored again as a PNG (ingestion.to_png), so nothing but its pixels is kept.
+
+    Args:
+        source_id: Id of the source (path parameter).
+        file: The picture (multipart/form-data field "file").
+
+    Raises:
+        HTTPException: 404 if the source is unknown or not the user's; 413 if larger than 10 MB; 415 if not a PNG or
+            JPEG; 422 if it cannot be read or is too small or too large in pixels; 503 if a book is being processed
+            right now or Storage cannot be reached (the old cover is then kept).
+    """
+    data = file.file.read(MAX_COVER_BYTES + 1)
+    if len(data) > MAX_COVER_BYTES:
+        raise HTTPException(413, f"The picture is larger than {MAX_COVER_BYTES // (1024 * 1024)} MB.")
+    if images.image_type(data) is None:
+        raise HTTPException(415, "The cover must be a PNG or JPEG picture.")
+    try:
+        png = ingestion.to_png(data)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    except TimeoutError as e:
+        raise HTTPException(503, str(e)) from e
+    try:
+        ingestion.set_cover(source, png)
+    except OSError as e:  # FileStoreError
+        raise HTTPException(503, "The file storage cannot be reached, please try again.") from e
 
 
 def _media_type(filename: str) -> str:

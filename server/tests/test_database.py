@@ -8,11 +8,11 @@ import pytest
 
 from app.core import config, usage
 from app.core import state as db
-from app.core.schemas import (Asset, BookSummary, ChapterSummary, ChatTurn, Chunk, ChunkLocation, Citation,
+from app.core.schemas import (AdImage, Asset, BookSummary, ChapterSummary, ChatTurn, Chunk, ChunkLocation, Citation,
                               Conversation, DiscussionAnalysis, Project, SearchHit, Source, UsageRecord, UsageTotals)
 from app.db import database, records
 from app.db.database import DatabaseError
-from app.db.tables import AssetRow, ConversationRow, DiscussionRow, SourceRow, SummaryRow
+from app.db.tables import AdImageRow, AssetRow, ConversationRow, DiscussionRow, SourceRow, SummaryRow
 from tests.conftest import OWNER, STRANGER
 
 
@@ -94,6 +94,7 @@ def test_every_asset_field_has_a_column():
     assert set(AssetRow.__table__.columns.keys()) == set(Asset.model_fields)
     assert set(ConversationRow.__table__.columns.keys()) == set(Conversation.model_fields)
     assert set(DiscussionRow.__table__.columns.keys()) == set(DiscussionAnalysis.model_fields)
+    assert set(AdImageRow.__table__.columns.keys()) == set(AdImage.model_fields)
 
 
 def test_an_asset_is_saved_and_loaded_unchanged():

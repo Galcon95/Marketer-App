@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.api.deps import check_sources, checked_optional, checked_text, llm_limits, owned_project
 from app.campaign import kit
 from app.core import state as db
-from app.core import usage
+from app.core import ad_images, usage
 from app.core.config import LLM_MODEL
 from app.core.llm import GenerationError
 from app.core.schemas import Asset, CampaignPage, CampaignRequest, CampaignResponse, CampaignSummary
@@ -130,10 +130,12 @@ def delete_campaign(project_id: str, campaign_id: str):
     ids = [a.id for a in _kit(project_id, campaign_id)]
     if not ids:
         raise HTTPException(404, f"Campaign '{campaign_id}' not found")
+    pictures = ad_images.paths_of(ids)
     try:
         records.delete_assets(ids)
     except OSError as e:  # DatabaseError
         raise HTTPException(500, "The campaign could not be deleted, please try again.") from e
+    ad_images.delete_files(pictures)
     for asset_id in ids:
         db.assets.pop(asset_id, None)
 

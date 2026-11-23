@@ -30,7 +30,7 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.core import state as db
-from app.core import files
+from app.core import files, images
 from app.core.schemas import Chunk, ChunkLocation, Source
 from app.db import records
 from app.rag import vectorstore
@@ -53,6 +53,9 @@ _ingest_lock = threading.Lock()
 
 COVER_SEARCH_PAGES = 5  # pages searched for an embedded cover picture
 COVER_MAX_HEIGHT = 900  # px; larger cover images are scaled down
+UPLOADED_COVER_MAX_HEIGHT = 1600  # px; an uploaded cover may be sharper than one taken from the PDF
+MAX_IMAGE_PIXELS = 40_000_000  # an uploaded or generated picture with more pixels is refused (to_png)
+MIN_IMAGE_SIDE = 100  # px; a smaller picture is no usable cover
 # Guards replacing db.chunks, which background tasks and requests may do at the same time.
 _chunks_lock = threading.Lock()
 # Cover images (PNG) by source id, so the GUI's book list does not fetch them from Storage on every page load.
@@ -240,15 +243,61 @@ def _make_cover(source: Source, book: Path) -> None:
         if pixmap is None:
             page = next((p for p in doc if p.get_text().strip() or p.get_images()), doc[0])
             pixmap = page.get_pixmap(matrix=pymupdf.Matrix(0.8, 0.8))
-        if pixmap.n - pixmap.alpha > 3:  # CMYK etc. → RGB, which PNG needs
-            pixmap = pymupdf.Pixmap(pymupdf.csRGB, pixmap)
-        if pixmap.alpha:
-            pixmap = pymupdf.Pixmap(pixmap, 0)  # drop transparency
-        while pixmap.height > COVER_MAX_HEIGHT:
-            pixmap.shrink(1)  # halves width and height
-        image = pixmap.tobytes("png")
+        image = _png(pixmap, COVER_MAX_HEIGHT)
     files.put(files.cover_path(source.project_id, source.id), image, "image/png")
     _covers[source.id] = image
+
+
+def _png(pixmap: "pymupdf.Pixmap", max_height: int) -> bytes:
+    """A picture as an RGB PNG without transparency, halved until it is at most max_height px high."""
+    if pixmap.n - pixmap.alpha > 3:  # CMYK etc. → RGB, which PNG needs
+        pixmap = pymupdf.Pixmap(pymupdf.csRGB, pixmap)
+    if pixmap.alpha:
+        pixmap = pymupdf.Pixmap(pixmap, 0)  # drop transparency
+    while pixmap.height > max_height:
+        pixmap.shrink(1)  # halves width and height
+    return pixmap.tobytes("png")
+
+
+def to_png(data: bytes, max_height: int = UPLOADED_COVER_MAX_HEIGHT, timeout: float = 30) -> bytes:
+    """A PNG or JPEG picture (an uploaded cover, a generated ad picture) decoded and encoded again as a PNG: only the
+    pixels are kept (no metadata or anything hidden after the picture), scaled down to at most max_height px.
+
+    The size is read from the file's header first, so a small file that would expand into a gigantic picture
+    (a "decompression bomb") is refused before it is decoded.
+
+    Raises:
+        ValueError: If the data is not a readable picture, or larger than MAX_IMAGE_PIXELS or smaller than
+            MIN_IMAGE_SIDE px.
+        TimeoutError: If a book is being processed and PyMuPDF stays busy for `timeout` seconds.
+    """
+    width, height = images.image_size(data) or (0, 0)
+    if not width or not height:
+        raise ValueError("The file is not a readable PNG or JPEG picture.")
+    if width * height > MAX_IMAGE_PIXELS:
+        raise ValueError(f"The picture is too large ({width} × {height} px).")
+    if min(width, height) < MIN_IMAGE_SIDE:
+        raise ValueError(f"The picture is too small ({width} × {height} px); it needs at least {MIN_IMAGE_SIDE} px.")
+    if not _ingest_lock.acquire(timeout=timeout):  # PyMuPDF must not run in two threads at once
+        raise TimeoutError("A book is being processed right now, please try again in a minute.")
+    try:
+        try:
+            pixmap = pymupdf.Pixmap(data)
+        except Exception as e:  # noqa: BLE001 - any decoding error means: not a usable picture
+            raise ValueError("The file is not a readable PNG or JPEG picture.") from e
+        return _png(pixmap, max_height)
+    finally:
+        _ingest_lock.release()
+
+
+def set_cover(source: Source, png: bytes) -> None:
+    """Use this PNG (from to_png) as the book's cover from now on, instead of the one made from the PDF.
+
+    Raises:
+        FileStoreError: If Storage cannot be reached (the old cover is then kept).
+    """
+    files.put(files.cover_path(source.project_id, source.id), png, "image/png")
+    _covers[source.id] = png
 
 
 def delete_source_data(source: Source) -> None:

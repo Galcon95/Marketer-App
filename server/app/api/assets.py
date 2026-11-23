@@ -5,7 +5,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from app.api.deps import check_sources, checked_optional, checked_text, llm_limits, owned_asset, owned_project
-from app.core import export
+from app.core import ad_images, export
 from app.core import state as db
 from app.core.llm import GenerationError
 from app.core.schemas import Asset, AssetType, AssetUpdate, GenerateRequest
@@ -137,7 +137,7 @@ def update_asset(asset_id: str, body: AssetUpdate, asset: Asset = Depends(owned_
 
 @router.delete("/assets/{asset_id}", status_code=204)
 def delete_asset(asset: Asset = Depends(owned_asset)):
-    """Delete a generated asset (from the database and memory).
+    """Delete a generated asset (from the database and memory) with its ad pictures.
 
     Args:
         asset_id: Id of the asset (path parameter).
@@ -145,8 +145,10 @@ def delete_asset(asset: Asset = Depends(owned_asset)):
     Raises:
         HTTPException: 404 when no asset of the user has this id; 500 if it cannot be deleted (it is then kept).
     """
+    pictures = ad_images.paths_of([asset.id])
     try:
         records.delete_assets([asset.id])
     except OSError as e:  # DatabaseError
         raise HTTPException(500, "The asset could not be deleted, please try again.") from e
     db.assets.pop(asset.id, None)
+    ad_images.delete_files(pictures)

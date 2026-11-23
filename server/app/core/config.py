@@ -10,6 +10,11 @@ Read once on import from environment variables (and server/.env, if present), fi
     LLM_TIMEOUT_SECONDS → optional, seconds one chat model request may take before it is retried (default 45)
     EMBEDDING_TIMEOUT_SECONDS → optional, the same for one embedding request (default 30)
     LLM_MAX_RETRIES     → optional, retries of a failed or timed-out model request (default 3)
+    IMAGE_PROVIDER      → optional, who makes the ad images (core/images.py): "openrouter" (default; the same key as
+                          the chat model, needs OPENROUTER_API_KEY). A local provider ("comfyui") is planned
+    IMAGE_MODEL         → optional, the OpenRouter image model (default "google/gemini-3.1-flash-image"; it must
+                          take an image in, the book cover, and give images out through the chat endpoint)
+    IMAGE_TIMEOUT_SECONDS → optional, seconds one image request may take (default 120); a failed one is retried once
     MIN_RELEVANCE       → optional, the lowest similarity (0-1) a passage needs to reach the chat model (default 0.3);
                           a question with no passage above it is answered "not covered" without a model call
     RETRIEVAL_MODE      → optional, "dense" (default: vector search) or "hybrid" (vector + BM25 keyword search,
@@ -89,6 +94,10 @@ else:
 LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "45"))
 EMBEDDING_TIMEOUT_SECONDS = float(os.getenv("EMBEDDING_TIMEOUT_SECONDS", "30"))
 LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "3"))
+
+IMAGE_PROVIDER = os.getenv("IMAGE_PROVIDER", "openrouter").strip().lower() or "openrouter"
+IMAGE_MODEL = os.getenv("IMAGE_MODEL", "google/gemini-3.1-flash-image").strip() or "google/gemini-3.1-flash-image"
+IMAGE_TIMEOUT_SECONDS = float(os.getenv("IMAGE_TIMEOUT_SECONDS", "120"))
 
 MIN_RELEVANCE = float(os.getenv("MIN_RELEVANCE", "0.3"))
 RETRIEVAL_MODE = "hybrid" if os.getenv("RETRIEVAL_MODE", "dense").strip().lower() == "hybrid" else "dense"
