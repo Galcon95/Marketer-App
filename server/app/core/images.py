@@ -89,6 +89,15 @@ def is_configured() -> bool:
     return config.IMAGE_PROVIDER == "openrouter" and config.PROVIDER == "openrouter" and bool(config.API_KEY)
 
 
+def status() -> str:
+    """Why pictures can or cannot be made, for GET /health."""
+    if config.IMAGE_PROVIDER == "off":
+        return "off (IMAGE_PROVIDER=off)"
+    if is_configured():
+        return config.IMAGE_MODEL
+    return f"not available ({config.IMAGE_PROVIDER!r} needs PROVIDER=openrouter and its API key)"
+
+
 @cache
 def _model(aspect_ratio: str) -> Runnable:
     """The image model via OpenRouter, asked for pictures of `aspect_ratio` (one cached instance per ratio)."""
@@ -152,6 +161,8 @@ def generate_ad_image(*, book: str, about: str, headline: str | None = None, sce
     """
     messages = build_messages(book=book, about=about, headline=headline, scene=scene, fmt=fmt, cover=cover,
                               cover_type=cover_type)
+    if config.IMAGE_PROVIDER == "off":
+        raise GenerationError(503, "Pictures are switched off on this server (IMAGE_PROVIDER=off in server/.env).")
     if config.IMAGE_PROVIDER != "openrouter":
         raise GenerationError(503, f"Image provider {config.IMAGE_PROVIDER!r} is not available. "
                                    "Set IMAGE_PROVIDER=openrouter in server/.env and restart the server.")

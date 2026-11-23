@@ -9,6 +9,7 @@ replying to comments.
     DELETE /facebook/connection                forget the user's Page
     GET    /facebook/comments                  the latest posts that have comments, with them (for the agent)
     POST   /assets/{id}/publish/facebook       publish a generated post on the Page (on the author's click)
+    POST   /ad-images/{id}/publish/facebook    post an ad picture with a caption on the Page (on the click)
     POST   /discussions/{id}/reply/facebook    post an analysis's reply as the Page under the comment (on the click)
 
 Every user works on their own Page, connected with Facebook Login (social/page_connections.py); the admin without one
@@ -22,11 +23,12 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 
-from app.api.deps import owned_asset, owned_discussion
+from app.api.deps import owned_ad_image, owned_asset, owned_discussion
+from app.core import ad_images
 from app.core import state as db
 from app.core.auth import User, current_user
 from app.core.guard import output_blocked, scan_third_party
-from app.core.schemas import (Asset, DiscussionAnalysis, FacebookConnectRequest, FacebookLoginUrl, FacebookPageChoice,
+from app.core.schemas import (AdImage, AdImagePublishRequest, Asset, DiscussionAnalysis, FacebookConnectRequest, FacebookLoginUrl, FacebookPageChoice,
                               FacebookStatus, FacebookThread)
 from app.db import records
 from app.social import facebook, page_connections
@@ -196,6 +198,50 @@ def publish(asset: Asset = Depends(owned_asset), page: facebook.PageAccess = Dep
     except OSError as e:  # DatabaseError
         raise HTTPException(500, f"Published ({post.url}), but this could not be saved in the app.") from e
     return asset
+
+
+@router.post("/ad-images/{image_id}/publish/facebook", response_model=AdImage)
+def publish_picture(body: AdImagePublishRequest, image: AdImage = Depends(owned_ad_image),
+                    page: facebook.PageAccess = Depends(page_of)):
+    """Post an ad picture with a caption (the author's, e.g. the ad copy's text) as a photo post on the author's
+    Facebook Page. Once per picture.
+
+    Args:
+        image_id: Id of the picture (path parameter).
+        body: The caption; citation markers are removed like in a published post.
+
+    Returns:
+        The picture's record with published_id, published_url and published_at set.
+
+    Raises:
+        HTTPException: 404 when no picture of the user has this id or its file is missing; 409 if it was posted
+            already; 422 if the caption is empty, too long or looks like a prompt injection got into it; 503 if the
+            user has no Page or its token is invalid, or Storage cannot be reached; 429, 502 or 504 if Facebook
+            fails; 500 if it was posted but the record could not be saved.
+    """
+    if image.published_id:
+        raise HTTPException(409, f"Already posted: {image.published_url}")
+    text = facebook.publishable_text(body.message)
+    _refuse_injection(text, "caption")
+    try:
+        png = ad_images.picture(image)
+    except OSError as e:  # FileStoreError
+        raise HTTPException(503, "The file storage cannot be reached, please try again.") from e
+    if png is None:
+        raise HTTPException(404, "The file of this picture is missing")
+    try:
+        with facebook.as_page(page):
+            post = facebook.publish_photo(text, png)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    except facebook.FacebookError as e:
+        raise HTTPException(e.status_code, str(e)) from e
+    image = image.model_copy(update={"published_id": post.id, "published_url": post.url, "published_at": db.now()})
+    try:
+        records.save_ad_image(image)
+    except OSError as e:  # DatabaseError
+        raise HTTPException(500, f"Posted ({post.url}), but this could not be saved in the app.") from e
+    return image
 
 
 @router.get("/facebook/comments", response_model=list[FacebookThread])

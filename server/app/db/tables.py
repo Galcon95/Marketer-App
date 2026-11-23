@@ -223,6 +223,9 @@ class AdImageRow(Base):
     prompt_version: Mapped[str] = mapped_column(Text)
     cost: Mapped[float | None] = mapped_column(Double)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime)
+    published_id: Mapped[str | None] = mapped_column(Text)
+    published_url: Mapped[str | None] = mapped_column(Text)
+    published_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
 
 
 class ConversationRow(Base):

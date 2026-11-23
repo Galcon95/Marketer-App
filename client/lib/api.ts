@@ -154,6 +154,9 @@ export interface AdImage {
   prompt_version: string;
   cost: number | null; // USD
   created_at: string;
+  published_id?: string | null; // posted on the author's Facebook Page (once): the post's id, link and time
+  published_url?: string | null;
+  published_at?: string | null;
 }
 
 /** Request body of POST /assets/{id}/images. */
@@ -1088,6 +1091,9 @@ export const api = {
   listAdImages: (assetId: string) => request<AdImage[]>(`/assets/${assetId}/images`),
   /** POST /assets/{assetId}/images: make an ad picture with the image model (about 15 s, about $0.07). */
   createAdImage: (assetId: string, body: AdImageRequest) => request<AdImage>(`/assets/${assetId}/images`, postJson(body)),
+  /** POST /ad-images/{imageId}/publish/facebook: post the picture with `message` as caption on the user's Page, once. */
+  publishAdImage: (imageId: string, message: string) =>
+    request<AdImage>(`/ad-images/${imageId}/publish/facebook`, postJson({ message })),
   /** DELETE /ad-images/{imageId}: delete an ad picture. */
   deleteAdImage: (imageId: string) => request<void>(`/ad-images/${imageId}`, { method: "DELETE" }),
   /**

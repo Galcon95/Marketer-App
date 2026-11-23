@@ -154,6 +154,25 @@ def test_publish_post_rejects_bad_input(graph, message, link):
     assert graph.requests == []
 
 
+def test_publish_photo_uploads_the_picture_with_its_caption(graph):
+    graph.answer = {"id": "555", "post_id": f"{PAGE}_444"}
+    published = fb.publish_photo("  Life in 2045  ", b"PNG-bytes")
+    request = graph.requests[0]
+    assert request.method == "POST" and request.url.path == f"/v27.0/{PAGE}/photos"
+    assert request.headers["content-type"].startswith("multipart/form-data")
+    body = request.content
+    assert b'name="message"' in body and b"Life in 2045" in body and b"  Life" not in body
+    assert b'name="source"; filename="picture.png"' in body and b"PNG-bytes" in body
+    assert published.id == f"{PAGE}_444" and published.url == f"https://www.facebook.com/{PAGE}_444"
+
+
+@pytest.mark.parametrize("message,image", [("", b"x"), ("Hi", b"")], ids=["no-caption", "no-picture"])
+def test_publish_photo_rejects_bad_input(graph, message, image):
+    with pytest.raises(ValueError):
+        fb.publish_photo(message, image)
+    assert graph.requests == []
+
+
 def test_reply_to_comment(graph):
     graph.answer = {"id": "111_8_99"}
     published = fb.reply_to_comment("111_8", "Yes, chapter 3 is about that.")

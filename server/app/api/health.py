@@ -7,7 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from app.api.deps import admin_only
-from app.core import accounts, llm, usage, usage_export
+from app.core import accounts, images, llm, usage, usage_export
 from app.core import state as db
 from app.core.auth import User, current_user
 from app.core.limits import LIMITS
@@ -35,7 +35,8 @@ def health():
     """Report the status of the API and its dependencies.
 
     The vector database is reported with its vector count and embedding model, the LLM with its
-    model and whether LangSmith tracing is on (both down if no API key is set). Overall `ok`
+    model and whether LangSmith tracing is on (both down if no API key is set), the ad pictures with their model
+    (down when IMAGE_PROVIDER=off: the app then offers no pictures). Overall `ok`
     reflects only the API itself.
     """
     vector_ok, vector_detail = vectorstore.health()
@@ -44,6 +45,7 @@ def health():
         ServiceStatus(name="api", ok=True, detail="running"),
         ServiceStatus(name="vector_db", ok=vector_ok, detail=vector_detail),
         ServiceStatus(name="llm", ok=llm_ok, detail=llm_detail),
+        ServiceStatus(name="images", ok=images.is_configured(), detail=images.status()),
     ]
     return Health(ok=services[0].ok, services=services)
 

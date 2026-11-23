@@ -6,6 +6,7 @@
     recent_threads(posts)            the latest posts that have comments, with them (answered = the Page replied)
     open_items(posts)                what waits for an answer: visitors' unanswered comments and visitor posts
     publish_post(message, link)      a new post on the Page                      (writes)
+    publish_photo(message, image)    a new photo post on the Page (picture + caption) (writes)
     reply_to_comment(id, message)    a reply as the Page under a comment         (writes)
     comment_on_post(id, message)     a comment as the Page under a (visitor's) post (writes)
 
@@ -202,6 +203,23 @@ def publish_post(message: str, link: str | None = None) -> FacebookPublished:
     return FacebookPublished(id=data["id"], url=f"https://www.facebook.com/{data['id']}")
 
 
+def publish_photo(message: str, image: bytes, media_type: str = "image/png") -> FacebookPublished:
+    """Publish a picture with a caption as a photo post on the Page (uploaded as a file, so no public URL is
+    needed). Only on the author's click.
+
+    Raises:
+        ValueError: If the caption is empty or too long, or there is no picture.
+    """
+    message = _check_message(message)
+    if not image:
+        raise ValueError("The picture is empty.")
+    extension = "jpg" if media_type == "image/jpeg" else "png"
+    data = _request("POST", f"{_page_id()}/photos", data={"message": message, "published": "true"},
+                    files={"source": (f"picture.{extension}", image, media_type)})
+    post_id = data.get("post_id") or data["id"]  # the feed post that shows the photo (else the photo itself)
+    return FacebookPublished(id=post_id, url=f"https://www.facebook.com/{post_id}")
+
+
 def reply_to_comment(comment_id: str, message: str) -> FacebookPublished:
     """Reply as the Page under a comment. Only on the author's click.
 
@@ -238,16 +256,17 @@ def _client() -> httpx.Client:
 
 
 def _request(method: str, path: str, params: dict[str, Any] | None = None,
-             data: dict[str, Any] | None = None) -> dict[str, Any]:
-    """One Graph request with the Page token; the JSON answer, or FacebookError."""
+             data: dict[str, Any] | None = None, files: dict[str, Any] | None = None) -> dict[str, Any]:
+    """One Graph request with the Page token (`files`: a multipart upload); the JSON answer, or FacebookError."""
     page = _current()
     if not page:
         raise FacebookError(503, "No Facebook Page is connected: connect yours under Integrations → Facebook Page.")
-    return graph_request(method, path, page.token, params, data, from_env=page.from_env)
+    return graph_request(method, path, page.token, params, data, from_env=page.from_env, files=files)
 
 
 def graph_request(method: str, path: str, token: str | None, params: dict[str, Any] | None = None,
-                  data: dict[str, Any] | None = None, from_env: bool = False) -> dict[str, Any]:
+                  data: dict[str, Any] | None = None, from_env: bool = False,
+                  files: dict[str, Any] | None = None) -> dict[str, Any]:
     """One Graph request, with `token` in the Authorization header (None: no token, e.g. the Facebook Login code
     exchange, whose app secret is in the parameters); the JSON answer, or FacebookError. `from_env` only changes the
     advice when the token is invalid."""
@@ -258,7 +277,7 @@ def graph_request(method: str, path: str, token: str | None, params: dict[str, A
                                              hashlib.sha256).hexdigest()
     try:
         with _client() as client:
-            response = client.request(method, path, params=params, data=data, headers=headers)
+            response = client.request(method, path, params=params, data=data, files=files, headers=headers)
     except httpx.TimeoutException as e:
         raise FacebookError(504, "Facebook did not answer in time. Try again.") from e
     except httpx.HTTPError as e:  # no str(e): keep request details out of messages

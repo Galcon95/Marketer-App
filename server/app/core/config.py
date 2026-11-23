@@ -11,7 +11,8 @@ Read once on import from environment variables (and server/.env, if present), fi
     EMBEDDING_TIMEOUT_SECONDS → optional, the same for one embedding request (default 30)
     LLM_MAX_RETRIES     → optional, retries of a failed or timed-out model request (default 3)
     IMAGE_PROVIDER      → optional, who makes the ad images (core/images.py): "openrouter" (default; the same key as
-                          the chat model, needs OPENROUTER_API_KEY). A local provider ("comfyui") is planned
+                          the chat model, needs OPENROUTER_API_KEY) or "off" (no pictures anywhere: the app hides
+                          its picture panel). A local provider ("comfyui") is planned
     IMAGE_MODEL         → optional, the OpenRouter image model (default "google/gemini-3.1-flash-image"; it must
                           take an image in, the book cover, and give images out through the chat endpoint)
     IMAGE_TIMEOUT_SECONDS → optional, seconds one image request may take (default 120); a failed one is retried once

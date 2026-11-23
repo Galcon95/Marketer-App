@@ -290,6 +290,15 @@ class AdImage(BaseModel):
     prompt_version: str
     cost: float | None = None  # USD as reported by OpenRouter; None = not reported
     created_at: datetime
+    published_id: str | None = None  # posted on the author's Facebook Page (once): the post's id, link and time
+    published_url: str | None = None
+    published_at: datetime | None = None
+
+
+class AdImagePublishRequest(BaseModel):
+    """Request body for POST /ad-images/{id}/publish/facebook: the caption posted with the picture."""
+
+    message: str = Field(min_length=1, max_length=63206)
 
 
 class CampaignRequest(BaseModel):

@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore, type JSX } from "react";
 import {
-  Brain, Cpu, Database, FileText, KeyRound, LogOut, Menu, MessagesSquare, Moon, Plug, Server, Settings, Sparkles,
+  Brain, Cpu, Database, FileText, Image as ImageIcon, KeyRound, LogOut, Menu, MessagesSquare, Moon, Plug, Server, Settings, Sparkles,
   SquarePlay, Sun, SunMoon, ThumbsUp, Users,
 } from "lucide-react";
 import { api, API_URL } from "@/lib/api";
@@ -91,6 +91,7 @@ const SERVICE_META: Record<string, { label: string; icon: typeof Server }> = {
   api: { label: "API", icon: Server },
   vector_db: { label: "Vector DB", icon: Database },
   llm: { label: "LLM", icon: Brain },
+  images: { label: "Pictures", icon: ImageIcon },
 };
 
 /** Component rendered for each view. */
@@ -211,7 +212,7 @@ export default function AppShell() {
   else
     status = health.data.services.map((s) => {
       const meta = SERVICE_META[s.name] ?? { label: s.name, icon: Server };
-      return <StatusRow key={s.name} icon={meta.icon} label={meta.label} value={s.ok ? "Connected" : "Offline"} ok={s.ok} title={s.detail} />;
+      return <StatusRow key={s.name} icon={meta.icon} label={meta.label} value={s.ok ? "Connected" : s.detail.startsWith("off") ? "Off" : "Offline"} ok={s.ok} title={s.detail} />;
     });
 
   return (
