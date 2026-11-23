@@ -2,11 +2,13 @@
 Page about the next topic of their books, with a call to action, published only after the author's "make it so" in
 Telegram. Always newly written (never a post from Content Studio).
 
-    START ─► draft ─► propose ─► wait ⏸ ─(make it so)─► publish ─► END
-                         ▲          │
-                         │          ├─(skip)───────────► skip ────► END
-                         ├─ revise ◄┤(feedback)
-                         └─ use_text ◄┘(edit: the author's own text, used as it is; no model call)
+    START ─► draft ─► picture ─► propose ─► wait ⏸ ─(make it so)─► publish ─► END
+                         ▲      ▲         ▲        │
+                         │      │         │        ├─(skip)───────────► skip ────► END
+                         │      │         └ no_picture ◄┤(without picture)
+                         │      └── new_picture ◄───┤(new picture)
+                         ├─ revise ◄────────────────┤(feedback)
+                         └─ use_text ◄──────────────┘(edit: the author's own text, used as it is; no model call)
 
     next_topic   the topics are the chapters of the books' summaries (made in the app, Knowledge); the rotation takes
                  a topic never proposed before, the books taking turns (book 1 chapter 1, book 2 chapter 1, book 1
@@ -14,10 +16,16 @@ Telegram. Always newly written (never a post from Content Studio).
                  cycle log (entries of kind "post", item_id "<source id>#<chapter index>") and this process's memory
     draft        the chapter's best passages (one vector search in that book), the latest own Page posts (not to
                  repeat them) and one model call (prompts/book_post.md): hook, one or two ideas, call to action
-    propose      the topic, the book, the post and its link to Telegram with "Make it so" / "Skip"
+    picture      only with the schedule's `book_post_picture` (and pictures on, core/images.py): an ad picture for
+                 the post, the book's cover in a scene, with a headline; headline and scene come from the post
+                 (the same model call writes them). Stored at {project}/agent/{id}.png until the run ends. At most
+                 MAX_PICTURES per run; a failed picture only adds a note (the post goes on without one)
+    propose      the topic, the book, the post and its link to Telegram with "Make it so" / "Skip" (and the picture
+                 above it, with "New picture" / "Without picture")
     wait         interrupt(): stored by the checkpointer until the author answers (resume)
     revise       the same prompt again with the author's feedback and the current post, from the same passages
-    publish      the output guard once more, then facebook.publish_post (with the book link as its link preview);
+    publish      the output guard once more, then facebook.publish_post (with the book link as its link preview),
+                 or with a picture facebook.publish_photo (the link then at the end of the text);
                  in test mode nothing is published and Telegram says so (outcome "tested")
 
 Like the other agents: one waiting proposal at a time across all agents, a decision is applied exactly once under a
@@ -38,13 +46,15 @@ from pydantic import BaseModel, Field
 
 from app.agents import checkpoints
 from app.agents import page_inbox as inbox
-from app.core import prompt_files, prompts, tracing, usage
+from app.core import files, images, prompt_files, prompts, tracing, usage
+from app.core import ad_images
 from app.core import state as db
 from app.core.guard import output_blocked, quote_untrusted
-from app.core.llm import structured
-from app.core.schemas import AutomationSettings
+from app.core.llm import GenerationError, structured
+from app.core.schemas import AutomationSettings, TelegramButton
 from app.core.style import style_guidance, temperature_for
 from app.db import records
+from app.rag import ingestion
 from app.rag.retrieval import format_context, retrieve_chunks, source_name
 from app.social import facebook, telegram
 
@@ -57,6 +67,8 @@ PASSAGES = 5  # book passages given to the model
 RECENT_POSTS = 3  # latest own posts given to the model, not to repeat them
 RECENT_TEXT = 600  # characters of each of them
 LOG_CYCLES = 200  # cycles read for the rotation
+MAX_PICTURES = 3  # pictures made per post (the first and two "new picture"), about $0.07 each
+PICTURE_FORMAT = "square"  # 1:1, shown whole in the Facebook feed
 # Chapters that make poor post topics (back matter the summary kept), by the start of their title.
 NOT_TOPICS = ("appendix", "index", "bibliography", "references", "notes", "acknowledg", "glossary", "about the author")
 
@@ -71,6 +83,10 @@ class BookPost(BaseModel):
     post: str = Field(min_length=1, max_length=2000, description="The post: hook, one or two ideas from the topic, a "
                                                                  "call to action; [n] markers for passages used.")
     reason: str = Field(description="One sentence for the author: what angle the post takes and why.")
+    headline: str = Field(default="", description="Headline for the post's picture: its hook or main question in "
+                                                  "at most 8 words.")
+    scene: str = Field(default="", description="One sentence: the picture's background, showing the post's idea (no "
+                                               "text, logos or real people).")
 
 
 PROMPT_VERSION = prompts.register("book_post", PROMPT, BookPost, {"humanize": HUMANIZE})
@@ -100,6 +116,13 @@ class PostState(TypedDict, total=False):
     feedback: str
     outcome: Outcome
     posted_url: str
+    with_picture: bool  # the post comes with a picture (the schedule's book_post_picture; "Without picture" ends it)
+    headline: str  # the picture's headline and scene, from the post (BookPost)
+    scene: str
+    picture_path: str  # the current picture in Storage ("" = none)
+    picture_sent: str  # the picture last sent to Telegram (not sent again with a rewritten text)
+    picture_note: str  # why there is no picture ("" = none)
+    pictures: int  # pictures made in this run
 
 
 # ---------- choosing the topic ----------
@@ -168,7 +191,8 @@ def start(topic: Topic, settings: AutomationSettings) -> str | None:
         _used[topic.key] = db.now()
     with tracing.scope():
         _graph().invoke({"topic": topic.model_dump(mode="json"), "link": settings.book_links.get(topic.source_id, ""),
-                         "test": settings.test_mode, "humanize": settings.humanize, "revisions": 0},
+                         "test": settings.test_mode, "humanize": settings.humanize, "revisions": 0,
+                         "with_picture": settings.book_post_picture and images.is_configured(), "pictures": 0},
                         _config(thread_id))
     if _waiting(thread_id):
         with _lock:
@@ -246,14 +270,21 @@ def _graph():
     builder.add_node("wait", _wait)
     builder.add_node("revise", _draft)  # the same writer, now with the feedback and the current post
     builder.add_node("use_text", _use_text)
+    builder.add_node("picture", _picture)
+    builder.add_node("new_picture", _new_picture)
+    builder.add_node("no_picture", _no_picture)
     builder.add_node("publish", _publish)
     builder.add_node("skip", _skip)
     builder.add_edge(START, "draft")
-    builder.add_edge("draft", "propose")
+    builder.add_edge("draft", "picture")
+    builder.add_edge("picture", "propose")
     builder.add_edge("propose", "wait")
-    builder.add_conditional_edges("wait", _after_wait, ["publish", "skip", "revise", "use_text", END])
-    builder.add_edge("revise", "propose")
+    builder.add_conditional_edges("wait", _after_wait, ["publish", "skip", "revise", "use_text", "new_picture",
+                                                        "no_picture", END])
+    builder.add_edge("revise", "picture")
     builder.add_edge("use_text", "propose")
+    builder.add_edge("new_picture", "picture")
+    builder.add_edge("no_picture", "propose")
     builder.add_edge("publish", END)
     builder.add_edge("skip", END)
     return builder.compile(checkpointer=checkpoints.checkpointer())
@@ -280,7 +311,9 @@ def _draft(state: PostState) -> PostState:
             "current": facebook.publishable_text(state.get("post", "")) or "(none yet)",
             "feedback": feedback or "(none)",
         }, BookPost, "book post", temperature_for(humanize))
-    update.update({"post": result.post, "reason": result.reason, "feedback": "", "own_text": False})
+    update.update({"post": result.post, "reason": result.reason, "feedback": "", "own_text": False,
+                   "headline": result.headline.strip()[:images.MAX_HEADLINE_CHARS],
+                   "scene": result.scene.strip()[:images.MAX_SCENE_CHARS]})
     if feedback:
         update["revisions"] = state.get("revisions", 0) + 1
     return update
@@ -306,10 +339,14 @@ def _propose(state: PostState) -> PostState:
     test = state.get("test", False)
     if old := state.get("proposal_message_id"):
         inbox._quietly(telegram.remove_buttons, old)
-    buttons = inbox.proposal_buttons(bool(post) and not blocked, test)
+    buttons = inbox.proposal_buttons(bool(post) and not blocked, test) + _picture_buttons(state)
+    update: PostState = {}
+    picture_line = _send_picture(state, update)
     lines = [inbox.PLATFORM_TAG["facebook"], "📣 A new post about your book" + (inbox.TEST_HEAD if test else ""),
              f"📖 {source_name(topic.source_id) or topic.source_id} · {topic.title}",
              f"Why: {facebook.publishable_text(state.get('reason', ''))}"]
+    if picture_line:
+        lines.append(picture_line)
     lines += inbox.revision_note(state)
     if blocked:
         lines += ["", "⚠️ The post looks like it contains instructions to an AI and will not be published. Answer "
@@ -320,7 +357,8 @@ def _propose(state: PostState) -> PostState:
             lines.append(f"🔗 {state['link']}")
         lines += ["", "Answer “make it so” to publish it on your Page, “skip”, write what to change, or ✏️ Edit to "
                       "write it yourself."]
-    return {"proposal_message_id": telegram.send_message("\n".join(lines), buttons=buttons)}
+    update["proposal_message_id"] = telegram.send_message("\n".join(lines), buttons=buttons)
+    return update
 
 
 def _wait(state: PostState) -> PostState:
@@ -337,7 +375,12 @@ def _after_wait(state: PostState) -> str:
         return "skip"
     if decision == "edit":  # the author's own text: no limit, it costs no model call
         return "use_text"
+    if decision == "new_picture" and state.get("with_picture") and state.get("pictures", 0) < MAX_PICTURES:
+        return "new_picture"
+    if decision in ("new_picture", "no_picture"):  # "no_picture", or no more pictures: on without one
+        return "no_picture"
     if state.get("revisions", 0) >= MAX_REVISIONS:
+        _drop_picture(state)
         inbox._quietly(telegram.remove_buttons, state["proposal_message_id"])
         inbox._quietly(telegram.send_message, f"That was {MAX_REVISIONS} rounds of changes; I leave this topic for "
                                               "now. Write the post yourself in the app if you like.")
@@ -365,19 +408,124 @@ def _publish(state: PostState) -> PostState:
         return {"outcome": "blocked"}
     if state.get("test"):
         inbox._quietly(telegram.send_message, inbox.TEST_NOT_POSTED)
+        _drop_picture(state)
         return {"outcome": "tested"}
+    link = state.get("link") or ""
     try:
-        posted = facebook.publish_post(text, link=state.get("link") or None)
-    except (facebook.FacebookError, ValueError) as e:
+        picture = _current_picture(state)
+        if picture:  # a photo post has no link preview: the link goes at the end of the text
+            posted = facebook.publish_photo(text + (f"\n\n{link}" if link and link not in text else ""), picture)
+        else:
+            posted = facebook.publish_post(text, link=link or None)
+    except (facebook.FacebookError, ValueError, OSError) as e:
         logger.warning("Book post: publishing failed: %s", e)
         inbox._quietly(telegram.send_message, f"Not published, Facebook said: {e}")
         return {"outcome": "failed"}
-    inbox._quietly(telegram.send_message, f"Published on your Page: {posted.url}")
+    _drop_picture(state)
+    inbox._quietly(telegram.send_message, f"Published on your Page{' with the picture' if picture else ''}: "
+                                          f"{posted.url}")
     return {"outcome": "posted", "posted_url": posted.url or ""}
+
+
+# ---------- the picture ----------
+def _picture(state: PostState) -> PostState:
+    """Make the post's picture when the run has one and none is there yet (a rewritten text keeps its picture). A
+    failure only leaves a note: the post goes on without a picture."""
+    if not state.get("with_picture") or state.get("picture_path"):
+        return {}
+    topic = Topic.model_validate(state["topic"])
+    source = db.sources.get(topic.source_id)
+    count = state.get("pictures", 0) + 1
+    headline = state.get("headline") or topic.title[:images.MAX_HEADLINE_CHARS]
+    scene = state.get("scene", "")
+    if output_blocked(f"{headline}\n{scene}"):  # model output from the book's passages: checked like the post
+        headline, scene = topic.title[:images.MAX_HEADLINE_CHARS], ""
+    try:
+        if source is None:
+            raise ValueError("the book is no longer in the library")
+        with usage.tagged(source_id=source.id):
+            made = images.generate_ad_image(
+                book=source_name(source.id) or source.filename, about=ad_images.about_book(source.id),
+                headline=headline, scene=scene, fmt=PICTURE_FORMAT, cover=ingestion.cover(source),
+                project_id=source.project_id, source_id=source.id)
+        png = ingestion.to_png(made.data, max_height=ad_images.MAX_PICTURE_HEIGHT)
+        path = f"{source.project_id}/agent/{db.new_id('img')}.png"
+        files.put(path, png, "image/png")
+    except (GenerationError, ValueError, TimeoutError, OSError) as e:
+        logger.warning("Book post: the picture could not be made: %s", e)
+        return {"pictures": count, "picture_note": f"🖼 No picture this time: {e}"}
+    return {"pictures": count, "picture_path": path, "picture_note": ""}
+
+
+def _new_picture(state: PostState) -> PostState:
+    """"New picture": the current one goes; the picture node makes another."""
+    _drop_picture(state)
+    return {"picture_path": ""}
+
+
+def _no_picture(state: PostState) -> PostState:
+    """"Without picture" (or no pictures left): the post goes on as a text post."""
+    _drop_picture(state)
+    return {"with_picture": False, "picture_path": "", "picture_note": ""}
+
+
+def _picture_buttons(state: PostState) -> list[TelegramButton]:
+    """The second row under a proposal with a picture: "New picture" (while pictures are left) and "Without
+    picture"; after a failed picture: "Try a picture again"."""
+    if not state.get("with_picture"):
+        return []
+    more = state.get("pictures", 0) < MAX_PICTURES
+    if not state.get("picture_path"):
+        return [TelegramButton(label="🖼 Try a picture again", data=inbox.BUTTON_NEW_PICTURE, row=1)] if more else []
+    buttons = [TelegramButton(label="🔄 New picture", data=inbox.BUTTON_NEW_PICTURE, row=1)] if more else []
+    return buttons + [TelegramButton(label="🚫 Without picture", data=inbox.BUTTON_NO_PICTURE, row=1)]
+
+
+def _send_picture(state: PostState, update: PostState) -> str:
+    """Send a new picture to Telegram (above the proposal; one already sent is not sent again) and return the line
+    the proposal shows about it ("" when the post has none)."""
+    if not state.get("with_picture"):
+        return ""
+    path = state.get("picture_path", "")
+    if not path:
+        return state.get("picture_note", "")
+    if path != state.get("picture_sent"):
+        try:
+            picture = files.get(path)
+            if picture is None:
+                raise ValueError("the stored picture is missing")
+            telegram.send_photo(picture, f"🖼 The picture for the post below: {state.get('headline', '')}")
+        except (OSError, ValueError, telegram.TelegramError) as e:
+            logger.warning("Book post: the picture could not be sent: %s", e)
+            return "🖼 The picture could not be shown here; it is still posted with the text."
+        update["picture_sent"] = path
+    return f"🖼 With the picture above ({state.get('pictures', 1)} of at most {MAX_PICTURES})."
+
+
+def _current_picture(state: PostState) -> bytes | None:
+    """The PNG to post with the text, or None for a text post.
+
+    Raises:
+        ValueError: If the run has a picture but it is missing in Storage (nothing is posted then).
+        FileStoreError: If Storage cannot be reached.
+    """
+    if not (state.get("with_picture") and state.get("picture_path")):
+        return None
+    picture = files.get(state["picture_path"])
+    if picture is None:
+        raise ValueError("the picture is missing; answer “without picture” to post the text alone")
+    return picture
+
+
+def _drop_picture(state: PostState) -> None:
+    """Delete the run's current picture from Storage (it is on the Page, or not wanted)."""
+    if path := state.get("picture_path"):
+        ad_images.delete_files([path])
 
 
 def _skip(state: PostState) -> PostState:
     inbox._quietly(telegram.remove_buttons, state["proposal_message_id"])
+    _drop_picture(state)
     inbox._quietly(telegram.send_message, "Skipped. Nothing was published; the next cycle takes the next topic.")
     return {"outcome": "skipped"}
 

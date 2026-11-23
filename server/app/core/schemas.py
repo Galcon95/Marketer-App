@@ -809,10 +809,12 @@ class YouTubeConnection(BaseModel):
 
 # ---------- Telegram (social/telegram.py) ----------
 class TelegramButton(BaseModel):
-    """A button under a bot message; pressing it sends `data` back to the bot (at most 64 bytes)."""
+    """A button under a bot message; pressing it sends `data` back to the bot (at most 64 bytes). Buttons with the
+    same `row` stand side by side, rows in ascending order."""
 
     label: str
     data: str
+    row: int = 0
 
 
 class TelegramUpdate(BaseModel):
@@ -866,6 +868,7 @@ class AutomationSchedule(BaseModel):
     engage_days: int = Field(default=14, ge=1, le=60)
     daily_limit: int = Field(default=2, ge=0, le=10)
     book_post: bool = True
+    book_post_picture: bool = False  # the book post comes with an ad picture (about $0.07 each)
     books: list[str] = Field(default_factory=list, max_length=20)
     book_links: dict[str, str] = Field(default_factory=dict, max_length=20)
     test_mode: bool = False

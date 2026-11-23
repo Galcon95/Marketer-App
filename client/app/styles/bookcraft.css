@@ -295,6 +295,14 @@ html, body { background: var(--bg); color: var(--ink); font-family: var(--font-s
 .bc-type-info .bc-tip { vertical-align: -2px; background: none; border: 0; padding: 0; }
 .bc-type-detail { margin: 0; font-size: 12px; line-height: 17px; color: var(--ink); background: var(--surface-sunken); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
 .bc-kbd { font: 400 11px/16px var(--font-mono); color: var(--ink-subtle); }
+/* Agent Workspace: settings left, recent cycles right (sticky, scrolling inside), one column when narrow. */
+.bc-agent { display: grid; grid-template-columns: minmax(0, 720px) minmax(320px, 1fr); gap: var(--space-4); align-items: start; max-width: 1400px; }
+.bc-agent-main { min-width: 0; }
+.bc-agent-side { position: sticky; top: var(--space-4); max-height: calc(100vh - 2 * var(--space-4)); overflow-y: auto; min-width: 0; border-radius: var(--radius-lg); }
+@media (max-width: 1100px) {
+  .bc-agent { grid-template-columns: minmax(0, 1fr); }
+  .bc-agent-side { position: static; max-height: none; overflow: visible; }
+}
 @media (max-width: 1000px) {
   .bc-studio { grid-template-columns: minmax(0, 1fr); }
   .bc-studio-side, .bc-studio-brief, .bc-studio-results { grid-column: 1; grid-row: auto; position: static; }

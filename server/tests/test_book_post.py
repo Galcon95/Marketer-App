@@ -204,3 +204,111 @@ def test_a_facebook_error_is_reported(world):
     thread_id, message_id = _start()
     assert bp.resume(thread_id, message_id, "approve") == "failed"
     assert "token expired" in world.sent[-1][0]
+
+
+# ---------- the picture ----------
+@pytest.fixture
+def pictures(world, monkeypatch, stored_files):
+    """Pictures on: the image model, the cover and the photo uploads are fakes; Storage is in memory."""
+    w = SimpleNamespace(made=[], photos=[], posted_photos=[], error=None)
+    monkeypatch.setattr(bp.images, "is_configured", lambda: True)
+    monkeypatch.setattr(bp.ingestion, "cover", lambda source: b"cover")
+    monkeypatch.setattr(bp.ingestion, "to_png", lambda data, max_height: b"PNG:" + data)
+
+    def generate(**kwargs):
+        if w.error:
+            raise w.error
+        w.made.append(kwargs)
+        return SimpleNamespace(data=f"picture{len(w.made)}".encode())
+    monkeypatch.setattr(bp.images, "generate_ad_image", generate)
+    monkeypatch.setattr(bp.telegram, "send_photo", lambda image, caption="": w.photos.append((image, caption)) or 50)
+
+    def publish_photo(text, image):
+        w.posted_photos.append((text, image))
+        return FacebookPublished(id="999_2", url="https://www.facebook.com/999_2")
+    monkeypatch.setattr(bp.facebook, "publish_photo", publish_photo)
+
+    def structured(prompt, values, schema, what, temperature):
+        world.calls.append(values)
+        return schema(post=world.post, reason="r", headline="  Why do cities sprawl?  ", scene="A town at dusk"), 10
+    monkeypatch.setattr(bp, "structured", structured)
+    w.files = stored_files
+    return w
+
+
+def _agent_files(store):
+    return [p for p in store.objects if f"{PROJECT}/agent/" in p]
+
+
+def test_without_the_switch_no_picture_is_made(world, pictures):
+    _start(_settings())
+    assert pictures.made == [] and pictures.photos == []
+    assert all(d not in (bp.inbox.BUTTON_NEW_PICTURE, bp.inbox.BUTTON_NO_PICTURE) for _, d in world.sent[0][1])
+
+
+def test_the_picture_comes_from_the_post_and_is_posted_with_it(world, pictures):
+    thread_id, message_id = _start(_settings(book_post_picture=True, book_links={VOL1: LINK}))
+    made = pictures.made[0]
+    assert made["headline"] == "Why do cities sprawl?" and made["scene"] == "A town at dusk"
+    assert made["cover"] == b"cover" and made["fmt"] == "square" and made["source_id"] == VOL1
+    assert pictures.photos == [(b"PNG:picture1", "🖼 The picture for the post below: Why do cities sprawl?")]
+    text, buttons = world.sent[0]
+    assert "With the picture above" in text
+    assert [d for _, d in buttons][-2:] == [bp.inbox.BUTTON_NEW_PICTURE, bp.inbox.BUTTON_NO_PICTURE]
+    assert len(_agent_files(pictures.files)) == 1
+    assert bp.resume(thread_id, message_id, "approve") == "posted"
+    assert pictures.posted_photos == [("Why do cities sprawl? Volume 1 has an answer. Link below.\n\n" + LINK,
+                                       b"PNG:picture1")]
+    assert world.published == [] and _agent_files(pictures.files) == []  # posted as a photo; the file is gone
+
+
+def test_new_picture_replaces_it_up_to_the_limit(world, pictures):
+    thread_id, message_id = _start(_settings(book_post_picture=True))
+    for _ in range(bp.MAX_PICTURES - 1):
+        assert bp.resume(thread_id, message_id, "new_picture") == "waiting"
+        message_id = bp.waiting_run()[1]
+    assert len(pictures.made) == bp.MAX_PICTURES and len(pictures.photos) == bp.MAX_PICTURES
+    assert len(_agent_files(pictures.files)) == 1  # the replaced ones are deleted
+    assert bp.inbox.BUTTON_NEW_PICTURE not in [d for _, d in world.sent[-1][1]]  # no more new pictures
+    assert bp.resume(thread_id, message_id, "approve") == "posted"
+    assert pictures.posted_photos[0][1] == f"PNG:picture{bp.MAX_PICTURES}".encode()
+
+
+def test_without_picture_posts_the_text_alone(world, pictures):
+    thread_id, message_id = _start(_settings(book_post_picture=True, book_links={VOL1: LINK}))
+    assert bp.resume(thread_id, message_id, "no_picture") == "waiting"
+    text, buttons = world.sent[-1]
+    assert "picture" not in text.lower() and bp.inbox.BUTTON_NO_PICTURE not in [d for _, d in buttons]
+    assert _agent_files(pictures.files) == []
+    assert bp.resume(thread_id, bp.waiting_run()[1], "approve") == "posted"
+    assert pictures.posted_photos == [] and world.published[0][1] == LINK
+
+
+def test_a_rewrite_keeps_the_picture_without_sending_it_again(world, pictures):
+    thread_id, message_id = _start(_settings(book_post_picture=True))
+    assert bp.resume(thread_id, message_id, "feedback", "shorter") == "waiting"
+    assert len(pictures.made) == 1 and len(pictures.photos) == 1
+    assert "With the picture above" in world.sent[-1][0]
+
+
+def test_a_failed_picture_leaves_a_note_and_the_post_goes_on(world, pictures):
+    pictures.error = bp.GenerationError(504, "The image model did not answer in time")
+    thread_id, message_id = _start(_settings(book_post_picture=True))
+    text, buttons = world.sent[0]
+    assert "No picture this time" in text and pictures.photos == []
+    assert [d for _, d in buttons][-1] == bp.inbox.BUTTON_NEW_PICTURE  # "Try a picture again"
+    assert bp.resume(thread_id, message_id, "approve") == "posted" and pictures.posted_photos == []
+    assert len(world.published) == 1
+
+
+def test_test_mode_makes_the_picture_but_posts_nothing(world, pictures):
+    thread_id, message_id = _start(_settings(book_post_picture=True, test_mode=True))
+    assert len(pictures.photos) == 1
+    assert bp.resume(thread_id, message_id, "approve") == "tested"
+    assert pictures.posted_photos == [] and _agent_files(pictures.files) == []
+
+
+def test_pictures_switched_off_on_the_server_mean_none(world, pictures, monkeypatch):
+    monkeypatch.setattr(bp.images, "is_configured", lambda: False)
+    _start(_settings(book_post_picture=True))
+    assert pictures.made == [] and "picture" not in world.sent[0][0].lower()

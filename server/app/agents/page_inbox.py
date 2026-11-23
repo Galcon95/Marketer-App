@@ -85,6 +85,7 @@ BOOK_SEARCH_K = 3  # passages per book when choosing the book
 
 APPROVE = "make it so"
 BUTTON_GO, BUTTON_SKIP, BUTTON_EDIT = "go", "skip", "edit"
+BUTTON_NEW_PICTURE, BUTTON_NO_PICTURE = "pic_new", "pic_none"  # under a book post with a picture (book_post.py)
 OTHER_AGENTS = ("eng:", "post:")  # thread id prefixes of engagement.py and book_post.py (same checkpointer)
 TEST_HEAD = " (TEST MODE: nothing will be posted)"
 # The first line of every proposal in Telegram (all agents): where the text would go, recognizable at a glance.
@@ -103,8 +104,9 @@ class Revision(BaseModel):
 
 PROMPT_VERSION = prompts.register("page_inbox", REVISE_PROMPT, Revision, {"humanize": HUMANIZE})
 
-# edit: the author's own text (after the Edit button), used as it is; answered: not the author's, see withdraw()
-Decision = Literal["approve", "skip", "feedback", "edit", "answered"]
+# edit: the author's own text (after the Edit button), used as it is; answered: not the author's, see withdraw();
+# new_picture / no_picture: another picture, or none, for a book post (book_post.py only)
+Decision = Literal["approve", "skip", "feedback", "edit", "answered", "new_picture", "no_picture"]
 Outcome = Literal["posted", "skipped", "failed", "blocked", "gave_up", "answered", "tested"]  # gave_up: too many
 # revisions; tested: approved in test mode, nothing posted
 
@@ -333,7 +335,8 @@ def parse_answer(text: str) -> tuple[Decision, str]:
 
 def button_decision(data: str) -> Decision | None:
     """A button's data as a decision, None for an unknown button."""
-    return {BUTTON_GO: "approve", BUTTON_SKIP: "skip", BUTTON_EDIT: "edit"}.get(data)
+    return {BUTTON_GO: "approve", BUTTON_SKIP: "skip", BUTTON_EDIT: "edit", BUTTON_NEW_PICTURE: "new_picture",
+            BUTTON_NO_PICTURE: "no_picture"}.get(data)
 
 
 def proposal_buttons(can_post: bool, test: bool) -> list[TelegramButton]:

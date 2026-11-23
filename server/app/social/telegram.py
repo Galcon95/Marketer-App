@@ -4,6 +4,7 @@ the Page inbox agent: it sends a proposed reply here and waits for "make it so",
     bot_info()                              the bot's username (checks the token)
     send_message(text, buttons, reply_to)   a message to the author, optionally with buttons under it; long texts are
                                             split into several messages (the buttons go under the last)
+    send_photo(image, caption)              a picture to the author (e.g. the picture of a proposed post)
     get_updates(offset, wait)               the author's new texts and button presses (long polling)
     answer_button(callback_id, text)        confirm a button press (stops the spinner, optional short notice)
     remove_buttons(message_id)              take the buttons off a message (a decided proposal is not pressed again)
@@ -34,6 +35,8 @@ logger = logging.getLogger(__name__)
 API = "https://api.telegram.org"
 TIMEOUT = 20  # seconds per request (a long poll gets its wait on top)
 MAX_TEXT = 4096  # Telegram's limit for one message
+MAX_CAPTION = 1024  # Telegram's limit for a picture's caption
+PHOTO_TIMEOUT = 60  # seconds to upload a picture
 MAX_WAIT = 50  # seconds a long poll may wait at most
 MAX_BUTTON_DATA = 64  # bytes of a button's callback data
 
@@ -91,6 +94,27 @@ def send_message(text: str, buttons: list[TelegramButton] | None = None, reply_t
             body["reply_markup"] = markup
         message_id = _request("sendMessage", body)["message_id"]
     return message_id
+
+
+def send_photo(image: bytes, caption: str = "", media_type: str = "image/png") -> int:
+    """Send a picture to the author's chat, with an optional short caption (plain text, at most MAX_CAPTION
+    characters: longer ones are cut).
+
+    Returns:
+        The id of the message.
+
+    Raises:
+        ValueError: If there is no picture.
+    """
+    if not image:
+        raise ValueError("The picture is empty.")
+    caption = (caption or "").strip()
+    if len(caption) > MAX_CAPTION:
+        caption = caption[:MAX_CAPTION - 1] + "…"
+    fields = {"chat_id": str(config.TELEGRAM_CHAT_ID), **({"caption": caption} if caption else {})}
+    extension = "jpg" if media_type == "image/jpeg" else "png"
+    return _request("sendPhoto", fields, files={"photo": (f"picture.{extension}", image, media_type)},
+                    timeout=PHOTO_TIMEOUT)["message_id"]
 
 
 def get_updates(offset: int | None = None, wait: int = 0) -> TelegramUpdates:
@@ -168,16 +192,19 @@ def _client(timeout: float) -> httpx.Client:
     return httpx.Client(timeout=timeout)
 
 
-def _request(method: str, body: dict[str, Any] | None = None, timeout: float = TIMEOUT) -> Any:
-    """One Bot API call; its `result`, or TelegramError. The method name is logged, never the URL (it holds the
-    token)."""
+def _request(method: str, body: dict[str, Any] | None = None, timeout: float = TIMEOUT,
+             files: dict[str, Any] | None = None) -> Any:
+    """One Bot API call; its `result`, or TelegramError. With `files` it is a multipart upload (`body` then holds
+    the form fields). The method name is logged, never the URL (it holds the token)."""
     if not is_configured():
         raise TelegramError(503, "Telegram is not connected: set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in "
                                  "server/.env and restart the server.")
     try:
         with _client(timeout) as client:
             # a full URL: "bot<id>:<secret>" alone would be read as a URL with the scheme "bot<id>:"
-            response = client.post(f"{API}/bot{config.TELEGRAM_BOT_TOKEN}/{method}", json=body or {})
+            url = f"{API}/bot{config.TELEGRAM_BOT_TOKEN}/{method}"
+            response = (client.post(url, data=body or {}, files=files) if files
+                        else client.post(url, json=body or {}))
     except httpx.TimeoutException as e:
         raise TelegramError(504, "Telegram did not answer in time. Try again.") from e
     except httpx.HTTPError as e:  # no str(e): it can contain the URL and with it the token
@@ -210,11 +237,13 @@ def _error(data: dict[str, Any], http_status: int, method: str) -> TelegramError
 
 
 def _keyboard(buttons: list[TelegramButton]) -> dict[str, Any]:
-    """Inline keyboard markup: the buttons in one row."""
+    """Inline keyboard markup: the buttons in rows by their `row`."""
     for b in buttons:
         if not b.label.strip() or not b.data or len(b.data.encode()) > MAX_BUTTON_DATA:
             raise ValueError(f"A button needs a label and data of 1-{MAX_BUTTON_DATA} bytes.")
-    return {"inline_keyboard": [[{"text": b.label, "callback_data": b.data} for b in buttons]]}
+    rows = sorted({b.row for b in buttons})
+    return {"inline_keyboard": [[{"text": b.label, "callback_data": b.data} for b in buttons if b.row == row]
+                                for row in rows]}
 
 
 def _update(update: dict[str, Any]) -> TelegramUpdate | None:

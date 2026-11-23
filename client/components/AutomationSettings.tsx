@@ -147,6 +147,9 @@ export default function AutomationSettings() {
 
   const zoneList = useMemo(() => zones(draft?.timezone ?? "UTC"), [draft?.timezone]);
   const sources = useApi("automation-books", api.listSources);
+  // Pictures switched off on the server (GET /health, IMAGE_PROVIDER=off): the picture switch is greyed out.
+  const health = useApi("health:pictures", api.health);
+  const picturesOff = health.data?.services.find((x) => x.name === "images")?.detail.startsWith("off") ?? false;
   const books = useMemo(() => readyBooks(sources.data ?? []), [sources.data]);
   // The ticked books: the chosen ones, or (nothing chosen yet) the ones the agent uses now.
   const ticked = draft?.books.length ? draft.books : (s?.books ?? []);
@@ -239,8 +242,11 @@ export default function AutomationSettings() {
     );
   }
 
+  // Two columns (bc-agent): the settings on the left, the recent cycles on the right in their own scroll box, so the
+  // growing log does not make the page longer; one column on narrow screens.
   return (
-    <div className="bc-stack" style={{ maxWidth: 720 }}>
+    <div className="bc-agent">
+    <div className="bc-stack bc-agent-main">
       <Card title="Marketing agent schedule" icon={Clock}
         meta={s && (<span className="bc-row" style={{ gap: 6 }}>
           {s.schedule.test_mode && <Badge tone="warning">test mode</Badge>}
@@ -438,6 +444,20 @@ export default function AutomationSettings() {
                     <span className="bc-hint">The topics are the chapters of the ticked books&apos; summaries; the books
                       take turns, and no topic repeats before all had their turn. The book&apos;s link (above) is attached.</span>
                   )}
+                  {draft.book_post && (
+                    <label className="bc-row" style={{ gap: 8, flexWrap: "nowrap" }}>
+                      <input type="checkbox" checked={draft.book_post_picture} disabled={picturesOff}
+                        onChange={(e) => edit({ book_post_picture: e.target.checked })} />
+                      <span>
+                        With a picture: my cover in a scene, with a headline taken from the post
+                        <span className="bc-hint" style={{ display: "block", margin: 0 }}>
+                          {picturesOff
+                            ? "Pictures are switched off on the server (IMAGE_PROVIDER=off)."
+                            : "About $0.07 per picture, counted in your usage. In Telegram: 🔄 New picture (up to 3 per post) or 🚫 Without picture."}
+                        </span>
+                      </span>
+                    </label>
+                  )}
                 </div>
               </fieldset>
 
@@ -502,14 +522,18 @@ export default function AutomationSettings() {
           {error && <ErrorNote>{error}</ErrorNote>}
         </div>
       </Card>
-      <RecentCycles refresh={nonce} zone={zone} />
       <Card title="In Telegram" icon={Bot}>
         <span className="bc-hint">
           /next – run a cycle now (replies, a question when there are none, then a book post) · /status – the schedule and the running cycle · /pause, /resume – stop or restart
-          the schedule · under a proposal: ✅ Make it so, Skip, or write what to change. A proposal waits until you
+          the schedule · under a proposal: ✅ Make it so, ✏️ Edit (tap the text the bot sends to copy it, change it,
+          send it back: that exact text is proposed), Skip, or write what to change. A proposal waits until you
           answer it; the next one follows your answer, and the cycle ends with a summary.
         </span>
       </Card>
+    </div>
+    <div className="bc-agent-side">
+      <RecentCycles refresh={nonce} zone={zone} />
+    </div>
     </div>
   );
 }

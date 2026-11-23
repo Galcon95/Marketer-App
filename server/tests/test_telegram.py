@@ -119,6 +119,27 @@ def test_send_message_with_buttons_and_reply(bot):
     assert body["reply_parameters"] == {"message_id": 5, "allow_sending_without_reply": True}
 
 
+def test_buttons_go_in_rows(bot):
+    bot.answer = {"message_id": 9}
+    tg.send_message("Proposal", buttons=[TelegramButton(label="Go", data="go"),
+                                         TelegramButton(label="New picture", data="pic_new", row=1),
+                                         TelegramButton(label="Skip", data="skip")])
+    rows = _body(bot.requests[0])["reply_markup"]["inline_keyboard"]
+    assert [[b["callback_data"] for b in row] for row in rows] == [["go", "skip"], ["pic_new"]]
+
+
+def test_send_photo_uploads_the_picture_to_the_authors_chat(bot):
+    bot.answer = {"message_id": 12}
+    assert tg.send_photo(b"PNG-bytes", "x" * 2000) == 12
+    request = bot.requests[0]
+    assert _method(request) == "sendPhoto" and request.headers["content-type"].startswith("multipart/form-data")
+    body = request.content
+    assert f"{AUTHOR}".encode() in body and b'name="photo"; filename="picture.png"' in body and b"PNG-bytes" in body
+    assert b"x" * (tg.MAX_CAPTION - 1) in body and b"x" * tg.MAX_CAPTION not in body  # the caption is cut
+    with pytest.raises(ValueError):
+        tg.send_photo(b"")
+
+
 def test_long_text_is_split_and_buttons_go_under_the_last_part(bot):
     bot.answers = [{"message_id": 1}, {"message_id": 2}]
     text = "a" * 3000 + "\n\n" + "b" * 3000

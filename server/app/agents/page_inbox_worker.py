@@ -395,7 +395,11 @@ class InboxWorker:
             self._answer(update, "Send your version")
             self._start_edit(waiting[0], update.message_id)
             return
-        self._answer(update, "Posting…" if decision == "approve" else "Skipping…")
+        if decision in ("new_picture", "no_picture") and not book_post.is_book_post(waiting[0]):
+            self._answer(update, "This proposal has no picture.")
+            return
+        self._answer(update, {"approve": "Posting…", "new_picture": "Making a new picture…",
+                              "no_picture": "Without the picture…"}.get(decision, "Skipping…"))
         self._decide(waiting[0], update.message_id, decision, "")
 
     def _start_edit(self, thread_id: str, message_id: int) -> None:

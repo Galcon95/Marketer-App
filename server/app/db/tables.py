@@ -146,6 +146,7 @@ class AutomationSettingsRow(Base):
     engage_days: Mapped[int] = mapped_column(Integer, server_default=text("14"))
     daily_limit: Mapped[int] = mapped_column(Integer, server_default=text("2"))
     book_post: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
+    book_post_picture: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     books: Mapped[list] = mapped_column(Json, server_default=text("'[]'"))
     book_links: Mapped[dict] = mapped_column(Json, server_default=text("'{}'"))
     test_mode: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))

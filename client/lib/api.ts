@@ -233,6 +233,7 @@ export interface AutomationSchedule {
   youtube_engage_days: number; // how recent a video without comments must be
   youtube_daily_limit: number; // YouTube: own questions under videos per day
   book_post: boolean; // end each cycle with a new post about the next topic of the books
+  book_post_picture: boolean; // the book post comes with an ad picture (about $0.07 each)
   books: string[]; // the books the agent uses (ids); [] = the server's default (FACEBOOK_INBOX_BOOKS)
   book_links: Record<string, string>; // book id → where to get it (the book post's link)
   test_mode: boolean; // propose everything, publish nothing
