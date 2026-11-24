@@ -362,7 +362,7 @@ export interface Conversation { id: string; title: string; created_at: string; u
 export interface ConversationInfo { id: string; title: string; created_at: string; updated_at: string; turn_count: number }
 
 /** Where a discussion was found (the social platforms match Platform; reddit, forum and other have no fixed rules). */
-export type DiscussionPlatform = Platform | "reddit" | "forum" | "other";
+export type DiscussionPlatform = Platform | "reddit" | "substack" | "forum" | "other";
 /** What the Discussion Relevance Agent recommends: write a reply, add more of the discussion, or leave it. */
 export type Recommendation = "contribute" | "more_context" | "skip";
 /** Body of POST /projects/{id}/discussions: a pasted discussion to analyse for one book. */
@@ -385,14 +385,25 @@ export type Fit = "high" | "medium" | "low";
 export interface ScanRequest {
   source_id: string;
   topic: string; // max 300 characters
-  subreddits?: string[]; // at most 5, e.g. ["Futurology", "r/singularity"]; empty = all of Reddit
+  site?: ScanSite; // default "reddit"
+  subreddits?: string[]; // Reddit: at most 5, e.g. ["Futurology", "r/singularity"]; empty = all of Reddit
+  publications?: string[]; // Substack: at most 5, e.g. ["importai"]; empty = all of Substack
   time_range?: ScanTime; // default "month"
   max_results?: number; // threads per search, 5-20 (default 10)
 }
-/** A Reddit thread found by the scan. full_text is "" when the search had only a snippet: open the thread. */
+/** Where a scan searches. */
+export type ScanSite = "reddit" | "substack";
+/** A post of the author's own Substack publication (from its RSS feed). */
+export interface SubstackPost { title: string; url: string; published_at: string | null; subtitle: string; excerpt: string }
+/** GET /projects/{id}/substack: the author's own publication ("" = none set) and its latest posts. */
+export interface SubstackFeed { publication: string; url: string; posts: SubstackPost[] }
+/** A Reddit thread or a Substack post or Note found by the scan. full_text is "" when the search had only a
+ * snippet: open it. */
 export interface ScannedThread {
   url: string;
-  subreddit: string; // without "r/"
+  site?: ScanSite; // missing from older servers: Reddit
+  community?: string; // the subreddit (without "r/"), the Substack publication, or "@author" for a Note
+  subreddit: string; // Reddit only
   title: string;
   snippet: string;
   full_text: string;
@@ -402,11 +413,13 @@ export interface ScannedThread {
   injection_risk: InjectionRisk; // prompt-injection scan of title and text
   injection_findings: string[];
 }
-/** Result of a Reddit scan (not saved): the threads, best fit first. */
+/** Result of a scan (not saved): the threads, best fit first. */
 export interface ScanResult {
   source_id: string;
   topic: string;
+  site?: ScanSite;
   subreddits: string[];
+  publications?: string[];
   time_range: ScanTime;
   threads: ScannedThread[];
   found: number;
@@ -677,6 +690,7 @@ export const PLATFORMS: { value: Platform; label: string; postLimit: number; rep
 /** Where a discussion can come from, with the reply limit where the platform has one (Reddit: 10,000). */
 export const DISCUSSION_PLATFORMS: { value: DiscussionPlatform; label: string; replyLimit?: number }[] = [
   { value: "reddit", label: "Reddit", replyLimit: 10000 },
+  { value: "substack", label: "Substack" },
   ...PLATFORMS.map((p) => ({ value: p.value, label: p.label, replyLimit: p.replyLimit })),
   { value: "forum", label: "Forum / community" },
   { value: "other", label: "Other" },
@@ -695,7 +709,7 @@ export function platformFromUrl(url: string): DiscussionPlatform | null {
     return null;
   }
   const hosts: [DiscussionPlatform, string[]][] = [
-    ["reddit", ["reddit.com", "redd.it"]], ["linkedin", ["linkedin.com"]], ["youtube", ["youtube.com", "youtu.be"]],
+    ["reddit", ["reddit.com", "redd.it"]], ["substack", ["substack.com"]], ["linkedin", ["linkedin.com"]], ["youtube", ["youtube.com", "youtu.be"]],
     ["x", ["x.com", "twitter.com"]], ["facebook", ["facebook.com", "fb.com"]], ["instagram", ["instagram.com"]],
     ["tiktok", ["tiktok.com"]],
   ];
@@ -1135,6 +1149,14 @@ export const api = {
   /** POST /projects/{id}/discussions/scan: search Reddit for threads on a topic, ranked for one book (not saved). */
   scanDiscussions: async (body: ScanRequest) =>
     request<ScanResult>(`/projects/${await projectId()}/discussions/scan`, postJson(body)),
+  /** GET /projects/{id}/substack: the author's own Substack publication and its latest posts. */
+  substackFeed: async () => request<SubstackFeed>(`/projects/${await projectId()}/substack`),
+  /** PUT /projects/{id}/substack: save the publication (its address, a post link or the profile link). */
+  setSubstack: async (address: string) =>
+    request<SubstackFeed>(`/projects/${await projectId()}/substack`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address }) }),
+  /** DELETE /projects/{id}/substack: forget the publication. */
+  clearSubstack: async () => request<void>(`/projects/${await projectId()}/substack`, { method: "DELETE" }),
   /** GET /projects/{id}/discussions: the saved analyses, newest first. */
   listDiscussions: async () => request<DiscussionAnalysis[]>(`/projects/${await projectId()}/discussions`),
   /** PATCH /discussions/{id}: save the author's edited reply (the agent's suggestion is kept). */

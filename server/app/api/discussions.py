@@ -25,14 +25,16 @@ router = APIRouter()
 @router.post("/projects/{project_id}/discussions/scan", response_model=ScanResult,
              dependencies=[Depends(owned_project), Depends(llm_limits)])
 def scan(project_id: str, body: ScanRequest):
-    """Search Reddit for recent threads on a topic and rank them by how well one book fits (agents/discussion_scan.py).
+    """Search Reddit (threads) or Substack (posts and Notes) on a topic and rank them by how well one book fits
+    (agents/discussion_scan.py).
 
     The topic is the author's own text and is checked for prompt injection. The threads found are third-party text:
     the scan gives them to the model only as quoted data. Nothing is saved; the author picks threads to analyse.
 
     Args:
         project_id: Id of the project (path parameter). 404 if unknown.
-        body: The book, the topic, optional subreddits (at most 5), the time range and the threads per search.
+        body: The book, the topic, the site, optional subreddits or Substack publications (at most 5), the time range
+            and the threads per search.
 
     Returns:
         The threads, best fit first, each with its fit, a reason, the search snippet and, when available, its text.
@@ -47,7 +49,8 @@ def scan(project_id: str, body: ScanRequest):
     try:
         return discussion_scan.scan_discussions(project_id, body)
     except BookNotReady as e:
-        raise HTTPException(409, "The book must be processed (status ready) before Reddit can be scanned for it.") from e
+        raise HTTPException(409, f"The book must be processed (status ready) before {discussion_scan.SITE_NAMES[body.site]} can be "
+                                 "scanned for it.") from e
     except GenerationError as e:
         raise HTTPException(e.status_code, str(e)) from e
 

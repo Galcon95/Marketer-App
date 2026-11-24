@@ -78,6 +78,7 @@ class ProjectRow(Base):
     # Supabase user id of the owner; NULL = nobody yet (the default project before it is claimed). Unique: each
     # user owns one project, also if two first requests arrive at once.
     owner_id: Mapped[str | None] = mapped_column(Text, unique=True)
+    substack: Mapped[str] = mapped_column(Text, server_default=text("''"), default="")  # own Substack publication
 
 
 class ApiKeyRow(Base):

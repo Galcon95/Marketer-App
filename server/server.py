@@ -30,7 +30,7 @@ logs.setup()  # first, so the imports below already log through it (JSON lines w
 
 from app.api import (  # noqa: E402
     ad_images, assets, automation, campaigns, discussions, facebook, health, keys, knowledge, mcp_console, projects, sources,
-    youtube,
+    substack, youtube,
 )
 from app.core import api_keys, auth, config, state, usage  # noqa: E402
 from app.agents import page_inbox_worker  # noqa: E402
@@ -96,8 +96,8 @@ app.add_middleware(logs.RequestIdMiddleware)
 
 # Include the API routers. /health is open; every other endpoint needs a signed-in user (auth.py → 401 otherwise).
 app.include_router(health.router)
-for module in (projects, sources, knowledge, assets, ad_images, campaigns, discussions, facebook, youtube, automation,
-               mcp_console, keys):
+for module in (projects, sources, knowledge, assets, ad_images, campaigns, discussions, substack, facebook, youtube,
+               automation, mcp_console, keys):
     app.include_router(module.router, dependencies=[Depends(auth.current_user)])
 # Facebook Login and Google sign-in send the browser back here without a sign-in token; the signed `state` names the
 # user.

@@ -88,7 +88,9 @@ html, body { background: var(--bg); color: var(--ink); font-family: var(--font-s
 .bc-tab[aria-selected="true"] .bc-tab-k { color: var(--accent-text); }
 
 /* Sidebar */
-.bc-side { width: 256px; flex: none; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-4) var(--space-3); min-height: 100%; }
+/* The sidebar stays in view while the page scrolls (screen height, scrolling by itself on short screens), so the
+   system status at its bottom is always visible, not only on short pages. */
+.bc-side { width: 256px; flex: none; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-4) var(--space-3); position: sticky; top: 0; height: 100vh; overflow-y: auto; }
 .bc-logo { display: flex; align-items: center; gap: 10px; padding: 0 var(--space-1); }
 .bc-logo-mark { width: 32px; height: 32px; border-radius: var(--radius-md); background: var(--accent); color: var(--on-accent); display: grid; place-items: center; }
 .bc-logo-name { font: 600 15px/20px var(--font-sans); letter-spacing: -.01em; }

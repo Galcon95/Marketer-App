@@ -6,7 +6,7 @@
  * (contribute, more context, skip) and drafts a reply grounded in the book's passages (POST /discussions).
  * Layout as in the Content Studio: how to find a discussion and the settings on the left, the found threads or the
  * discussion text on the right, and below them the saved analyses, newest first, to edit, copy and post.
- * "Scan Reddit" (RedditScan.tsx) finds threads to analyse. "Facebook Page" (every user; their own Facebook Page, connected
+ * "Scan Reddit" and "Scan Substack" (RedditScan.tsx) find threads, posts and Notes to analyse. "Facebook Page" (every user; their own Facebook Page, connected
  * under Integrations → Facebook Page) lists the comments on the Page (FacebookComments.tsx): one goes into the form, and the agent answers it as
  * the author ("own Page" mode); the reply can then be posted as the Page. Above the comments, "Write a new post"
  * (FacebookNewPost.tsx) writes a post or reader question from the book and publishes it on the Page. When the Page is
@@ -17,7 +17,7 @@
  */
 
 import { useState, type SubmitEvent } from "react";
-import { Bot, ChevronDown, CircleHelp, ClipboardPaste, MessageCircle, MessagesSquare, Radar, SquarePlay, X } from "lucide-react";
+import { Bookmark, Bot, ChevronDown, CircleHelp, ClipboardPaste, MessageCircle, MessagesSquare, Radar, SquarePlay, X } from "lucide-react";
 import {
   api, bookTitle, DISCUSSION_PLATFORMS, errorMessage, humanizeLabel, platformFromUrl, TONES, type DiscussionPlatform,
   type FacebookComment, type FacebookThread, type ScanResult, type ScannedThread, type Source, type Tone,
@@ -28,6 +28,7 @@ import DiscussionCard from "./DiscussionCard";
 import FacebookComments, { commentAsDiscussion } from "./FacebookComments";
 import FacebookNewPost from "./FacebookNewPost";
 import FacebookSetupGuide from "./FacebookSetupGuide";
+import MySubstack from "./MySubstack";
 import RedditScan, { ScanResults, threadAsDiscussion } from "./RedditScan";
 import YouTubeComments, { videoCommentAsDiscussion } from "./YouTubeComments";
 import { Button, Card, ErrorNote, Field, Placeholder, RangeField, SectionHeading } from "./ui";
@@ -53,11 +54,12 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
   const [platform, setPlatform] = useState<DiscussionPlatform>("reddit");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<"scan" | "facebook" | "youtube" | "paste">("scan");
+  const [mode, setMode] = useState<"scan" | "substack" | "facebook" | "youtube" | "paste">("scan");
   const [fromScan, setFromScan] = useState<ScannedThread | null>(null); // the scanned thread loaded into the form
   const [fromPage, setFromPage] = useState<FacebookComment | null>(null); // the Page comment loaded into the form
   const [fromChannel, setFromChannel] = useState<YouTubeComment | null>(null); // the video comment loaded into the form
   const [scan, setScan] = useState<ScanResult | null>(null); // the last Reddit scan (kept across modes)
+  const [substackScan, setSubstackScan] = useState<ScanResult | null>(null); // the last Substack scan
   // The user's own Facebook Page (connected under Integrations → Facebook Page; the admin may use the one in .env).
   const facebook = useApi("facebook-status", api.facebookStatus);
   const pageConnected = facebook.data?.connected === true;
@@ -73,10 +75,11 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
     const [title, author = b.author] = bookTitle(b.filename).split(" — ");
     return [b.id, author ? `"${title}" by ${author}` : `"${title}"`];
   }));
-  // The analyses of the open mode only: Scan Reddit → Reddit, Facebook Page → Facebook, Paste → the platform chosen
+  // The analyses of the open mode only: Scan Reddit → Reddit, Scan Substack → Substack, Facebook Page → Facebook,
+  // Paste → the platform chosen
   // in the form (a thread loaded from the scan or the Page keeps its platform, so its new analysis shows up there).
   const listPlatform: DiscussionPlatform =
-    mode === "scan" ? "reddit" : mode === "facebook" ? "facebook" : mode === "youtube" ? "youtube" : platform;
+    mode === "scan" ? "reddit" : mode === "substack" ? "substack" : mode === "facebook" ? "facebook" : mode === "youtube" ? "youtube" : platform;
   const platformLabel = DISCUSSION_PLATFORMS.find((p) => p.value === listPlatform)?.label ?? listPlatform;
   const shown = (discussions.data ?? [])
     .filter((d) => (!bookId || d.source_id === bookId) && d.platform === listPlatform);
@@ -93,7 +96,7 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
   function analyseThread(t: ScannedThread) {
     setDiscussion(threadAsDiscussion(t));
     setUrl(t.url);
-    setPlatform("reddit");
+    setPlatform(t.site ?? "reddit");
     setFromScan(t);
     setFromPage(null);
     setFromChannel(null);
@@ -156,6 +159,8 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
             <div className="bc-row" role="group" aria-label="How to find a discussion" style={{ gap: 6 }}>
               <Button size="sm" icon={Radar} variant={mode === "scan" ? "secondary" : "ghost"} aria-pressed={mode === "scan"}
                 onClick={() => setMode("scan")}>Scan Reddit</Button>
+              <Button size="sm" icon={Bookmark} variant={mode === "substack" ? "secondary" : "ghost"}
+                aria-pressed={mode === "substack"} onClick={() => setMode("substack")}>Scan Substack</Button>
               {facebook.data && (
                 <Button size="sm" icon={MessageCircle} variant={mode === "facebook" ? "secondary" : "ghost"}
                   aria-pressed={mode === "facebook"} onClick={() => setMode("facebook")}>Facebook Page</Button>
@@ -170,6 +175,11 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
             {/* hidden, not unmounted: the topic and subreddits stay while the author looks at another mode */}
             <div hidden={mode !== "scan"}>
               <RedditScan bookId={book?.id} bookTitle={book ? bookTitle(book.filename) : undefined} onResult={setScan} />
+            </div>
+            <div hidden={mode !== "substack"}>
+              <RedditScan site="substack" bookId={book?.id} bookTitle={book ? bookTitle(book.filename) : undefined}
+                onResult={setSubstackScan} />
+              <MySubstack />
             </div>
             {mode === "facebook" && (
               <span className="bc-hint">
@@ -219,6 +229,9 @@ export default function DiscussionAgent({ refresh, books, bookId, onChange }: {
       <div className="bc-studio-brief">
         {mode === "scan" && (scan ? <ScanResults result={scan} onAnalyse={analyseThread} /> : (
           <Placeholder icon={Radar}>Threads found on Reddit will appear here, best fit first.</Placeholder>
+        ))}
+        {mode === "substack" && (substackScan ? <ScanResults result={substackScan} onAnalyse={analyseThread} /> : (
+          <Placeholder icon={Bookmark}>Posts and Notes found on Substack will appear here, best fit first.</Placeholder>
         ))}
         {mode === "facebook" && facebook.data && !pageConnected && (
           <div className="bc-stack" style={{ gap: 12 }}>

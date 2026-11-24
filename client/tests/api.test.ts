@@ -170,6 +170,8 @@ describe("platformFromUrl", () => {
     expect(platformFromUrl("https://youtu.be/1")).toBe("youtube");
     expect(platformFromUrl("https://twitter.com/a/status/1")).toBe("x");
     expect(platformFromUrl("https://de.linkedin.com/posts/x")).toBe("linkedin");
+    expect(platformFromUrl("https://astralcodexten.substack.com/p/some-post")).toBe("substack");
+    expect(platformFromUrl("https://substack.com/@someone/note/c-123")).toBe("substack");
   });
   it("returns null for other sites and for text that is not a link", () => {
     expect(platformFromUrl("https://forum.example.org/t/1")).toBeNull();

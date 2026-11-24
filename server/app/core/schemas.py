@@ -56,6 +56,7 @@ class Project(BaseModel):
     description: str
     created_at: datetime  # creation time in UTC
     owner_id: str = ""  # Supabase user id of the owner; "" = nobody yet (the default project before it is claimed)
+    substack: str = ""  # the author's own Substack publication (its name, as in name.substack.com); "" = none
     source_count: int = 0  # number of uploaded sources in the project
     chunk_count: int = 0  # number of chunks across all sources of the project
     asset_count: int = 0  # number of generated assets in the project
@@ -420,10 +421,11 @@ class ConversationInfo(BaseModel):
 
 # ---------- Discussions (Community: Discussion Relevance Agent) ----------
 # Where a discussion was found. The social platforms match Platform, so the draft reply can be checked against
-# their rules (core/platforms.py); "reddit", "forum" and "other" have no fixed rules.
+# their rules (core/platforms.py); "reddit", "substack", "forum" and "other" have no fixed rules.
 # Prompt-injection risk of someone else's text (core/guard.scan_third_party; the same values as guard.InjectionRisk).
 InjectionRisk = Literal["none", "low", "high"]
-DiscussionPlatform = Literal["reddit", "linkedin", "youtube", "x", "facebook", "instagram", "tiktok", "forum", "other"]
+DiscussionPlatform = Literal["reddit", "substack", "linkedin", "youtube", "x", "facebook", "instagram", "tiktok", "forum",
+                             "other"]
 # What the agent recommends: write a reply, ask the author for more of the discussion, or leave it.
 Recommendation = Literal["contribute", "more_context", "skip"]
 
@@ -520,18 +522,24 @@ class DiscussionUpdate(BaseModel):
     reply: str = Field(min_length=1, max_length=12000)
 
 
-# ---------- Reddit scan (Community: find discussions for the agent) ----------
+# ---------- Discussion scan: Reddit or Substack (Community: find discussions for the agent) ----------
+ScanSite = Literal["reddit", "substack"]  # where the scan searches
 ScanTime = Literal["day", "week", "month", "year"]  # how far back the search looks
 Fit = Literal["high", "medium", "low"]  # how well the book fits a thread found by the scan
 _SUBREDDIT = re.compile(r"^[A-Za-z0-9_]{2,21}$")  # Reddit's rule for subreddit names
+_PUBLICATION = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")  # a Substack publication's name (its subdomain)
 
 
 class ScanRequest(BaseModel):
-    """Request body for POST /projects/{id}/discussions/scan: search Reddit for threads on a topic, for one book."""
+    """Request body for POST /projects/{id}/discussions/scan: search Reddit threads or Substack posts and Notes on a
+    topic, for one book."""
 
     source_id: str = Field(min_length=1)  # the book the threads are ranked for
     topic: str = Field(min_length=1, max_length=300)  # what to search, e.g. "AI future, AI societies, civilizations"
+    site: ScanSite = "reddit"
     subreddits: list[str] = Field(default=[], max_length=5)  # e.g. ["Futurology", "r/singularity"]; [] = all of Reddit
+    # Substack only: e.g. ["astralcodexten", "https://importai.substack.com/"]; [] = all of Substack
+    publications: list[str] = Field(default=[], max_length=5)
     time_range: ScanTime = "month"
     max_results: int = Field(default=10, ge=5, le=20)  # threads per search (Tavily returns at most 20)
 
@@ -548,14 +556,62 @@ class ScanRequest(BaseModel):
             if name.lower() not in (n.lower() for n in names):
                 names.append(name)
         self.subreddits = names
+        self.publications = _publications(self.publications)
+        if self.site == "reddit" and self.publications:
+            raise ValueError("Publications are for Substack scans; for Reddit give subreddits.")
+        if self.site == "substack" and self.subreddits:
+            raise ValueError("Subreddits are for Reddit scans; for Substack give publications.")
         return self
 
 
+def _publications(raw_names: list[str]) -> list[str]:
+    """Substack publication names from "importai", "importai.substack.com" or "https://importai.substack.com/p/x":
+    lower case, each once; ValueError for anything else (e.g. a custom domain, which the search cannot cover)."""
+    names: list[str] = []
+    for raw in raw_names:
+        name = re.sub(r"^https?://", "", raw.strip().lower()).split("/")[0].removesuffix(".substack.com").strip()
+        if not name:
+            continue
+        if not _PUBLICATION.match(name) or name in ("www", "open"):
+            raise ValueError(f"'{raw}' is not a Substack publication (its name, as in name.substack.com).")
+        if name not in names:
+            names.append(name)
+    return names
+
+
+class SubstackPost(BaseModel):
+    """A post of the author's own Substack publication, from its RSS feed (social/substack.py)."""
+
+    title: str
+    url: str
+    published_at: datetime | None = None
+    subtitle: str = ""
+    excerpt: str = ""  # the start of the text
+
+
+class SubstackRequest(BaseModel):
+    """Request body for PUT /projects/{id}/substack: the publication's address, e.g. "yourname.substack.com", a link
+    to it or the profile link substack.com/@yourname."""
+
+    address: str = Field(min_length=1, max_length=300)
+
+
+class SubstackFeed(BaseModel):
+    """The author's own Substack publication with its latest posts (GET /projects/{id}/substack). `publication` ""
+    = none set."""
+
+    publication: str = ""
+    url: str = ""  # https://<publication>.substack.com
+    posts: list[SubstackPost] = []
+
+
 class ScannedThread(BaseModel):
-    """A Reddit thread found by the scan, with how well the book fits it."""
+    """A Reddit thread or a Substack post or Note found by the scan, with how well the book fits it."""
 
     url: str
-    subreddit: str  # without "r/"
+    site: ScanSite = "reddit"
+    community: str = ""  # where it is: the subreddit (without "r/"), the Substack publication or "@author" for a Note
+    subreddit: str = ""  # Reddit only (the same as community; kept for older clients)
     title: str
     snippet: str = ""  # the search engine's short excerpt
     full_text: str = ""  # the post and top comments from the page, when the search had them; "" = open the thread
@@ -567,11 +623,13 @@ class ScannedThread(BaseModel):
 
 
 class ScanResult(BaseModel):
-    """The result of a Reddit scan (not saved): the threads, best fit first."""
+    """The result of a scan (not saved): the threads, best fit first."""
 
     source_id: str
     topic: str
+    site: ScanSite = "reddit"
     subreddits: list[str] = []
+    publications: list[str] = []
     time_range: ScanTime = "month"
     threads: list[ScannedThread] = []
     found: int = 0  # threads found before ranking (at most MAX_TRIAGE of them are ranked)

@@ -52,7 +52,7 @@ def test_only_thread_urls_become_threads():
     assert scan._thread({"url": "https://www.reddit.com/r/Futurology/", "title": "Futurology"}) is None
     assert scan._thread({"url": "https://www.reddit.com/user/someone/", "title": "u/someone"}) is None
     thread = scan._thread(_hit("1abc"))
-    assert thread["subreddit"] == "Futurology" and thread["id"] == "1abc"
+    assert thread["community"] == "Futurology" and thread["id"] == "1abc" and thread["site"] == "reddit"
     assert thread["title"] == "Who is accountable when AI runs a city?"  # " : r/Futurology" removed
     assert thread["url"] == "https://www.reddit.com/r/Futurology/comments/1abc/some_slug/"  # query string removed
 
@@ -245,3 +245,108 @@ def test_a_thread_with_a_prompt_injection_is_flagged_not_dropped(tavily, ready, 
     assert threads["AI cities"].injection_findings[0].startswith("override_instructions")
     assert (threads["AI and accountability"].injection_risk, threads["AI and accountability"].injection_findings) == (
         "none", [])
+
+
+# ---------- Substack ----------
+def _post(pub: str = "innovationex", slug: str = "welcome-to-the-civilisational-shift",
+          title: str = "Welcome To The Civilisational Shift", score: float = 0.5, raw: str = "") -> dict:
+    return {"url": f"https://{pub}.substack.com/p/{slug}?utm_source=x", "title": title, "content": "Snippet.",
+            "raw_content": raw, "score": score}
+
+
+def test_publication_names_are_normalised_and_checked():
+    req = ScanRequest(source_id=BOOK, topic="AI", site="substack",
+                      publications=[" ImportAI ", "https://importai.substack.com/p/x", "innovationex.substack.com", ""])
+    assert req.publications == ["importai", "innovationex"]
+    for bad in (["no spaces"], ["www"], ["example.com"], ["-dash"]):
+        with pytest.raises(ValidationError):
+            ScanRequest(source_id=BOOK, topic="AI", site="substack", publications=bad)
+
+
+def test_subreddits_and_publications_belong_to_their_site():
+    with pytest.raises(ValidationError):
+        ScanRequest(source_id=BOOK, topic="AI", site="substack", subreddits=["Futurology"])
+    with pytest.raises(ValidationError):
+        ScanRequest(source_id=BOOK, topic="AI", publications=["importai"])  # site defaults to reddit
+    assert ScanRequest(source_id=BOOK, topic="AI").site == "reddit"
+
+
+def test_only_substack_posts_and_notes_become_items():
+    post = scan._substack_item(_post())
+    assert (post["id"], post["community"], post["site"]) == (
+        "innovationex/welcome-to-the-civilisational-shift", "innovationex", "substack")
+    assert post["url"] == "https://innovationex.substack.com/p/welcome-to-the-civilisational-shift"  # no query
+    opened = scan._substack_item({"url": "https://open.substack.com/pub/innovationex/p/welcome-to-the-civilisational-shift"})
+    assert opened["id"] == post["id"] and opened["url"] == post["url"]  # the same post, found once
+    note = scan._substack_item({"url": "https://substack.com/@vedsen/note/c-123456", "title": "A note"})
+    assert (note["id"], note["community"]) == ("c-123456", "@vedsen")
+    app_post = scan._substack_item({"url": "https://substack.com/home/post/p-987", "title": "T"})
+    assert (app_post["id"], app_post["community"]) == ("p-987", "")
+    for other in ("https://innovationex.substack.com/", "https://innovationex.substack.com/archive",
+                  "https://innovationex.substack.com/about", "https://substack.com/@vedsen",
+                  "https://www.substack.com/p/x", "https://example.com/p/x"):
+        assert scan._substack_item({"url": other, "title": "x"}) is None, other
+
+
+def test_substack_page_is_cut_after_the_post_and_cleaned():
+    raw = ("Innovation Exchange\nWelcome To The Civilisational Shift\nThe term may imply a lot more.\nVed Sen\n"
+           "Nov 20, 2026\n12\n3\nShare\nI hear the words often.\nSubscribe\nType your email…\n"
+           "The change may be about to kick in.\nDiscussion about this post\nA reader's comment.\nReady for more?\n"
+           "© 2026 Ved Sen · Privacy ∙ Terms ∙ Collection notice\nStart your SubstackGet the app\n")
+    text = scan.clean_page(raw, "Welcome To The Civilisational Shift", "substack")
+    assert text == ("The term may imply a lot more.\nVed Sen\nI hear the words often.\n"
+                    "The change may be about to kick in.")
+
+
+def test_one_search_per_publication_or_all_of_substack(tavily):
+    tavily.answers = {"importai.substack.com": {"results": [_post("importai", "a"), _post("importai", "a")]},
+                      "innovationex.substack.com": {"results": [_post(), {"url": "https://innovationex.substack.com/"}]}}
+    items = scan.search_substack("AI society", ["importai", "innovationex"], "week", 10)
+    assert [i["id"] for i in items] == ["importai/a", "innovationex/welcome-to-the-civilisational-shift"]
+    assert [c["include_domains"] for c in tavily.calls] == [["importai.substack.com"], ["innovationex.substack.com"]]
+    tavily.calls.clear()
+    scan.search_substack("AI society", [], "month", 10)
+    assert tavily.calls[0]["include_domains"] == ["substack.com"]
+
+
+def test_a_failed_substack_search_names_substack(tavily):
+    tavily.answers = {"substack.com": RuntimeError("HTTP 500")}
+    with pytest.raises(GenerationError) as e:
+        scan.search_substack("x", [], "month", 10)
+    assert e.value.status_code == 502 and "Substack" in str(e.value)
+
+
+def test_a_substack_scan_ranks_posts_for_the_book(tavily, ready, monkeypatch):
+    tavily.answers = {"substack.com": {"results": [_post(score=0.4), _post("importai", "b", "GPU prices", 0.9)]}}
+    seen = {}
+
+    def fake_structured(prompt, values, schema, what, temperature):
+        seen.update(values)
+        return scan.Triage(threads=[scan.ThreadFit(n=1, fit="low", why="Hardware."),
+                                    scan.ThreadFit(n=2, fit="high", why="Civilisation.")]), 9
+    monkeypatch.setattr(scan, "structured", fake_structured)
+    result = scan.scan_discussions(PROJECT, ScanRequest(source_id=BOOK, topic="AI civilisation", site="substack"))
+    assert result.site == "substack" and [t.title for t in result.threads] == [
+        "Welcome To The Civilisational Shift", "GPU prices"]
+    first = result.threads[0]
+    assert (first.site, first.community, first.subreddit) == ("substack", "innovationex", "")
+    assert seen["items"] == "Substack posts and Notes"
+    assert '<post n="2" where="innovationex">' in seen["threads"] and "subreddit=" not in seen["threads"]
+
+
+def test_the_authors_own_publication_is_left_out(tavily, ready, monkeypatch):
+    monkeypatch.setitem(db.projects, PROJECT, db.projects[PROJECT].model_copy(update={"substack": "innovationex"}))
+    tavily.answers = {"substack.com": {"results": [_post(), _post("importai", "b", "Other")]}}
+    monkeypatch.setattr(scan, "structured", lambda prompt, values, schema, what, temperature: (
+        scan.Triage(threads=[scan.ThreadFit(n=1, fit="high", why="Fits.")]), 3))
+    result = scan.scan_discussions(PROJECT, ScanRequest(source_id=BOOK, topic="AI", site="substack"))
+    assert [t.community for t in result.threads] == ["importai"] and result.found == 1
+
+
+@pytest.mark.usefixtures("offline")
+def test_scan_endpoint_takes_substack_publications(client, scans):
+    response = _scan(client, site="substack", publications=["ImportAI"])
+    assert response.status_code == 200
+    assert scans[0].site == "substack" and scans[0].publications == ["importai"]
+    assert _scan(client, site="substack", subreddits=["Futurology"]).status_code == 422
+    assert _scan(client, site="medium").status_code == 422

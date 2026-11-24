@@ -50,7 +50,7 @@ _PROJECT_COUNTS = {"source_count", "chunk_count", "asset_count", "token_count"} 
 # ---------- Projects ----------
 def _project(row: ProjectRow) -> Project:
     return Project(id=row.id, name=row.name, description=row.description, created_at=row.created_at,
-                   owner_id=row.owner_id or "")
+                   owner_id=row.owner_id or "", substack=row.substack or "")
 
 
 def load_projects() -> dict[str, Project]:
