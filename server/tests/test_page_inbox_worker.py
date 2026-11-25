@@ -798,3 +798,42 @@ def test_test_mode_reaches_every_agent(post_phase):
     assert post_phase.tests == [True, True]  # the reply, then the book post
     post_phase.worker.handle(_text("/status"))
     assert "TEST MODE" in post_phase.said[-1][0]
+
+
+# ---------- /post_facebook, /post_youtube ----------
+def test_post_facebook_proposes_a_book_post_now_even_beyond_the_limit(post_phase):
+    from app.core.schemas import AutomationSchedule
+    from tests.conftest import OWNER
+    worker_module.automation.save(OWNER.id, AutomationSchedule(every_minutes=60, book_post=False))
+    post_phase.posted_today = 5
+    post_phase.engage_post = _own_post()  # no question first: only the book post
+    post_phase.worker.handle(_text("/post_facebook"))
+    assert post_phase.book_posted == ["src_1#0"] and post_phase.engaged == []
+    post_phase.worker.handle(_button("go", message_id=301))
+    assert post_phase.engaged == [] and post_phase.worker.cycle is None  # no other phase follows
+    assert ("Cycle done: 1 posted.", None) in post_phase.said
+
+
+def test_post_youtube_proposes_a_question_under_a_video_now(post_phase):
+    post_phase.channel = worker_module.youtube.ChannelAccess("UCchannel", "token")
+    post_phase.engage_video, post_phase.youtube_posted_today = _own_video(), 9
+    post_phase.engage_post = _own_post()
+    post_phase.worker.handle(_text("/post_youtube"))
+    assert post_phase.engaged == ["vid00000001"] and post_phase.book_posted == []
+    post_phase.worker.handle(_button("skip", message_id=201))
+    assert post_phase.engaged == ["vid00000001"] and post_phase.book_posted == []
+
+
+def test_post_now_says_why_nothing_comes(post_phase):
+    post_phase.worker.handle(_text("/post_youtube"))  # no channel connected
+    assert "No YouTube channel is connected" in post_phase.said[-1][0] and post_phase.worker.cycle is None
+    post_phase.channel = worker_module.youtube.ChannelAccess("UCchannel", "token")
+    post_phase.worker.handle(_text("/post_youtube"))  # no video fits
+    assert "No video of yours" in post_phase.said[-1][0]
+
+
+def test_post_now_waits_for_a_waiting_proposal(post_phase):
+    post_phase.worker.handle(_text("/post_facebook"))
+    post_phase.worker.handle(_text("/post_facebook"))
+    assert post_phase.book_posted == ["src_1#0"]
+    assert post_phase.said[-1] == ("A proposal is still waiting for your answer (above).", 301)

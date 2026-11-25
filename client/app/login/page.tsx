@@ -2,14 +2,17 @@
 
 /**
  * Login page ("/login"): sign in with email and password, or create an account (Supabase Auth). A new account
- * must be confirmed with the link in the email Supabase sends (handled by app/auth/confirm/route.ts).
+ * must be confirmed with the link in the email Supabase sends (handled by app/auth/confirm/route.ts). The background is
+ * a picture of a library (public/login-bg.jpg, optimized by next/image) under a tint of the theme's background colour.
  */
 
 import { useState, type FormEvent } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { BookOpen, LogIn, UserPlus } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { Button, Card, ErrorNote } from "@/components/ui";
+import loginBackground from "../../public/login-bg.jpg";
 
 /** Shortest password accepted when signing up; Supabase's default minimum is 6. */
 const MIN_PASSWORD = 8;
@@ -57,6 +60,9 @@ export default function LoginPage() {
 
   return (
     <div className="bc-root login-page">
+      <Image src={loginBackground} alt="" fill sizes="100vw" placeholder="blur" loading="eager" fetchPriority="high"
+        className="login-bg" />
+      <div className="login-shade" aria-hidden />
       <Card title={signup ? "Create your account" : "Sign in to Marketer App"} icon={BookOpen}>
         <form className="login-form" onSubmit={submit}>
           <div className="bc-field">

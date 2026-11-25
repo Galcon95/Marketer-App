@@ -6,6 +6,9 @@ and the graph (agents/page_inbox.py) while the server runs.
     /next             run a cycle now: look at the Page and the channel and propose the next open item
     /status           the schedule, the next and the last run, the running cycle
     /pause, /resume   stop the schedule for now, and start it again (the schedule itself is kept)
+    /post_facebook    a new post about the book now (phase 3 only); /post_youtube: a question under a video now
+                      (phase 2 for YouTube only). Asked for by the author: the daily limit and the schedule's
+                      switches do not apply; the proposal waits for "make it so" as always
     /start, /help     what the bot does, all commands (COMMANDS, also the bot's "/" menu) and how to answer
     a button          "Make it so" / "Edit" / "Skip" under the current proposal ("Edit": the next text is the
                       author's own version, used as it is)
@@ -76,6 +79,8 @@ COMMANDS: list[tuple[str, str]] = [
     ("next", "Run a cycle now: replies to new comments (with none, a question under a recent post of yours), "
              "then a new post about your book"),
     ("status", "The schedule, the next and the last run, the running cycle, and a waiting proposal"),
+    ("post_facebook", "A new post about your book on your Facebook Page now (to approve as always)"),
+    ("post_youtube", "A question under one of your YouTube videos now (to approve as always)"),
     ("pause", "Stop the schedule for now (/next still works; your schedule is kept)"),
     ("resume", "Start the schedule again (the next run counts from now)"),
     ("help", "All commands and how to answer a proposal"),
@@ -185,23 +190,26 @@ class InboxWorker:
                 return
         self._end_cycle(error=result == "error")
 
-    def propose_engagement(self, asked: bool, platform: str = "facebook") -> Step:
+    def propose_engagement(self, asked: bool, platform: str = "facebook", now: bool = False) -> Step:
         """Phase 2: a question under an own recent Facebook post or YouTube video without comments, when the
-        schedule allows it."""
+        schedule allows it (`now`: the author asked for it, /post_youtube: switch and daily limit do not apply)."""
         owner = automation.inbox_owner()
         if not owner or (platform == "facebook" and not facebook.is_configured()):
             return "none"
         thing = "video" if platform == "youtube" else "post"
         try:
             settings = automation.schedule_of(owner)
-            if not settings.engage:
+            if not settings.engage and not now:
                 return "none"
             limit = settings.youtube_daily_limit if platform == "youtube" else settings.daily_limit
-            if engagement.posted_today(owner, settings.timezone, platform) >= limit:
+            if not now and engagement.posted_today(owner, settings.timezone, platform) >= limit:
                 if asked:
                     where = "YouTube" if platform == "youtube" else "Facebook"
                     self._say(f"{where} daily limit reached ({limit} own comments or posts today), so no question "
                               f"under a {thing}.")
+                return "none"
+            if platform == "youtube" and now and inbox.channel_for_inbox() is None:
+                self._say("No YouTube channel is connected: connect it in the app (Integrations → YouTube channel).")
                 return "none"
             post = engagement.pick_video(settings) if platform == "youtube" else engagement.pick_post(settings)
             if post is None:
@@ -222,16 +230,19 @@ class InboxWorker:
             self._report(f"Could not prepare a question for your {thing}: {e}", asked)
             return "error"
 
-    def propose_book_post(self, asked: bool) -> Step:
-        """Phase 3: a new post about the next topic of the books, when the schedule allows it."""
+    def propose_book_post(self, asked: bool, now: bool = False) -> Step:
+        """Phase 3: a new post about the next topic of the books, when the schedule allows it (`now`: the author
+        asked for it, /post_facebook: switch and daily limit do not apply)."""
         owner = automation.inbox_owner()
         if not owner or not facebook.is_configured():
+            if now:
+                self._say("No Facebook Page is connected: connect it in the app (Integrations → Facebook Page).")
             return "none"
         try:
             settings = automation.schedule_of(owner)
-            if not settings.book_post:
+            if not settings.book_post and not now:
                 return "none"
-            if engagement.posted_today(owner, settings.timezone, "facebook") >= settings.daily_limit:
+            if not now and engagement.posted_today(owner, settings.timezone, "facebook") >= settings.daily_limit:
                 if asked:
                     self._say(f"Facebook daily limit reached ({settings.daily_limit} own comments or posts today), "
                               "so no new post about your book.")
@@ -253,6 +264,21 @@ class InboxWorker:
                 LookupError, OSError) as e:
             self._report(f"Could not prepare a post about your book: {e}", asked)
             return "error"
+
+    def post_now(self, platform: str) -> None:
+        """/post_facebook, /post_youtube: one proposal for that platform right away, in a cycle of its own (after
+        the decision only new readers' comments may follow, no other phase)."""
+        if waiting := _waiting():
+            self._say("A proposal is still waiting for your answer (above).", reply_to=waiting[1])
+            return
+        if self.cycle is not None:
+            self._end_cycle(error=False)
+        self.cycle = Cycle(automation.inbox_owner() or "", "telegram")
+        self.cycle.engage_tried, self.cycle.post_tried = {"facebook", "youtube"}, True
+        result = (self.propose_engagement(True, "youtube", now=True) if platform == "youtube"
+                  else self.propose_book_post(True, now=True))
+        if result != "proposed":
+            self._end_cycle(error=result == "error")
 
     def _end_cycle(self, error: bool) -> None:
         cycle, self.cycle = self.cycle, None
@@ -426,6 +452,9 @@ class InboxWorker:
             return
         if command == "/next":
             self.run_cycle("telegram")
+            return
+        if command in ("/post_facebook", "/post_youtube"):
+            self.post_now(command.removeprefix("/post_"))
             return
         if command in ("/pause", "/resume"):
             self._say(self._pause(command == "/pause"))

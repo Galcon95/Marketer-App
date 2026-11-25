@@ -528,7 +528,8 @@ export default function AutomationSettings() {
       </Card>
       <Card title="In Telegram" icon={Bot}>
         <span className="bc-hint">
-          /next – run a cycle now (replies, a question when there are none, then a book post) · /status – the schedule and the running cycle · /pause, /resume – stop or restart
+          /next – run a cycle now (replies, a question when there are none, then a book post) · /post_facebook – a new book post now · /post_youtube – a question under a video now (both
+          also beyond the daily limit) · /status – the schedule and the running cycle · /pause, /resume – stop or restart
           the schedule · under a proposal: ✅ Make it so, ✏️ Edit (tap the text the bot sends to copy it, change it,
           send it back: that exact text is proposed), Skip, or write what to change. A proposal waits until you
           answer it; the next one follows your answer, and the cycle ends with a summary.
