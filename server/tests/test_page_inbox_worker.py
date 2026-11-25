@@ -655,7 +655,7 @@ def test_without_a_post_the_question_goes_under_a_video(engage):
     engage.engage_post, engage.engage_video = None, _own_video()
     engage.worker.handle(_text("/next"))
     assert engage.engaged == ["vid00000001"]
-    assert ("No post of yours from the last 14 days is waiting for a first comment.", None) in engage.said
+    assert ("No post of yours from the last 14 days is without comments.", None) in engage.said
 
 
 def test_a_restored_cycle_knows_which_platforms_had_their_question(engage):

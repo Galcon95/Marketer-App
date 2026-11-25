@@ -794,6 +794,8 @@ class YouTubeUpload(YouTubeVideo):
     description: str = ""
     published_at: datetime
     comment_count: int | None = None  # None when YouTube hides the number (comments off)
+    earlier_comments: list[str] = []  # the latest comments under it, newest first (set when it gets another question;
+    # others' text: untrusted)
 
 
 class YouTubeComment(BaseModel):

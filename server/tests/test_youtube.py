@@ -228,6 +228,19 @@ def test_recent_videos_newest_first_with_comment_counts(api):
     assert api.requests[2].url.params["part"] == "snippet,statistics" and len(api.requests) == 3
 
 
+def test_latest_comments_of_a_video_with_replies_newest_first(api):
+    api.answers["commentThreads"] = {"items": [
+        _thread(_raw(TOP, "Old question", "2026-11-01T10:00:00Z"),
+                [_raw(f"{TOP}.r1", "A later reply", "2026-11-09T10:00:00Z", parent=TOP)]),
+        _thread(_raw("UgyNEWER", "Newer top comment", "2026-11-05T10:00:00Z"))]}
+    found = yt.latest_comments(VIDEO, 3)
+    assert [c.message for c in found] == ["A later reply", "Newer top comment", "Old question"]
+    params = api.requests[0].url.params
+    assert params["videoId"] == VIDEO and params["order"] == "time" and params["maxResults"] == "3"
+    with pytest.raises(ValueError):
+        yt.latest_comments("not a video id!")
+
+
 def test_recent_videos_of_a_channel_without_uploads(api):
     _uploads(api, [])
     assert yt.recent_videos() == [] and len(api.requests) == 2

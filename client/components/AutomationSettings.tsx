@@ -429,7 +429,11 @@ export default function AutomationSettings() {
                       </label>
                     </div>
                   )}
-                  <span className="bc-hint">Each post or video gets at most one such question.</span>
+                  <span className="bc-hint">
+                    A post gets one such question. A video gets another one when nobody has commented on it for 5
+                    days; the daily limits below keep the pace. Videos take turns: one you skipped comes back after a
+                    day, behind the others.
+                  </span>
                 </div>
               </fieldset>
 

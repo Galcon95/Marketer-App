@@ -6,6 +6,7 @@
     open_items(comments)              what waits for an answer: viewers' comments the channel has not answered
     list_replies(comment_id)          all replies under a top comment
     recent_videos(limit)              the channel's latest uploads with title, description and comment count
+    latest_comments(video_id, limit)  the newest comments under one video (replies included), newest first
     video_transcript(video_id)        what is said in one of the channel's videos, from its captions
     reply_to_comment(id, message)     a reply as the channel under a comment          (writes)
     comment_on_video(id, message)     a new top comment as the channel under a video  (writes)
@@ -222,6 +223,25 @@ def recent_videos(limit: int = 10) -> list[YouTubeUpload]:
         videos.append(YouTubeUpload(**_video(v["id"], snippet).model_dump(), description=snippet.get("description", ""),
                                     published_at=snippet["publishedAt"], comment_count=_int(stats.get("commentCount"))))
     return sorted(videos, key=lambda v: v.published_at, reverse=True)
+
+
+def latest_comments(video_id: str, limit: int = 5) -> list[YouTubeComment]:
+    """The newest comments under one video, replies YouTube includes with them, newest first (1 quota unit).
+
+    Raises:
+        ValueError: If the video id is invalid.
+        YouTubeError: If the comments cannot be read (403 when comments are turned off).
+    """
+    _check_video(video_id)
+    data = _request("GET", "commentThreads", {"part": "snippet,replies", "videoId": video_id, "order": "time",
+                                              "maxResults": max(1, min(limit, MAX_LIMIT)), "textFormat": "plainText"})
+    found = []
+    for item in data.get("items", []):
+        top = (item.get("snippet") or {}).get("topLevelComment") or {}
+        if top.get("id"):
+            found.append(_comment(top, video_id))
+        found += [_comment(r, video_id) for r in (item.get("replies") or {}).get("comments", []) if r.get("id")]
+    return sorted(found, key=lambda c: c.created_time, reverse=True)
 
 
 def video_transcript(video_id: str, max_chars: int = 20000) -> str:

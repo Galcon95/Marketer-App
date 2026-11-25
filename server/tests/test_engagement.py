@@ -12,7 +12,7 @@ from app.agents.cycle import Cycle
 from app.core import config
 from app.core import state as db
 from app.core.schemas import (AutomationSettings, ChunkLocation, Chunk, FacebookPost, FacebookPosts,
-                              FacebookPublished, YouTubePublished, YouTubeUpload)
+                              FacebookPublished, YouTubeComment, YouTubePublished, YouTubeUpload)
 from tests.conftest import OWNER
 
 PROJECT = "prj_test"
@@ -51,7 +51,7 @@ def world(monkeypatch):
         (chunks[source_ids[0]], scores[source_ids[0]])])
     monkeypatch.setattr(eng, "source_name", lambda sid: {VOL1: "Volume 1", VOL2: "Volume 2"}.get(sid))
     monkeypatch.setattr(eng, "_runs", {})
-    monkeypatch.setattr(eng, "_decided", set())
+    monkeypatch.setattr(eng, "_decided", {})
 
     def send_message(text, buttons=None, reply_to=None):
         w.sent.append((text, [b.data for b in buttons or []]))
@@ -120,6 +120,27 @@ def test_pick_post_skips_posts_tried_before(world, monkeypatch):
     cycle.proposed_comment("eng:1:run1", _post("1"))
     settings = AutomationSettings(user_id=OWNER.id, every_minutes=60)
     assert eng.pick_post(settings).id == "2"
+
+
+def test_a_skipped_post_comes_back_after_a_day_a_posted_one_never(monkeypatch):
+    cycle = Cycle(OWNER.id, "app")
+    cycle.proposed_comment("eng:1:run1", _post("1"))
+    cycle.decided("eng:1:run1", "skipped")
+    cycle.proposed_comment("eng:2:run2", _post("2"))
+    cycle.decided("eng:2:run2", "posted")
+    assert {"1", "2"} <= eng.tried_posts(OWNER.id)
+    later = db.now() + eng.SKIP_RETRY + timedelta(minutes=1)
+    monkeypatch.setattr(eng.db, "now", lambda: later)
+    tried = eng.tried_posts(OWNER.id)
+    assert "1" not in tried and "2" in tried
+
+
+def test_a_skip_in_this_process_also_comes_back_after_a_day(world, monkeypatch):
+    thread_id, message_id = _start()
+    assert eng.resume(thread_id, message_id, "skip") == "skipped" and "111_1" in eng.tried_posts(OWNER.id)
+    later = db.now() + eng.SKIP_RETRY + timedelta(minutes=1)
+    monkeypatch.setattr(eng.db, "now", lambda: later)
+    assert "111_1" not in eng.tried_posts(OWNER.id)
 
 
 def test_posted_today_counts_only_own_comments_and_posts():
@@ -203,7 +224,7 @@ def test_skip_posts_nothing_and_the_post_is_not_tried_again(world, monkeypatch):
 def test_a_waiting_proposal_survives_a_restart(world, monkeypatch):
     thread_id, message_id = _start()
     monkeypatch.setattr(eng, "_runs", {})
-    monkeypatch.setattr(eng, "_decided", set())
+    monkeypatch.setattr(eng, "_decided", {})
     assert eng.restore() == 1
     assert eng.waiting_run() == (thread_id, message_id)
     assert eng.resume(thread_id, message_id, "approve") == "posted" and len(world.posted) == 1
@@ -213,7 +234,7 @@ def test_a_decided_post_stays_tried_after_a_restart(world, monkeypatch):
     thread_id, message_id = _start()
     eng.resume(thread_id, message_id, "skip")
     monkeypatch.setattr(eng, "_runs", {})
-    monkeypatch.setattr(eng, "_decided", set())
+    monkeypatch.setattr(eng, "_decided", {})
     assert eng.restore() == 0 and "111_1" in eng.tried_posts(OWNER.id)
 
 
@@ -246,6 +267,54 @@ def test_pick_video_needs_a_connected_channel(world):
     assert eng.pick_video(AutomationSettings(user_id=OWNER.id, every_minutes=30)).id == "vid00000001"
     world.channel = None
     assert eng.pick_video(AutomationSettings(user_id=OWNER.id, every_minutes=30)) is None
+
+
+def test_videos_take_turns_a_skipped_one_goes_to_the_back(world, monkeypatch):
+    settings = AutomationSettings(user_id=OWNER.id, every_minutes=30)
+    world.videos = [_video("vid00000001", days_old=1), _video("vid00000002", days_old=5),
+                    _video("vid00000003", days_old=9)]
+    now = db.now()
+    monkeypatch.setattr(eng, "_decided", {"vid00000001": (now - timedelta(days=2), True),
+                                          "vid00000002": (now - timedelta(days=3), True)})
+    assert eng.pick_video(settings).id == "vid00000003"  # never proposed: first, though the oldest
+    eng._decided["vid00000003"] = (now - timedelta(days=2, hours=1), True)
+    assert eng.pick_video(settings).id == "vid00000002"  # skipped longest ago
+    eng._decided["vid00000002"] = (now - timedelta(hours=1), True)  # skipped just now: not today
+    assert eng.pick_video(settings).id == "vid00000003"
+
+
+def _comment(text, days_old, video_id="vid00000003"):
+    return YouTubeComment(id=f"c{days_old}", video_id=video_id, message=text,
+                          created_time=db.now() - timedelta(days=days_old))
+
+
+def test_without_uncommented_videos_a_quiet_one_gets_another_question(world, monkeypatch):
+    settings = AutomationSettings(user_id=OWNER.id, every_minutes=30)
+    world.videos = [_video("vid00000002", comments=1), _video("vid00000003", days_old=2, comments=2)]
+    comments = {"vid00000002": [_comment("Great!", 1, "vid00000002")],  # talked about yesterday: not quiet
+                "vid00000003": [_comment("What would you change?", 6), _comment("Loved it", 8)]}
+    monkeypatch.setattr(eng.youtube, "latest_comments", lambda video_id, limit: comments[video_id])
+    video = eng.pick_video(settings)
+    assert video.id == "vid00000003" and video.earlier_comments == ["What would you change?", "Loved it"]
+    eng.start(video)
+    assert '<post n="1">\nWhat would you change?\n</post>' in world.calls[0]["earlier"]
+    world.videos.append(_video("vid00000009"))  # a video without comments comes first
+    assert eng.pick_video(settings).id == "vid00000009"
+
+
+def test_a_video_with_a_question_waits_five_days_then_may_get_another(world, monkeypatch):
+    settings = AutomationSettings(user_id=OWNER.id, every_minutes=30)
+    world.videos = [_video()]
+    thread_id = eng.start(_video())
+    assert eng.resume(thread_id, eng.waiting_run()[1], "approve") == "posted"
+    world.videos = [_video(comments=1)]
+    ours = [_comment("ours", 0)]
+    monkeypatch.setattr(eng.youtube, "latest_comments", lambda video_id, limit: ours)
+    assert eng.pick_video(settings) is None
+    later = db.now() + eng.QUIET + timedelta(minutes=1)
+    monkeypatch.setattr(eng.db, "now", lambda: later)
+    assert eng.pick_video(settings).id == "vid00000001"
+    assert "vid00000001" in eng.tried_posts(OWNER.id)  # a Facebook post: once for good
 
 
 def test_a_question_under_a_video_is_drafted_from_title_and_description(world):

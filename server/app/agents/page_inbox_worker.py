@@ -207,7 +207,8 @@ class InboxWorker:
             if post is None:
                 if asked:
                     days = settings.youtube_engage_days if platform == "youtube" else settings.engage_days
-                    self._say(f"No {thing} of yours from the last {days} days is waiting for a first comment.")
+                    quiet = f" or quiet for {engagement.QUIET.days} days" if platform == "youtube" else ""
+                    self._say(f"No {thing} of yours from the last {days} days is without comments{quiet}.")
                 return "none"
             if asked:
                 self._say(f"Drafting a question for your {thing}…")

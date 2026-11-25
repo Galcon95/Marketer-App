@@ -9,11 +9,14 @@ one inviting question drafted from the books, posted only after the author's "ma
                          └─ use_text ◄┘(edit: the author's own text, used as it is; no model call)
 
     pick_post    Facebook: the newest own post (from_page) of the last `engage_days` with no comments and text
-    pick_video   YouTube: the newest own upload of the last `youtube_engage_days` with no comments (comments not
-                 turned off),
-                 on the channel the inbox owner connected (page_inbox.channel_for_inbox)
-                 Both: never had an engagement proposal (any outcome: one try per post or video; from the cycle log,
-                 and in memory)
+    pick_video   YouTube: an own upload of the last `youtube_engage_days` (comments not turned off), on the channel
+                 the inbox owner connected (page_inbox.channel_for_inbox): the newest without comments, else the newest
+                 whose last comment is QUIET_DAYS old (another question, so the video does not look dead; its latest
+                 comments go to the prompt so the question is new). No limit per video: the daily limit keeps the pace
+                 Rotation: among the videos that fit, one never proposed comes first (newest first), then the one
+                 proposed longest ago, so a skipped video goes to the back of the line.
+                 Both: not while a proposal for it waits; a skipped one comes back after SKIP_RETRY; a post with any
+                 other outcome counts for good, a video for QUIET_DAYS
     draft        the book whose passages fit the post (a video: its title, description and transcript) best (one
                  vector search per book), its best passages, and one model call (prompts/engagement_comment.md): one
                  open question, at most 3 sentences, no promotion. A video's transcript is fetched once, for the first
@@ -46,7 +49,7 @@ from app.agents import checkpoints
 from app.agents import page_inbox as inbox
 from app.core import prompt_files, prompts, tracing, usage
 from app.core import state as db
-from app.core.guard import clean_text, output_blocked
+from app.core.guard import clean_text, output_blocked, quote_untrusted
 from app.core.llm import structured
 from app.core.schemas import AutomationSettings, FacebookPost, YouTubeUpload
 from app.core.style import style_guidance, temperature_for
@@ -66,6 +69,10 @@ POST_TEXT = 3000  # characters of the post given to the model (and of a video's 
 VIDEO_TEXT = 9000  # characters of a video's title, description and transcript given to the model
 EXCERPT = 300  # characters of the post shown in Telegram
 LOG_CYCLES = 200  # cycles read to find the posts that had a proposal already
+SKIP_RETRY = timedelta(days=1)  # a skipped post or video may get a question again after this
+QUIET = timedelta(days=5)  # a video whose last comment is this old may get another question
+MAX_QUIET_CHECKS = 10  # videos with comments whose last comment is read per pick (1 quota unit each)
+EARLIER_COMMENTS = 5  # latest comments under a video given to the model with another question
 
 PROMPT = prompt_files.chat_prompt("engagement_comment")  # prompts/engagement_comment.md
 
@@ -140,10 +147,27 @@ def pick_video(settings: AutomationSettings) -> YouTubeUpload | None:
     channel = inbox.channel_for_inbox()
     if channel is None:
         return None
+    now = db.now()
+    proposals = _proposals(settings.user_id)
+    tried = tried_posts(settings.user_id, again_after=QUIET, proposals=proposals)
+    last = last_proposed(proposals)
     with youtube.as_channel(channel):
         videos = youtube.recent_videos(SCAN_VIDEOS)
-    found = video_candidates(videos, settings.youtube_engage_days, tried_posts(settings.user_id), db.now())
-    return found[0] if found else None
+        found = rotate(video_candidates(videos, settings.youtube_engage_days, tried, now), last)
+        if found:
+            return found[0]
+        since = now - timedelta(days=settings.youtube_engage_days)
+        commented = rotate([v for v in videos if v.comment_count and v.title.strip() and v.published_at >= since
+                            and v.id not in tried], last)
+        for video in commented[:MAX_QUIET_CHECKS]:
+            try:
+                comments = youtube.latest_comments(video.id, EARLIER_COMMENTS)
+            except youtube.YouTubeError as e:  # e.g. comments turned off since
+                logger.info("Engagement: comments of video %s not readable: %s", video.id, e)
+                continue
+            if not comments or now - comments[0].created_time >= QUIET:
+                return video.model_copy(update={"earlier_comments": [c.message for c in comments if c.message]})
+    return None
 
 
 def pick_post(settings: AutomationSettings) -> FacebookPost | None:
@@ -157,17 +181,49 @@ def pick_post(settings: AutomationSettings) -> FacebookPost | None:
     return found[0] if found else None
 
 
-def tried_posts(user_id: str) -> set[str]:
-    """Posts and videos that had an engagement proposal already (any outcome), from the cycle log and this
-    process."""
+def tried_posts(user_id: str, again_after: timedelta | None = None,
+                proposals: list[tuple[str, datetime, bool]] | None = None) -> set[str]:
+    """Posts and videos not to propose now: those with an engagement proposal (from the cycle log and this process),
+    except the ones skipped longer than SKIP_RETRY ago and, with `again_after`, the ones decided otherwise longer than
+    that ago (None: those count for good). `proposals`: from _proposals, if already read."""
+    now = db.now()
     with _lock:
-        done = set(_decided) | {p for p in _runs}
+        waiting = set(_runs)
+    found = _proposals(user_id) if proposals is None else proposals
+    return waiting | {p for p, at, skipped in found if not _over(at, skipped, again_after, now)}
+
+
+def last_proposed(proposals: list[tuple[str, datetime, bool]]) -> dict[str, datetime]:
+    """When each post or video last had an engagement proposal (from _proposals)."""
+    last: dict[str, datetime] = {}
+    for post_id, at, _ in proposals:
+        last[post_id] = max(at, last.get(post_id, at))
+    return last
+
+
+def rotate(videos: list[YouTubeUpload], last: dict[str, datetime]) -> list[YouTubeUpload]:
+    """The videos in turn: never proposed first (newest first, as given), then the one proposed longest ago."""
+    never = [v for v in videos if v.id not in last]
+    return never + sorted((v for v in videos if v.id in last), key=lambda v: last[v.id])
+
+
+def _proposals(user_id: str) -> list[tuple[str, datetime, bool]]:
+    """Every decided engagement proposal: (post or video id, when, skipped), from the cycle log and this process."""
+    with _lock:
+        found = [(p, at, skipped) for p, (at, skipped) in _decided.items()]
     try:
         for cycle in records.list_cycles(user_id, LOG_CYCLES):
-            done |= {e.item_id for e in cycle.entries if e.kind == "comment"}
+            found += [(e.item_id, e.decided_at or e.proposed_at, e.outcome == "skipped")
+                      for e in cycle.entries if e.kind == "comment"]
     except OSError as e:  # DatabaseError: only this process's memory counts
         logger.warning("Engagement: the cycle log cannot be read: %s", e)
-    return done
+    return found
+
+
+def _over(decided_at: datetime, skipped: bool, again_after: timedelta | None, now: datetime) -> bool:
+    """True if a post or video decided at `decided_at` may get a proposal again."""
+    wait = SKIP_RETRY if skipped else again_after
+    return wait is not None and now - decided_at >= wait
 
 
 def posted_today(user_id: str, timezone: str, platform: Platform = "facebook") -> int:
@@ -230,9 +286,10 @@ def resume(thread_id: str, message_id: int, decision: str, feedback: str = "") -
             return "waiting"
         values = _graph().get_state(_config(thread_id)).values
         post_id = values["post"]["id"]
-        _decided.add(post_id)
+        outcome = values.get("outcome", "gave_up")
+        _decided[post_id] = (db.now(), outcome == "skipped")
         _runs.pop(post_id, None)
-        return values.get("outcome", "gave_up")
+        return outcome
 
 
 def restore() -> int:
@@ -253,8 +310,15 @@ def restore() -> int:
             elif state.next or checkpoints.is_old(state.created_at):  # broken off by an error, or old
                 checkpoints.delete(thread_id)
             else:
-                _decided.add(post_id)
+                at = _moment(state.created_at) if state.created_at else db.now()
+                _decided[post_id] = (at, state.values.get("outcome") == "skipped")
     return restored
+
+
+def _moment(iso: str) -> datetime:
+    """A checkpoint's ISO time, with a time zone."""
+    moment = datetime.fromisoformat(iso)
+    return moment if moment.tzinfo else moment.replace(tzinfo=ZoneInfo("UTC"))
 
 
 def waiting_run() -> tuple[str, int] | None:
@@ -274,7 +338,7 @@ def posted_url(thread_id: str) -> str:
 # ---------- Graph ----------
 _lock = threading.RLock()
 _runs: dict[str, str] = {}  # post or video id → its run's thread id, while the run waits
-_decided: set[str] = set()  # posts and videos whose proposal was decided (in this process)
+_decided: dict[str, tuple[datetime, bool]] = {}  # posts and videos decided in this process → (when, skipped)
 
 
 @cache
@@ -319,7 +383,7 @@ def _draft(state: EngageState) -> EngageState:
         result, _ = structured(PROMPT, {
             "style": style_guidance(humanize := state.get("humanize", HUMANIZE)),
             "book": source_name(source_id) or source_id, "post": text,
-            "where": WHERE[platform], "label": LABEL[platform],
+            "where": WHERE[platform], "label": LABEL[platform], "earlier": _earlier(target),
             "context": format_context(passages) or "(no passages)",
             "current": facebook.publishable_text(state.get("comment", "")) or "(none yet)",
             "feedback": feedback or "(none)",
@@ -473,6 +537,12 @@ def _text(target: Target, transcript: str = "") -> str:
         text = f"Title: {target.title}\n\nDescription: {target.description}".strip()
         return f"{text}\n\nWhat is said in the video (transcript):\n{transcript}" if transcript else text
     return target.message
+
+
+def _earlier(target: Target) -> str:
+    """The comments already under a video that gets another question, quoted as outside text; "(none)" else."""
+    comments = getattr(target, "earlier_comments", None) or []
+    return "\n".join(quote_untrusted(c[:500], "post", n=i) for i, c in enumerate(comments, 1)) or "(none)"
 
 
 def _transcript(video: YouTubeUpload) -> str:
