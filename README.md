@@ -142,9 +142,9 @@ Press `Ctrl+C` in each terminal.
   `FACEBOOK_INBOX_BOOKS` in `server/.env`, plus `FACEBOOK_PAGE_*` for the Page and/or connect your YouTube channel in
   the app, then send `/next` to your bot. See [docs/PAGE_INBOX.md](docs/PAGE_INBOX.md).
 - **Guest demo on your own server:** create a user in Supabase (Authentication → Users), set its email as
-  `GUEST_EMAIL` in `server/.env`, then copy demo books into its library once: `cd server`, then
-  `uv run python scripts/make_guest_demo.py` (no new embedding costs). The server manages the guest's password
-  itself.
+  `GUEST_EMAIL` in `server/.env`, then copy books from your library into the guest's once with `copy_book` in
+  [server/app/core/demo_books.py](server/app/core/demo_books.py) (it copies the existing chunks and embeddings, so
+  there are no new embedding costs). The server manages the guest's password itself.
 - **Red button in Telegram** (with `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`): alarms on a cost spike, a used-up
   budget or a changed guest account; `/demo_status`, `/demo_off`, `/demo_on`, `/freeze` (stops all model calls except
   the admin's) and `/unfreeze`. A local server next to a deployed one: `TELEGRAM_POLLING=false` (sends alarms, does
