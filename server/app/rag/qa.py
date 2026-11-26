@@ -278,7 +278,7 @@ def _answer(state: _QAState) -> _QAState:
     use_tools = state.get("use_tools", False)
     messages = QA_PROMPT.format_messages(
         history=_history_messages(state.get("history", [])), question=state["question"],
-        background=format_background(state["context"]),
+        background=format_background(state["context"], state.get("source_ids")),
         context=format_context(state["context"]) or "(none: no passage is close enough to the question)",
         tools_note=TOOLS_NOTE if use_tools else "",
     )

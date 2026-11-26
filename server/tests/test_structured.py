@@ -44,6 +44,19 @@ def test_book_background_is_quoted_inside_the_qa_prompt(monkeypatch):
     assert "<background>" in messages[0].content  # the system prompt says such blocks are data
 
 
+def test_the_chosen_books_summary_is_background_even_without_passages(monkeypatch):
+    """"Working on" one book: "What is this book about?" finds no close passage, but the model still gets that book's
+    summary first, so it does not describe another book of the library."""
+    other = _summary("About something else.").model_copy(update={"source_id": "src_other"})
+    monkeypatch.setattr(db, "summaries", {"src_test": _summary("About new towns."), "src_other": other})
+    assert format_background([]) == "(none)"
+    chosen = format_background([], ["src_test"])
+    assert "About new towns." in chosen and "something else" not in chosen
+    both = format_background([(_chunk().model_copy(update={"source_id": "src_other"}), 0.5)], ["src_test"])
+    assert both.index("About new towns.") < both.index("About something else.")  # the chosen book comes first
+    assert "never describe a different book" in qa.QA_PROMPT.messages[0].prompt.template
+
+
 def test_chapter_text_goes_to_the_model_as_a_passage(monkeypatch):
     seen = {}
 

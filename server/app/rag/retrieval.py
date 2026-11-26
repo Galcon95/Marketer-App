@@ -80,15 +80,17 @@ def format_context(context: list[tuple[Chunk, float]]) -> str:
     return "\n\n".join(parts)
 
 
-def format_background(context: list[tuple[Chunk, float]]) -> str:
-    """Summaries of the books the excerpts come from, each as data in a <background source="..."> block.
+def format_background(context: list[tuple[Chunk, float]], books: list[str] | None = None) -> str:
+    """Summaries of the books the user chose (`books`, e.g. "Working on" one book) and of the books the excerpts come
+    from, each as data in a <background source="..."> block. A chosen book's summary is there even when no excerpt
+    of it is close enough, so "What is this book about?" is answered for that book, not for another one.
 
     The summaries were written by the model from book text, so they are quoted like the passages
     (guard.quote_untrusted): a summary that picked up "ignore your instructions" from a book is read, not obeyed.
     Returns "(none)" if no summary has been created for these books yet.
     """
     parts = []
-    for source_id in dict.fromkeys(chunk.source_id for chunk, _ in context):  # unique, in order
+    for source_id in dict.fromkeys([*(books or []), *(chunk.source_id for chunk, _ in context)]):  # unique, in order
         if summary := db.summaries.get(source_id):
             parts.append(quote_untrusted(summary.summary, "background", source=source_name(source_id) or source_id))
     return "\n\n".join(parts) or "(none)"
