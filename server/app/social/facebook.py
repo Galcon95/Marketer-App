@@ -42,7 +42,7 @@ from typing import Any
 
 import httpx
 
-from app.core import config
+from app.core import audit, config
 from app.core.schemas import (
     FacebookComment, FacebookComments, FacebookInboxItem, FacebookPage, FacebookPost, FacebookPosts, FacebookPublished,
     FacebookThread,
@@ -200,6 +200,7 @@ def publish_post(message: str, link: str | None = None) -> FacebookPublished:
             raise ValueError("The link must be an http(s) URL.")
         body["link"] = link
     data = _request("POST", f"{_page_id()}/feed", data=body)
+    audit.record("facebook.post_published", data["id"], f"page {_page_id()}")
     return FacebookPublished(id=data["id"], url=f"https://www.facebook.com/{data['id']}")
 
 
@@ -217,6 +218,7 @@ def publish_photo(message: str, image: bytes, media_type: str = "image/png") -> 
     data = _request("POST", f"{_page_id()}/photos", data={"message": message, "published": "true"},
                     files={"source": (f"picture.{extension}", image, media_type)})
     post_id = data.get("post_id") or data["id"]  # the feed post that shows the photo (else the photo itself)
+    audit.record("facebook.post_published", post_id, f"page {_page_id()}, with a picture")
     return FacebookPublished(id=post_id, url=f"https://www.facebook.com/{post_id}")
 
 
@@ -228,6 +230,7 @@ def reply_to_comment(comment_id: str, message: str) -> FacebookPublished:
     """
     _check_id(comment_id, "comment")
     data = _request("POST", f"{comment_id}/comments", data={"message": _check_message(message)})
+    audit.record("facebook.reply_published", data["id"], f"page {_page_id()}, under comment {comment_id}")
     return FacebookPublished(id=data["id"], url=f"https://www.facebook.com/{data['id']}")
 
 
@@ -239,6 +242,7 @@ def comment_on_post(post_id: str, message: str) -> FacebookPublished:
     """
     _check_id(post_id, "post")
     data = _request("POST", f"{post_id}/comments", data={"message": _check_message(message)})
+    audit.record("facebook.reply_published", data["id"], f"page {_page_id()}, under post {post_id}")
     return FacebookPublished(id=data["id"], url=f"https://www.facebook.com/{data['id']}")
 
 

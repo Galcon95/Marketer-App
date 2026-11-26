@@ -10,7 +10,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from app.api.deps import llm_limits, no_guest, owned_project, owned_source
 from app.core import state as db
-from app.core import ad_images, files, images, storage
+from app.core import ad_images, audit, files, images, storage
 from app.core.limits import LIMITS
 from app.core.schemas import Asset, ChunkPage, Conversation, Source, SourceDeletion
 from app.db import records
@@ -92,6 +92,7 @@ def upload_source(project_id: str, background_tasks: BackgroundTasks, file: Uplo
     finally:
         upload.unlink(missing_ok=True)
     db.sources[source.id] = source
+    audit.record("source.uploaded", source.id, f"{source.kind}, {size} bytes, stored on {store}")
     background_tasks.add_task(ingestion.ingest_source, source.id)
     return source
 
@@ -193,6 +194,8 @@ def delete_source(source_id: str, source: Source = Depends(owned_source)):
         db.assets.pop(asset.id, None)
     for conversation in conversations:
         db.conversations.pop(conversation.id, None)
+    audit.record("source.deleted", source_id, f"with {len(assets)} assets, {len(conversations)} chats, "
+                                              f"{discussions} discussion analyses")
     return SourceDeletion(source_id=source_id, name=name, assets=len(assets), conversations=len(conversations),
                           discussions=discussions)
 

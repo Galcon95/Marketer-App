@@ -271,7 +271,7 @@ The books are served as an MCP server (Streamable HTTP, official `mcp` SDK) at `
 
 ### `mcp-guardrails` MCP server (security)
 
-Served at `http://127.0.0.1:8000/guardrails/mcp`. Unlike the book server, it is also meant for the app itself. The logic is in `app/core/guard.py`: pure functions with no model calls (about 0.5 ms per text).
+Served at `http://127.0.0.1:8000/guardrails/mcp`. Unlike the book server, it is also meant for the app itself. The logic is in `app/core/guard.py`: pure functions with no model calls (about 0.1 ms for a question, 15 ms for an 8000-character discussion).
 
 | Tool | Returns |
 |---|---|
@@ -342,6 +342,27 @@ Three layers, all in code and on every request (never left to the model):
 3. **Rate limit and budgets** on every endpoint that calls the model (ask, generate, campaigns, summaries, discussions, scan, search, upload, MCP console calls): per signed-in user, from `limits.toml` (see above) → 429 with `Retry-After`. Blocked requests count too.
 4. **Output guard** (`guard.check_output`) on every drafted discussion reply, again after the author edits it: instruction phrases that got through, and links or e-mail addresses that are not in the cited passages, are shown as a red warning on the card. **Reply on Facebook** and **Publish on Facebook** refuse (422) a text in which an injection seems to have got through.
 5. **Sign-in and ownership** on every endpoint and both MCP servers (see above); writes to the outside world (Facebook, YouTube) only on the author's click and only on the user's own Page or channel.
+6. **Security headers** on every response, so the browser's own protections are on:
+   - Web client (`client/next.config.ts`): a Content Security Policy (scripts only from the app itself; requests only to the API and Supabase; pictures only from the app, `blob:`/`data:` and YouTube thumbnails; no frames, plugins or foreign form targets), plus `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Strict-Transport-Security` and a `Permissions-Policy` without camera, microphone or location. Inline scripts stay allowed (`'unsafe-inline'`): Next.js writes the page data inline, and Cache Components cannot use a per-request nonce.
+   - Server (`core/security_headers.py`, API and MCP): `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Strict-Transport-Security`, a Content Security Policy that lets a response load nothing (not on `/docs` and `/redoc`), and `Cache-Control: no-store` unless the endpoint sets its own (ad pictures, covers).
+7. **Supply chain** (`.github/workflows/ci.yml`, `.github/dependabot.yml`): on every push and every Monday, CI scans the commits for secrets (gitleaks) and checks the locked packages against the known vulnerabilities (`pip-audit` on `server/uv.lock`: any finding fails; `npm audit` on the client: high and critical fail). The GitHub Actions are pinned to commit hashes, and Dependabot proposes the updates weekly.
+8. **No public API description**: `/docs`, `/redoc` and `/openapi.json` list every endpoint without sign-in, so only a local server shows them (`config.api_docs`: `PUBLIC_API_URL` is localhost and not on Render; `API_DOCS=true|false` overrides).
+9. **The injection guard is measured** (`eval/run_guard_eval.py`, set `eval/guard_redteam.json`: 91 attack texts in nine categories and 60 ordinary texts; no model calls, no cost). The set has two parts: "dev", on which the rules were tuned, and "holdout", written afterwards and never used to change a rule.
+
+   | | Before | After, dev | After, holdout |
+   |---|---|---|---|
+   | Attacks caught | 28% (18 of 65) | 80% (52 of 65) | 62% (16 of 26) |
+   | False alarms on ordinary texts | 25% (11 of 44) | 14% (6 of 44) | 6% (1 of 16) |
+
+   - What changed in `core/guard.py`: before the rules run, disguises are removed (look-alike letters of other alphabets, digits for letters, spelled-out words, hyphens and line breaks inside a phrase; Base64 and hex pieces decoded; the text also read in ROT13 and backwards). New rules for German, Spanish, French, Italian, Lithuanian and Russian, for text that speaks to the AI ("if you are a language model…", "note to the bot…"), for more fake role markers and the app's own closing tags (`</post>`). Fewer false alarms: "ignore the rules of grammar" and "your instructions for planting tomatoes" pass.
+   - Known limits: free paraphrases ("the directions you received no longer apply": 1 of 13 caught), languages without a rule (Polish, Dutch), typos. Rules cannot close these; that is why outside text is always quoted as data and every reply goes through the output guard and the author's approval. The dev false alarms are sentences written to trip the rules ("Pretend you are a settler in 1898"); everyday questions, briefs, book text and comments: 0 of 30.
+   - `tests/test_guard_redteam.py` runs the set as a test: a rule change that catches less or alarms more fails.
+10. **Audit log** (`core/audit.py`, table `private.audit_events`, migration `0029`): who did what that matters for security, and when. Recorded: API keys created, revoked and refused; a Facebook Page or YouTube channel connected or disconnected; every post, reply and comment published (by a click or by the agent after an approval); books uploaded and deleted; inputs and outputs blocked by the guard; refused admin or guest actions; the guest demo's starts, resets and refusals; the app switches.
+    - Each event: time, action, user, target (an id), one short detail line, the request id. Never a secret and never a text someone wrote.
+    - Recording never breaks a request: a database error is logged and the event is then only in the log (logger `app.audit`). Events anyone can cause again and again (a wrong key, a blocked text) are capped at 30 saved per minute, so nobody can fill the table.
+    - `GET /audit?limit=&user_id=&action=` shows the latest events, newest first: the admin only (no page in the GUI yet).
+11. **[SECURITY.md](SECURITY.md)**: the threat model (who could attack, what stops them), the known limits and how to report a problem.
+12. **The MCP servers are off on the public server** (`MCP_SERVERS`, `config.mcp_servers`; like `API_DOCS`: on only on a local server unless set). The app does not need them: its endpoints call the same functions directly. Off means the two servers are not mounted (`/mcp`, `/guardrails/mcp` and every unknown address answer 404, also with a valid key), the tool console and new API keys answer 503, and the client hides the Keys button and the MCP servers page (`GET /me` → `mcp`). Existing keys can still be listed and revoked. For a review: `MCP_SERVERS=true`.
 
 ### Timeouts & retries of model calls
 - Set once, centrally: the chat model (`core/llm.chat_model`, used by every graph) waits at most 45 s per request and the embeddings (`rag/vectorstore._embeddings`) 30 s; both retry a failed or timed-out request up to 3 times. Configurable in `server/.env`: `LLM_TIMEOUT_SECONDS`, `EMBEDDING_TIMEOUT_SECONDS`, `LLM_MAX_RETRIES`.

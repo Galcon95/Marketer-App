@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from starlette.routing import Mount, Route
 
 import server
-from app.core import api_keys, auth
+from app.core import api_keys, auth, config
 from app.core.mcp_auth import RequireMcpAuth
 from tests.conftest import OWNER
 
@@ -24,9 +24,11 @@ from tests.conftest import OWNER
 # only act on a signed, single-use state that names the user (test_facebook_connect.py and test_youtube_connect.py
 # check forged and replayed ones). "Try as guest" signs the visitor in as the demo's guest account, with its own
 # limits (test_guest.py).
-OPEN = {("GET", "/health"), ("GET", "/"), ("GET", "/test"), ("GET", "/openapi.json"), ("GET", "/docs"),
-        ("GET", "/docs/oauth2-redirect"), ("GET", "/redoc"), ("GET", "/facebook/oauth/callback"),
-        ("GET", "/youtube/oauth/callback"), ("POST", "/guest")}
+# The API docs exist only on a local server (config.api_docs; test_security_headers.py), so they are in the list only
+# when this run has them.
+DOCS = {("GET", "/openapi.json"), ("GET", "/docs"), ("GET", "/docs/oauth2-redirect"), ("GET", "/redoc")}
+OPEN = {("GET", "/health"), ("GET", "/"), ("GET", "/test"), ("GET", "/facebook/oauth/callback"),
+        ("GET", "/youtube/oauth/callback"), ("POST", "/guest")} | (DOCS if config.API_DOCS else set())
 
 def endpoints(routes, prefix: str = ""):
     """(method, path) of every endpoint, also inside included routers. FastAPI 0.143+ keeps an included router as
@@ -79,14 +81,21 @@ def test_the_open_endpoints_are_only_the_listed_ones(client):
     assert client.get("/health").status_code == 200
 
 
+@pytest.fixture
+def mcp_client(monkeypatch):
+    """The app with the MCP servers on (on a local server the default; test_mcp_switch.py has them off)."""
+    monkeypatch.setattr(auth, "SUPABASE_URL", "https://example.supabase.co")
+    return TestClient(server.build_app(mcp=True))
+
+
 def test_every_mounted_app_is_behind_the_mcp_sign_in_check():
-    mounts = [route for route in server.app.routes if isinstance(route, Mount)]
+    mounts = [route for route in server.build_app(mcp=True).routes if isinstance(route, Mount)]
     assert {m.path for m in mounts} == {"/guardrails", ""}  # "" is the mount at "/"
     assert all(isinstance(m.app, RequireMcpAuth) for m in mounts)
 
 
 @pytest.mark.parametrize("path", MCP_PATHS)
-def test_the_mcp_servers_need_a_key(client, path):
-    response = client.post(path, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+def test_the_mcp_servers_need_a_key(mcp_client, path):
+    response = mcp_client.post(path, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
                            headers={"Accept": "application/json, text/event-stream"})
     assert response.status_code == 401

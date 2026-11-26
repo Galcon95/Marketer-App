@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 
 from app.api.deps import no_guest, owned_ad_image, owned_asset, owned_discussion
-from app.core import ad_images
+from app.core import ad_images, audit
 from app.core import state as db
 from app.core.auth import User, current_user
 from app.core.guard import output_blocked, scan_third_party
@@ -281,6 +281,7 @@ def _refuse_injection(text: str, what: str) -> None:
     (guard.output_blocked), e.g. a reply that repeats a planted "ignore your instructions" line."""
     if output_blocked(text):
         logger.warning("Refused to post a %s on Facebook: it looks like a prompt injection", what)
+        audit.record("output.blocked", detail=f"a {what} for Facebook")
         raise HTTPException(422, f"Not posted: the {what} contains text that looks like instructions to an AI "
                                  "(possibly copied from someone else's comment). Edit it and try again.")
 

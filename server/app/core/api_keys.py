@@ -16,6 +16,7 @@ import secrets
 import threading
 from datetime import timedelta
 
+from app.core import audit
 from app.core import state as db
 from app.core.auth import User
 from app.core.limits import LIMITS
@@ -74,6 +75,7 @@ def create(user: User, name: str) -> tuple[ApiKey, str]:
         records.add_api_key(record)  # first in the database: if that fails, the key does not exist anywhere
         _keys[record.id] = record
     logger.info("Created API key %s", record.id)
+    audit.record("api_key.created", record.id, user_id=user.id)
     return record, key
 
 
@@ -98,6 +100,7 @@ def revoke(user: User, key_id: str) -> bool:
         records.delete_api_key(key_id)  # first in the database: if that fails, the key still works everywhere
         del _keys[key_id]
     logger.info("Revoked API key %s", key_id)
+    audit.record("api_key.revoked", key_id, user_id=user.id)
     return True
 
 

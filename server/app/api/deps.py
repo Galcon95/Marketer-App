@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException
 
-from app.core import accounts, alarm, guard, usage
+from app.core import accounts, alarm, audit, config, guard, usage
 from app.core import state as db
 from app.core.auth import User, current_user
 from app.core.limits import LIMITS
@@ -113,6 +113,7 @@ def checked_text(text: str, kind: guard.InputKind, field: str, *, check_injectio
         report = guard.check_prompt_injection(checked.cleaned)
         if report.risk == "high":
             logger.warning("Blocked %s (prompt injection: %s)", field, ", ".join(f.rule for f in report.findings))
+            audit.record("input.blocked", field, "rules: " + ", ".join(f.rule for f in report.findings))
             raise HTTPException(400, f"The {field} looks like an attempt to change the assistant's instructions "
                                      "and was blocked. Please rephrase it.")
     return checked.cleaned
@@ -215,8 +216,20 @@ def admin_only(user: User = Depends(current_user)) -> User:
         HTTPException: 403 for every other user.
     """
     if not accounts.is_admin(user):
+        audit.record("access.refused", detail="admin only", user_id=user.id)
         raise HTTPException(403, "Only the app's administrator can use this.")
     return user
+
+
+def mcp_on() -> None:
+    """FastAPI dependency for what needs the MCP servers (the tool console, a new API key): they run only when
+    MCP_SERVERS is on (config.mcp_servers; by default only on a local server).
+
+    Raises:
+        HTTPException: 503 when they are off.
+    """
+    if not config.MCP_SERVERS:
+        raise HTTPException(503, "The MCP servers are switched off on this server.")
 
 
 def no_guest(user: User = Depends(current_user)) -> User:
@@ -229,6 +242,7 @@ def no_guest(user: User = Depends(current_user)) -> User:
         HTTPException: 403 for the guest.
     """
     if accounts.is_guest(user):
+        audit.record("access.refused", detail="not for the guest", user_id=user.id)
         raise HTTPException(403, "Not available in the demo. Create your own account to use this.")
     return user
 

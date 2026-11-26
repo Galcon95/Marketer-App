@@ -75,6 +75,12 @@ Read once on import from environment variables (and server/.env, if present), fi
                           named like a book's file ("My-Book.png" or ".jpg" for "My-Book.pdf") becomes its cover
     LOCAL_FILES_DIR     → optional, folder on the server's disk for books larger than Supabase Storage accepts, when
                           the user chooses "store on this server" (default server/data/books; see files.py)
+    API_DOCS            → optional, "true" or "false": whether the server shows its API description (/docs, /redoc,
+                          /openapi.json: every endpoint, open without sign-in). Not set: only on a local server
+                          (PUBLIC_API_URL is localhost and the server does not run on Render), so never in production
+    MCP_SERVERS         → optional, "true" or "false": whether the two MCP servers (/mcp, /guardrails/mcp) run, with
+                          the tool console and new API keys for them. Not set: only on a local server, like
+                          API_DOCS. The app itself does not need them: they are a second door for outside clients
     DATABASE_URL       → connection string of the PostgreSQL database (Supabase), e.g.
                           "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres";
                           required: the server does not start without it (see app/db/database.py)
@@ -123,6 +129,37 @@ TOKEN_ENCRYPTION_KEY = os.getenv("TOKEN_ENCRYPTION_KEY", "").strip()
 PUBLIC_API_URL = (os.getenv("PUBLIC_API_URL", "").strip() or "http://localhost:8000").rstrip("/")
 CLIENT_ORIGINS = [o.strip().rstrip("/") for o in (os.getenv("CLIENT_ORIGINS", "").strip()
                   or "http://localhost:3000,http://127.0.0.1:3000").split(",") if o.strip()]
+
+
+def _local_only(name: str, environ: dict[str, str] | None = None) -> bool:
+    """A switch for something only a local server offers by default (its API description, the MCP servers).
+
+    The variable `name` decides when it is "true" or "false"; otherwise only a local server has it on:
+    PUBLIC_API_URL is localhost (its default) and the server does not run on Render (which sets RENDER). Anything
+    unclear means off."""
+    environ = os.environ if environ is None else environ
+    choice = environ.get(name, "").strip().lower()
+    if choice in ("true", "1", "on", "yes"):
+        return True
+    if choice or environ.get("RENDER", "").strip():
+        return False
+    url = (environ.get("PUBLIC_API_URL", "").strip() or "http://localhost:8000").lower()
+    return re.match(r"^http://(localhost|127\.0\.0\.1)(:\d+)?(/|$)", url) is not None
+
+
+def api_docs(environ: dict[str, str] | None = None) -> bool:
+    """True if the server shows its API description (/docs, /redoc, /openapi.json): API_DOCS, else only locally."""
+    return _local_only("API_DOCS", environ)
+
+
+def mcp_servers(environ: dict[str, str] | None = None) -> bool:
+    """True if the MCP servers run (/mcp, /guardrails/mcp, the tool console, new API keys): MCP_SERVERS, else only
+    locally."""
+    return _local_only("MCP_SERVERS", environ)
+
+
+API_DOCS = api_docs()
+MCP_SERVERS = mcp_servers()
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()

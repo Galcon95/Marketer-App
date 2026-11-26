@@ -21,6 +21,7 @@ from app.core.auth import User
 from app.core.schemas import AdImage, Asset, BookSummary, Conversation, DiscussionAnalysis, Source, UsageRecord
 from app.db import records
 from tests.conftest import OWNER, STRANGER, sign_in
+from tests.test_routes_need_sign_in import OPEN
 
 PROJECT = db.DEFAULT_PROJECT_ID
 
@@ -399,11 +400,10 @@ def test_the_scan_route_has_the_guest_limit():
 # ---------- Safety net: every route has a decision for the guest ----------
 # Each API route is in exactly one group. A new route fails test_every_route_is_decided_for_the_guest until it is
 # put into one, so nobody adds an endpoint without thinking about the public demo.
-ADMIN_ONLY = {("GET", "/mcp-servers"), ("GET", "/mcp-calls"), ("POST", "/mcp-servers/{name}/call")}
+ADMIN_ONLY = {("GET", "/mcp-servers"), ("GET", "/mcp-calls"), ("POST", "/mcp-servers/{name}/call"),
+              ("GET", "/audit")}
 # Open without a sign-in (test_routes_need_sign_in.py OPEN).
-PUBLIC = {("GET", "/"), ("GET", "/test"), ("GET", "/health"), ("GET", "/openapi.json"), ("GET", "/docs"),
-          ("GET", "/docs/oauth2-redirect"), ("GET", "/redoc"), ("GET", "/facebook/oauth/callback"),
-          ("GET", "/youtube/oauth/callback"), ("POST", "/guest")}
+PUBLIC = OPEN  # with the API docs only when this run has them (a local server)
 # Allowed for the guest: they only reach the guest's own project, its own things or its own settings (ownership checks,
 # test_ownership.py), and the model calls among them are within the guest's budgets.
 OWN_ONLY = {

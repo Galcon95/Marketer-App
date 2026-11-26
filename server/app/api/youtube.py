@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 
 from app.api.deps import no_guest, owned_discussion
+from app.core import audit
 from app.core import state as db
 from app.core.auth import User, current_user
 from app.core.guard import output_blocked, scan_third_party
@@ -199,6 +200,7 @@ def reply(analysis: DiscussionAnalysis = Depends(owned_discussion),
         raise HTTPException(422, "There is no reply to post.")
     if output_blocked(text):
         logger.warning("Refused to post a reply on YouTube: it looks like a prompt injection")
+        audit.record("output.blocked", detail="a reply for YouTube")
         raise HTTPException(422, "Not posted: the reply contains text that looks like instructions to an AI (possibly "
                                  "copied from someone else's comment). Edit it and try again.")
     video = re.search(r"[?&]v=([A-Za-z0-9_-]{6,20})", analysis.url)

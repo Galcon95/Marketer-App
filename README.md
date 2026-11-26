@@ -18,6 +18,7 @@ Around the agent, the app also writes summaries, posts and campaign kits from th
 readers on a Facebook Page (with approval in Telegram) and under the videos of a YouTube channel, and offers the book and the guardrails as two MCP servers.
 
 - Features: [FEATURES.md](FEATURES.md)
+- Security (threats, measures, known limits, reporting a problem): [SECURITY.md](SECURITY.md)
 - The agent (purpose, use cases, how it works, technical decisions, evaluation): [docs/AGENT.md](docs/AGENT.md)
 - Stack: Next.js client (`client/`), FastAPI server (`server/`), Supabase (Auth, PostgreSQL with pgvector, Storage),
   models via OpenRouter, tracing in LangSmith
@@ -75,7 +76,7 @@ The first start installs the packages, so it takes a moment. It is ready when it
 
 Check it in the browser:
 - http://127.0.0.1:8000/health: all services should be `ok: true`
-- http://127.0.0.1:8000/docs: the API with every endpoint, to try out
+- http://127.0.0.1:8000/docs: the API with every endpoint, to try out (only on a local server; switched off in production, see `API_DOCS` in `server/.env.example`)
 
 ### 2. Start the client (terminal 2)
 

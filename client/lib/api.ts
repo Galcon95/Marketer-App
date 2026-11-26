@@ -68,6 +68,7 @@ export interface Me {
   email: string;
   admin: boolean; // may see the app-wide usage and costs and use the MCP console
   guest?: boolean; // the shared guest account of the public demo: the app hides what it may not do
+  mcp?: boolean; // the MCP servers run on this server (MCP_SERVERS); false: no Keys button, no MCP servers page
   project: Project; // with counts
 }
 

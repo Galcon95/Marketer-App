@@ -5,7 +5,7 @@ Only a signed-in user (Supabase access token) can manage keys; an API key itself
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import no_guest
+from app.api.deps import mcp_on, no_guest
 from app.core import api_keys
 from app.core.auth import User, current_user
 from app.core.schemas import ApiKey, ApiKeyCreate, ApiKeyCreated, ApiKeyInfo
@@ -23,12 +23,14 @@ def list_keys(user: User = Depends(current_user)):
     return [_info(k) for k in api_keys.keys_of(user)]
 
 
-@router.post("/api-keys", response_model=ApiKeyCreated, status_code=201, dependencies=[Depends(no_guest)])
+@router.post("/api-keys", response_model=ApiKeyCreated, status_code=201,
+             dependencies=[Depends(no_guest), Depends(mcp_on)])
 def create_key(body: ApiKeyCreate, user: User = Depends(current_user)):
     """Create a key. The response contains the key itself; it cannot be shown again later.
 
     Raises:
-        HTTPException: 409 when the user has max_api_keys keys (limits.toml); 500 when the key cannot be saved.
+        HTTPException: 409 when the user has max_api_keys keys (limits.toml); 500 when the key cannot be saved;
+            503 when the MCP servers are switched off (a key would open nothing; listing and revoking still work).
     """
     try:
         record, key = api_keys.create(user, body.name)

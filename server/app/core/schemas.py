@@ -71,6 +71,7 @@ class Me(BaseModel):
     email: str
     admin: bool  # may see the app-wide usage and costs and use the MCP console (DEFAULT_CLIENT_OWNER)
     guest: bool = False  # the shared guest account of the public demo (GUEST_EMAIL): the app hides what it may not do
+    mcp: bool = True  # the MCP servers run on this server (MCP_SERVERS); off: the app hides the Keys and MCP pages
     project: Project  # the user's own project, with counts
 
 
@@ -1092,6 +1093,19 @@ class McpCallResult(BaseModel):
     text: str = ""  # the text content of the result, or the error message
     duration_ms: int
     called_at: datetime
+
+
+# ---------- Audit log ----------
+class AuditEvent(BaseModel):
+    """One security-relevant event (core/audit.py): a key created, a Page connected, a post published, a blocked
+    request. Never contains a secret or a text someone wrote."""
+
+    at: datetime  # when it happened (UTC)
+    action: str  # what happened, e.g. "api_key.created", "facebook.post_published" (audit.ACTIONS)
+    user_id: str = ""  # who did it (Supabase user id); "" = nobody signed in, or the agent after an approval
+    target: str = ""  # what it was done to: a key id, a post id, a book id
+    detail: str = ""  # one short line
+    request_id: str = ""  # the HTTP request that caused it; "" outside a request
 
 
 # ---------- Usage & costs ----------

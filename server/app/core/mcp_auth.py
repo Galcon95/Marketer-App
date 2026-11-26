@@ -16,7 +16,7 @@ import anyio
 from fastapi import HTTPException
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app.core import accounts, api_keys
+from app.core import accounts, api_keys, audit
 from app.core.auth import User, verify_token
 from app.core.logs import set_request_user
 
@@ -38,6 +38,7 @@ async def authenticate(authorization: str) -> User:
     if token.startswith(api_keys.PREFIX):
         user = api_keys.user_for(token)
         if user is None:
+            audit.record("api_key.refused", user_id="")
             raise HTTPException(401, "This API key is not valid (wrong or revoked).")
         return user
     # A Supabase access token; checking it may fetch the signing keys over the network, so not on the event loop.

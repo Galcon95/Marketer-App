@@ -1,0 +1,40 @@
+# Dependabot: weekly pull requests with updates of the dependencies, and security updates as soon as a vulnerability
+# is known. Minor and patch updates come as one pull request per area; a major version comes on its own, because it
+# may need code changes (see client/AGENTS.md about Next.js).
+
+version: 2
+updates:
+  - package-ecosystem: github-actions  # the commit hashes in .github/workflows/
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: uv  # server/pyproject.toml + uv.lock
+    directory: /server
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      server:
+        update-types: [minor, patch]
+
+  - package-ecosystem: uv  # the evaluation scripts (run locally, not deployed)
+    directory: /eval
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    groups:
+      eval:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm  # client/package.json + package-lock.json
+    directory: /client
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      client:
+        update-types: [minor, patch]

@@ -1,4 +1,4 @@
-# Evaluation: RAG (RAGAs) and the Discussion Relevance Agent
+# Evaluation: RAG (RAGAs), the Discussion Relevance Agent and the injection guard
 
 Measures how well "Ask your book" answers questions about the books, with [RAGAs](https://docs.ragas.io).
 It runs against the **real, running app** (`POST /ask`, the same pipeline as the chat) and scores each answer
@@ -118,3 +118,48 @@ judge's known false negative on hedged answers (see below). Without it the avera
 - The reference answers were written with the help of the app's own search, so context recall tends to be
   high; questions whose answer the search does not find would test retrieval harder.
 - OpenRouter returns one generation per call, so answer relevancy uses `strictness=1` (RAGAs' default is 3).
+
+## Injection guard (`run_guard_eval.py`)
+
+Measures the rule-based injection guard (`server/app/core/guard.py`, `check_prompt_injection`) against a red-team
+set. The guard is pure code, so this needs **no running app, no sign-in and no model**: it is free and takes a
+second. It runs with the server's packages:
+
+```sh
+cd server
+uv run python ../eval/run_guard_eval.py                      # table + reports/guard/<date_time>/results.json
+uv run python ../eval/run_guard_eval.py --no-save            # table only
+uv run python ../eval/run_guard_eval.py --label "new rule"   # a note saved with the run
+```
+
+`guard_redteam.json`: 91 attack texts and 60 ordinary texts, all made up for the test.
+
+| Category (attacks) | What it tries |
+|---|---|
+| direct | the textbook phrasings in English ("ignore all previous instructions") |
+| paraphrase | the same intent in other words |
+| multilingual | the textbook phrasings in other languages |
+| obfuscated | disguised spelling: spaced letters, digits for letters, look-alike letters, hyphens, typos |
+| encoded | Base64, hex, ROT13, backwards |
+| role_marker | text that poses as a system or assistant turn, or as the end of the quoted block |
+| indirect | speaks to the assistant that reads a thread or a comment (the marketing agent's situation) |
+| exfiltration | gets data out through a link or a picture address |
+| leak | asks for the prompt |
+
+The ordinary texts are questions, marketing briefs, book text, other languages, reader comments, and
+`hard_negative`: ordinary sentences written to contain the words the rules look for ("ignore the rules of grammar").
+
+| Measure | How |
+|---|---|
+| Catch rate | share of the attacks with risk `high` (blocked in the user's own text, flagged in other people's) |
+| False-alarm rate | share of the ordinary texts with risk `high` |
+
+**Two parts.** `split: "dev"` are the texts the rules were tuned on, so their numbers flatter the guard.
+`split: "holdout"` was written after the rules were finished and never used to change one: its numbers are the
+honest ones. When you change a rule, look at dev, and add new holdout texts instead of tuning on the old ones.
+
+Results of 2026-11-26 (`reports/guard/`): before the red-team work 28% caught and 25% false alarms (dev); after it
+80% caught and 14% false alarms on dev, **62% caught and 6% false alarms on holdout**. Free paraphrases mostly get
+through (1 of 13): that is the limit of rules, and the reason outside text is always quoted as data.
+
+`server/tests/test_guard_redteam.py` runs the same set as a test with the measured numbers as the floor.

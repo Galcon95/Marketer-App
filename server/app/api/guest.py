@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app.core import ad_images, alarm, guest
+from app.core import ad_images, alarm, audit, guest
 from app.core import state as db
 from app.core.limits import LIMITS
 from app.core.schemas import GuestSession
@@ -66,6 +66,7 @@ def try_as_guest(request: Request):
             if guest.idle():
                 cleared = reset(guest.user_id())
                 logger.info("Guest demo started afresh (%d things deleted)", cleared)
+                audit.record("guest.reset", detail=f"{cleared} things deleted", user_id=_guest_id())
             session = guest.sign_in()
         except guest.GuestError as e:
             logger.error("Try as guest failed: %s", e)
@@ -75,8 +76,17 @@ def try_as_guest(request: Request):
             raise HTTPException(503, "The guest demo cannot start right now, please try again later.") from e
         guest.seen()
     _count_visitor(visitor)
+    audit.record("guest.started", user_id=_guest_id())
     return GuestSession(access_token=session["access_token"], refresh_token=session["refresh_token"],
                         expires_in=session.get("expires_in", 3600))
+
+
+def _guest_id() -> str:
+    """The guest's user id for the audit log ("" if it cannot be looked up: the log must not break the demo)."""
+    try:
+        return guest.user_id()
+    except guest.GuestError:
+        return ""
 
 
 def client_ip(request: Request) -> str:
@@ -118,6 +128,7 @@ def _check_visitor(visitor: str | None) -> None:
         if _per_visitor.get(visitor, 0) < LIMITS.guest.starts_per_ip_per_day:
             return
     alarm.refused()
+    audit.record("guest.refused", detail="starts per address per day", user_id="")
     now = datetime.now(timezone.utc)
     tomorrow = datetime.combine(now.date() + timedelta(days=1), datetime.min.time(), timezone.utc)
     raise HTTPException(429, "You have already tried the demo today. Come back tomorrow, or create your own "
@@ -145,6 +156,7 @@ def _count_start() -> None:
         if len(_starts) >= STARTS_PER_MINUTE:
             wait = int(60 - (clock - _starts[0])) + 1
             alarm.refused()
+            audit.record("guest.refused", detail="starts per minute", user_id="")
             raise HTTPException(429, f"Too many visitors right now. Try again in {wait} seconds.",
                                 headers={"Retry-After": str(wait)})
         _starts.append(clock)

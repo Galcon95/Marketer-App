@@ -28,7 +28,7 @@ from urllib.parse import urlencode
 
 import httpx
 
-from app.core import config, secret_box
+from app.core import audit, config, secret_box
 from app.core import state as db
 from app.core.schemas import YouTubeConnection
 from app.db import records
@@ -126,6 +126,7 @@ def finish_login(code: str, user_id: str) -> None:
     records.save_youtube_connection(YouTubeConnection(
         user_id=user_id, channel_id=channel.id, channel_name=channel.name, token=secret_box.encrypt(refresh),
         connected_at=db.now()))
+    audit.record("youtube.connected", channel.id, user_id=user_id)
     with _lock:
         _access[user_id] = (time.time() + float(tokens.get("expires_in", 3600)), access)
     logger.info("A user connected the YouTube channel %s", channel.id)
@@ -183,6 +184,7 @@ def disconnect(user_id: str) -> None:
     with _lock:
         _access.pop(user_id, None)
     records.delete_youtube_connection(user_id)
+    audit.record("youtube.disconnected", connection.channel_id if connection else "", user_id=user_id)
     if connection:
         try:
             refresh = secret_box.decrypt(connection.token)

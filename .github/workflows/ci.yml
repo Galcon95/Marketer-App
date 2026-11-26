@@ -1,13 +1,19 @@
 name: CI
 
-# Lint and tests for the server (ruff, pytest) and the client (ESLint, TypeScript, Vitest).
+# Lint and tests for the server (ruff, pytest) and the client (ESLint, TypeScript, Vitest), and the security checks:
+# a secret scan of the commits (gitleaks) and the dependencies checked against the known vulnerabilities
+# (pip-audit, npm audit). The security checks also run every Monday: new vulnerabilities appear without a push.
 # No secrets are needed: the server tests use an in-memory database and file store and never call a model.
+# The actions are pinned to commit hashes (a tag can be moved to other code, a hash cannot); Dependabot
+# (.github/dependabot.yml) proposes the updates.
 
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * 1"  # Mondays 05:17 UTC
 
 permissions:
   contents: read
@@ -19,13 +25,16 @@ concurrency:
 jobs:
   server:
     name: Server (ruff, pytest)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           enable-cache: true
           cache-dependency-glob: server/uv.lock
@@ -36,13 +45,16 @@ jobs:
 
   client:
     name: Client (ESLint, TypeScript, Vitest)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: client
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: npm
@@ -57,3 +69,38 @@ jobs:
           npx tsc --noEmit
       - name: Tests (Vitest)
         run: npm test
+
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0  # the whole history: a push is scanned commit by commit
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"  # no pull request comments: the token is read-only
+
+  dependencies:
+    name: Dependency audit (pip-audit, npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - name: Server packages (pip-audit)
+        # The exact versions of uv.lock, with their hashes; fails on any known vulnerability.
+        working-directory: server
+        run: |
+          uv export --locked --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/requirements.txt" -q
+          uvx pip-audit -r "$RUNNER_TEMP/requirements.txt" --require-hashes --disable-pip
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: Client packages (npm audit)
+        # Reads package-lock.json, no install needed; fails on high and critical findings.
+        working-directory: client
+        run: npm audit --audit-level=high

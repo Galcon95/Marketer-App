@@ -115,6 +115,13 @@ def keys(test_database, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def mcp_servers_on(monkeypatch):
+    """The MCP servers count as on in every test, whatever this machine's environment says (MCP_SERVERS, RENDER,
+    PUBLIC_API_URL in server/.env); test_mcp_switch.py switches them off."""
+    monkeypatch.setattr(config, "MCP_SERVERS", True)
+
+
+@pytest.fixture(autouse=True)
 def no_telegram(monkeypatch):
     """No test reaches the real Telegram bot from server/.env: tests that need it configure a fake."""
     monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "")

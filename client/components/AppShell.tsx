@@ -168,6 +168,8 @@ export default function AppShell() {
   const [login, setLogin] = useState<LoginResult>(null); // result of a Facebook Login that just sent the user back
   const [googleLogin, setGoogleLogin] = useState<LoginResult>(null); // the same for Google sign-in (YouTube)
   const guest = me.data?.guest ?? false; // the public demo's shared guest account
+  // The MCP servers run on this server (MCP_SERVERS; off on the public one): otherwise no Keys button, no MCP page.
+  const mcpOn = me.data?.mcp ?? true;
   const totals = usage.data?.totals;
   const p = project.data;
   const View = VIEWS[tab];
@@ -191,7 +193,7 @@ export default function AppShell() {
       items: [
         { id: "facebook", icon: ThumbsUp, label: "Facebook Page" },
         { id: "youtube", icon: SquarePlay, label: "YouTube channel" },
-        { id: "mcp", icon: Plug, label: "MCP servers" },
+        ...(mcpOn ? [{ id: "mcp", icon: Plug, label: "MCP servers" }] : []),
       ],
     },
   ];
@@ -271,7 +273,7 @@ export default function AppShell() {
             title={totals ? `Your model calls so far: input ${totals.input_tokens.toLocaleString()} tokens (${formatUsd(totals.input_cost)}), output ${totals.output_tokens.toLocaleString()} tokens (${formatUsd(totals.output_cost)}). Click for details.` : "LLM usage and costs"}>
             <span className="bc-mono">{totals ? `${formatUsd(totals.cost)} · ${formatTokens(totals.input_tokens + totals.output_tokens)} tok` : "usage"}</span>
           </Button>
-          {!guest && (
+          {!guest && mcpOn && (
             <Button variant="secondary" size="sm" icon={KeyRound} onClick={() => setKeysOpen(true)}
               title="Personal API keys for the MCP servers (Claude Desktop and other tools)">Keys</Button>
           )}

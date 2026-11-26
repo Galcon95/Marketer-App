@@ -4,7 +4,7 @@ has exactly one project (accounts.py); it is created on their first GET /me."""
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import owned_project
-from app.core import accounts
+from app.core import accounts, config
 from app.core import state as db
 from app.core.auth import User, current_user
 from app.core.schemas import Me, Project
@@ -25,7 +25,7 @@ def me(user: User = Depends(current_user)):
     except OSError as e:
         raise HTTPException(500, "Your library could not be created, please try again.") from e
     return Me(user_id=user.id, email=user.email, admin=accounts.is_admin(user), guest=accounts.is_guest(user),
-              project=with_counts(project))
+              mcp=config.MCP_SERVERS, project=with_counts(project))
 
 
 # ---------- Projects ----------

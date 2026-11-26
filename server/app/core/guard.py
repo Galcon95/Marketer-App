@@ -3,7 +3,9 @@
     validate_input        clean user text (invisible/control characters, line endings) and check it
                           against the length limit of its kind (question, chat message, brief, ...)
     check_prompt_injection  rule-based scan for instructions aimed at the model ("ignore previous
-                          instructions", fake role markers, prompt leaks, hidden characters, ...)
+                          instructions", fake role markers, prompt leaks, text that speaks to the AI, hidden
+                          characters, ...), also in a few other languages and behind common disguises
+                          (look-alike letters, "1gn0re", "i g n o r e", Base64, hex, ROT13, backwards)
     wrap_untrusted        put retrieved or pasted text into numbered <passage> tags, plus the system
                           prompt rule that says such text is data, never instructions
     scan_third_party      check_prompt_injection for other people's text (discussions, Reddit threads, Facebook
@@ -14,10 +16,13 @@
 
 Pure functions, no model calls: fast, free and deterministic, so they can run on every request. Used by the
 mcp-guardrails MCP server (market/guard_server.py) and meant for the app's own endpoints too. The injection
-check is a heuristic: it catches the common attack phrasings, not every possible one, which is why
-wrap_untrusted (keeping data apart from instructions) is the second line of defence.
+check is a heuristic: it catches the common attack phrasings, not every possible one (free paraphrases mostly
+get through; eval/run_guard_eval.py measures it against a red-team set), which is why wrap_untrusted (keeping
+data apart from instructions) is the second line of defence.
 """
 
+import base64
+import codecs
 import re
 import unicodedata
 from typing import Literal
@@ -97,25 +102,81 @@ class WrappedText(BaseModel):
 # ---------- Injection rules ----------
 # (rule, severity, pattern); matched case-insensitively on the normalized text. Phrases are kept specific so
 # that ordinary book and marketing prose (e.g. "acts as a catalyst") does not match.
+# A rule name may appear several times (e.g. one pattern per language); the first pattern that matches gives the finding.
+# eval/run_guard_eval.py measures the rules against a red-team set (catch rate, false alarms); test_guard_redteam.py
+# keeps both from getting worse.
+_AI = r"(?:AIs?|LLMs?|(?:large )?language models?|chat ?bots?|bots?|(?:AI |automated |virtual )assistants?|AI agents?)"
 _RULES: list[tuple[str, Severity, re.Pattern]] = [(rule, sev, re.compile(p, re.IGNORECASE)) for rule, sev, p in [
+    # "ignore the previous / your / the system's ..." with any word for the instructions ...
     ("override_instructions", "high",
-     r"\b(ignore|disregard|forget|override|bypass)\b.{0,30}\b(previous|prior|above|earlier|preceding|all|any|your|the|system)\b"
+     r"\b(ignore|disregard|forget|override|bypass)\b.{0,30}\b(previous|prior|above|earlier|preceding|your|system)\b"
      r".{0,20}\b(instructions?|rules|prompts?|directions|guidelines|guardrails)\b"),
+    # ... but after a plain "the / all / any" only the words that mean a model's instructions ("ignore the rules of
+    # grammar" is ordinary prose).
+    ("override_instructions", "high",
+     r"\b(ignore|disregard|forget|override|bypass)\b.{0,15}\b(all|any|the)\b.{0,15}\b(instructions?|prompts?|guardrails)\b"),
+    # The same in other languages: the verb plus the word for instructions or rules.
+    ("override_instructions", "high",  # German
+     r"\b(ignorier\w*|vergiss|vergesst|missachte\w*|übergeh\w*)\b.{0,40}"
+     r"\b(anweisung(en)?|regeln|vorgaben|instruktionen|richtlinien|system-?prompt)\b"),
+    ("override_instructions", "high",  # Spanish, Italian, Portuguese
+     r"\b(ignora|ignorad|olvida|olvidad|dimentica|esque[cç]a)\b.{0,40}"
+     r"\b(instrucciones|reglas|indicaciones|istruzioni|regole|instruções|regras)\b"),
+    ("override_instructions", "high",  # French (with its article: "ignore ... instructions" alone is English prose)
+     r"\b(ignore[zr]?|oublie[zr]?)\b.{0,25}\b(tes|toutes les|les|vos|ces)\s+(instructions|règles|consignes)\b"),
+    ("override_instructions", "high",  # Lithuanian, Russian
+     r"\b(ignoruok\w*|pamiršk\w*|nepaisyk\w*)\b.{0,40}\b(instrukcij\w*|taisykl\w*|nurodym\w*)\b"
+     r"|\b(игнорируй\w*|забудь\w*|не обращай\w* внимания)\b.{0,40}\b(инструкци\w*|правил\w*|указани\w*)\b"),
     ("new_instructions", "high", r"\b(new|updated|real|actual) (system )?instructions?\s*[:\-]"),
     ("role_change", "high",
      r"\b(you are now|from now on,? you (are|will)|pretend (to be|you are)|roleplay as|act as (an? )?(unrestricted|unfiltered|jailbroken))\b"),
+    ("role_change", "high",  # German, Spanish, French
+     r"\b(du bist (jetzt|nun|ab jetzt|ab sofort)|ab (jetzt|sofort) bist du|ahora eres|tu es (maintenant|désormais)"
+     r"|vous êtes (maintenant|désormais))\b"),
     ("jailbreak", "high",
      r"\b(jailbreak|developer mode|DAN mode|do anything now|you (now )?have no (restrictions|rules|limits|filters))\b"),
     ("prompt_leak", "high",
-     r"\b(reveal|show|print|repeat|output|tell me|what (is|are))\b.{0,25}\b(system prompt|hidden prompt|your (instructions|rules|prompt))\b"),
+     r"\b(reveal|show|print|repeat|output|tell me|what (is|are))\b.{0,25}\b(system prompt|hidden prompt)\b"),
+    # "your instructions / rules" too, unless a topic follows ("your instructions for planting tomatoes").
+    ("prompt_leak", "high",
+     r"\b(reveal|show|print|repeat|output|tell me|what (is|are))\b.{0,25}\byour (instructions|rules|prompt)\b"
+     r"(?!\s+(for|on|about|regarding)\b)"),
+    ("prompt_leak", "high",
+     r"\b(repeat|print|output|quote|write out)\b.{0,15}\b(everything|all|the text|the words)\b.{0,15}\babove\b"
+     r"|\b(beginning|top|start) of your context\b|\byour (initial|original|first) (instructions|prompt)\b"),
+    ("prompt_leak", "high",  # German, Spanish, Italian
+     r"\b(gib|zeig\w*|nenn\w*|verrat\w*|wiederhol\w*)\b.{0,30}\b(system-?prompt|deine[nr]? (anweisungen|regeln|instruktionen))\b"
+     r"|\b(muestra|revela|repite|dime|rivela|mostra)\b.{0,30}\b(prompt de(l|i)? sistem[ao]|tus (instrucciones|reglas))\b"),
     ("fake_role_marker", "high",
-     r"(<\|im_(start|end)\|>|<\|(system|assistant|user)\|>|\[/?INST\]|<<SYS>>|</?system>|^\s*(system|assistant)\s*:)"),
-    ("hide_from_user", "high", r"\b(do not|don't|never) (tell|inform|show|mention (this|it) to) the user\b"),
+     r"(<\|im_(start|end)\|>|<\|(system|assistant|user)\|>|\[/?INST\]|<<SYS>>|</?system>|^\s*(system|assistant)\s*:"
+     r"|^\s*#{1,6}\s*(system|assistant)\b|\[(system|assistant)( message| prompt| note)?\]"
+     r"|^\s*[-=*]{2,}\s*end of (the )?(post|message|text|document|input|context|thread)\b"
+     r"|</(post|passage|background|tool_result)>)"),  # the app's own block tags: someone tries to close the quote
+    # Text that speaks to the model that will read it: in a thread or a comment nobody writes that to a person.
+    ("addressed_to_ai", "high",
+     r"\bif you(?: are|'re) (?:an? )?" + _AI + r"\b"
+     r"|\b(note|message|instructions?|reminder|memo|request)\b.{0,12}\b(to|for)\b (?:the |any |all |an? )?" + _AI + r"\b"
+     r"|\b(dear|hey|attention|to any|to all|to the) " + _AI + r"\b"
+     r"|\b" + _AI + r"\b.{0,12}\b(reading|processing|summari[sz]ing|answering|seeing) this\b"),
+    ("hide_from_user", "high",
+     r"\b(do not|don't|never) (tell|inform|show|mention (this|it) to) the user\b(?!\s+(what|how|to)\b)"),
     ("exfiltration", "high",
      r"(!\[[^\]]*\]\(https?://[^)]*[?&][^)]*=|\b(send|post|upload|forward)\b.{0,40}\bto\b.{0,10}https?://)"),
     ("tool_command", "low", r"\b(call|run|execute|invoke) (the )?(tool|function|command)\b"),
     ("encoded_blob", "low", r"[A-Za-z0-9+/]{200,}={0,2}"),
 ]]
+
+# ---------- Disguises ----------
+# Letters of other alphabets that look like Latin ones (Cyrillic, Greek): "ignоre" with a Cyrillic о.
+_LOOKALIKES = str.maketrans("аеорсхуіјѕԁһАЕОРСХТНКМВІЈЅαεοιρτυνκΑΕΟΙΡΤΥΝΚΜΒΗΧΖ",
+                            "aeopcxyijsdhAEOPCXTHKMBIJSaeoiptuvkAEOIPTYNKMBHXZ")
+_LEET = str.maketrans("013457", "oieast")
+_LEET_WORD = re.compile(r"\b(?=\w*[A-Za-z])(?=\w*[013457])\w+\b")  # a word with letters and digits: "1gn0re"
+_SPELLED = re.compile(r"\b(?:[A-Za-z][ .\-_*]){3,}[A-Za-z]\b")  # "i g n o r e", "i.g.n.o.r.e"
+_BASE64 = re.compile(r"[A-Za-z0-9+/]{24,}={0,2}")
+_HEX = re.compile(r"\b(?:[0-9a-fA-F]{2}){12,}\b")
+_MAX_BLOBS = 5  # encoded pieces decoded per text
+_MAX_BLOB_CHARS = 8000
 
 
 # ---------- Functions ----------
@@ -164,15 +225,69 @@ def check_prompt_injection(text: str) -> InjectionReport:
     if _INVISIBLE.search(text):
         findings.append(InjectionFinding(rule="hidden_characters", severity="low",
                                          excerpt="(zero-width or text-direction characters)"))
-    normalized = clean_text(text)
+    views = _views(clean_text(text))
+    found: set[str] = set()
     for rule, severity, pattern in _RULES:
-        for line in normalized.splitlines() if rule == "fake_role_marker" else [normalized]:
-            match = pattern.search(line)
-            if match:
-                findings.append(InjectionFinding(rule=rule, severity=severity, excerpt=_excerpt(line, match)))
-                break
+        if rule in found:  # an earlier pattern of this rule (e.g. another language) already matched
+            continue
+        finding = _first_match(rule, pattern, views)
+        if finding:
+            found.add(rule)
+            findings.append(InjectionFinding(rule=rule, severity=severity, excerpt=finding))
     risk = "high" if any(f.severity == "high" for f in findings) else "low" if findings else "none"
     return InjectionReport(passed=risk != "high", risk=risk, findings=findings, advice=_ADVICE[risk])
+
+
+def _first_match(rule: str, pattern: re.Pattern, views: list[tuple[str, str]]) -> str | None:
+    """The excerpt of the first view the pattern matches (None for no match); a disguised view is named in it."""
+    for label, view in views:
+        for line in view.splitlines() if rule == "fake_role_marker" else [view]:
+            match = pattern.search(line)
+            if match:
+                return (f"({label}) " if label else "") + _excerpt(line, match)
+    return None
+
+
+def _views(normalized: str) -> list[tuple[str, str]]:
+    """The text as the rules read it: as it is, and with its disguises removed, each as (label, text).
+
+    Attackers hide the phrases the rules look for; a model still reads them. So the rules also run on:
+      - "unmasked": look-alike letters of other alphabets as Latin ones, digits in words as letters ("1gn0re"),
+        spelled-out words joined ("i g n o r e", "i.g.n.o.r.e"), hyphens inside words removed, lines joined;
+      - "base64" / "hex": encoded pieces decoded, when they are readable text;
+      - "rot13" and "reversed": the whole text shifted or turned around.
+    The first view is the plain text, so an ordinary finding quotes the text as written.
+    """
+    views = [("", normalized)]
+    unmasked = normalized.translate(_LOOKALIKES)
+    unmasked = _LEET_WORD.sub(lambda m: m.group(0).translate(_LEET), unmasked)
+    unmasked = _SPELLED.sub(lambda m: re.sub(r"[ .\-_*]", "", m.group(0)), unmasked)
+    unmasked = re.sub(r"(?<=[a-z])-(?=[a-z])", "", unmasked)
+    unmasked = re.sub(r"\s+", " ", unmasked)
+    if unmasked != normalized:
+        views.append(("unmasked", unmasked))
+    for label, pattern, decode in (("base64", _BASE64, _from_base64), ("hex", _HEX, bytes.fromhex)):
+        for match in list(pattern.finditer(normalized))[:_MAX_BLOBS]:
+            decoded = _readable(match.group(0)[:_MAX_BLOB_CHARS], decode)
+            if decoded:
+                views.append((label, decoded))
+    views.append(("rot13", codecs.encode(normalized, "rot13")))
+    views.append(("reversed", normalized[::-1]))
+    return views
+
+
+def _from_base64(blob: str) -> bytes:
+    return base64.b64decode(blob + "=" * (-len(blob) % 4), validate=True)
+
+
+def _readable(blob: str, decode) -> str | None:
+    """The decoded text of an encoded piece, or None if it is no text (a long word or a hash decodes to noise)."""
+    try:
+        decoded = decode(blob).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):  # binascii.Error is a ValueError
+        return None
+    letters = sum(c.isalpha() or c.isspace() for c in decoded)
+    return clean_text(decoded) if decoded and letters / len(decoded) >= 0.8 else None
 
 
 def wrap_untrusted(passages: list[str]) -> WrappedText:

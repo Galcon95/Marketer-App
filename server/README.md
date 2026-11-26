@@ -14,7 +14,7 @@ The server needs Supabase: the database (`DATABASE_URL`) and Storage (`SUPABASE_
 `.env.example`. Without the database it does not start.
 
 - API: http://127.0.0.1:8000
-- Interactive docs: http://127.0.0.1:8000/docs
+- Interactive docs: http://127.0.0.1:8000/docs (only on a local server; off in production unless `API_DOCS=true`)
 
 ## Project layout
 
@@ -30,6 +30,7 @@ server/
 │   │   ├── prompt_files.py  loads the prompts from prompts/*.md
 │   │   ├── prompts.py  prompt versions (a hash of the loaded prompt text)
 │   │   ├── guard.py    input checks, prompt-injection scan, quoting as data, output guard
+│   │   ├── audit.py    the audit log: security-relevant events (private.audit_events, GET /audit)
 │   │   ├── schemas.py  Pydantic request/response models
 │   │   ├── state.py    in-memory stores (projects, sources, chunks, summaries, assets)
 │   │   ├── storage.py  upload checks (type, size, checksum), PDF author
@@ -118,6 +119,9 @@ app's access token (`core/mcp_auth.py`). The tools serve the caller's own librar
 headers are accepted.
 
 ## MCP server: mcp-guardrails
+
+Both MCP servers run only when `MCP_SERVERS` is on: by default on a local server, not in production (see
+`server/.env.example`). Off: `/mcp` and `/guardrails/mcp` answer 404, the console and new keys 503.
 
 Security checks for text sent to a language model, at `http://127.0.0.1:8000/guardrails/mcp`. The logic lives
 in `app/core/guard.py` (pure functions, no model calls), so the API can call it directly too.

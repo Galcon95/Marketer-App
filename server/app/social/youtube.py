@@ -41,6 +41,7 @@ from typing import Any
 
 import httpx
 
+from app.core import audit
 from app.core.schemas import (YouTubeChannel, YouTubeComment, YouTubeInboxItem, YouTubePublished, YouTubeThread,
                               YouTubeUpload, YouTubeVideo)
 
@@ -78,6 +79,12 @@ def as_channel(channel: ChannelAccess) -> Iterator[ChannelAccess]:
         yield channel
     finally:
         _channel.reset(reset)
+
+
+def _channel_id() -> str:
+    """Id of the current channel ("" if there is none)."""
+    channel = _channel.get()
+    return channel.channel_id if channel else ""
 
 
 class YouTubeError(Exception):
@@ -289,6 +296,7 @@ def comment_on_video(video_id: str, message: str) -> YouTubePublished:
     _check_video(video_id)
     body = {"snippet": {"videoId": video_id, "topLevelComment": {"snippet": {"textOriginal": _check_message(message)}}}}
     data = _request("POST", "commentThreads", {"part": "snippet"}, json=body)
+    audit.record("youtube.reply_published", data["id"], f"channel {_channel_id()}, under video {video_id}")
     return YouTubePublished(id=data["id"], url=_comment_url(video_id, data["id"]) or "")
 
 
@@ -307,6 +315,7 @@ def reply_to_comment(comment_id: str, message: str, video_id: str = "") -> YouTu
     _check_id(comment_id)
     body = {"snippet": {"parentId": _top(comment_id), "textOriginal": _check_message(message)}}
     data = _request("POST", "comments", {"part": "snippet"}, json=body)
+    audit.record("youtube.reply_published", data["id"], f"channel {_channel_id()}, under comment {comment_id}")
     video_id = (data.get("snippet") or {}).get("videoId") or video_id
     return YouTubePublished(id=data["id"], url=_comment_url(video_id, data["id"]) or "")
 

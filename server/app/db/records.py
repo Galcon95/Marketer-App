@@ -13,11 +13,11 @@ from pydantic import BaseModel
 from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy import inspect as sa_inspect
 
-from app.core.schemas import (AdImage, ApiKey, Asset, AutomationCycle, AutomationSettings, BookSummary, Chunk, ChunkLocation,
+from app.core.schemas import (AdImage, ApiKey, Asset, AuditEvent, AutomationCycle, AutomationSettings, BookSummary, Chunk, ChunkLocation,
                               Conversation, DiscussionAnalysis, FacebookConnection, Project, Source, UsageRecord,
                               UsageTotals, YouTubeConnection)
 from app.db.database import session
-from app.db.tables import (AdImageRow, ApiKeyRow, AppSwitchRow, AssetRow, AutomationCycleRow, AutomationSettingsRow,
+from app.db.tables import (AdImageRow, ApiKeyRow, AppSwitchRow, AssetRow, AuditEventRow, AutomationCycleRow, AutomationSettingsRow,
                            Base, ChunkRow, ConversationRow, DiscussionRow, FacebookConnectionRow, ProjectRow,
                            SourceRow, SummaryRow, UsageRow, YouTubeConnectionRow)
 
@@ -457,6 +457,26 @@ def save_switch(name: str, on: bool, reason: str, when: datetime) -> None:
     """Set an app switch, with why and when."""
     with session() as s:
         s.merge(AppSwitchRow(name=name, on=on, reason=reason, changed_at=when))
+
+
+# ---------- Audit log (core/audit.py) ----------
+def add_audit_event(event: AuditEvent) -> None:
+    """Save one audit event."""
+    with session() as s:
+        s.add(AuditEventRow(**event.model_dump()))
+
+
+def recent_audit_events(limit: int, user_id: str | None = None, action_prefix: str = "") -> list[AuditEvent]:
+    """The latest audit events, newest first: of one user, or of everyone (user_id None); optionally only the
+    actions that start with action_prefix (e.g. "api_key.")."""
+    query = select(AuditEventRow)
+    if user_id is not None:
+        query = query.where(AuditEventRow.user_id == user_id)
+    if action_prefix:
+        query = query.where(AuditEventRow.action.startswith(action_prefix, autoescape=True))
+    with session() as s:
+        rows = s.scalars(query.order_by(AuditEventRow.at.desc(), AuditEventRow.id.desc()).limit(limit))
+        return [AuditEvent.model_validate({f: getattr(row, f) for f in AuditEvent.model_fields}) for row in rows]
 
 
 # ---------- Chunks and their embeddings ----------

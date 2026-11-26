@@ -12,7 +12,7 @@ The code lives in the app package (see README.md, "Project layout"):
     app/agents    Phase 3 Community: the Discussion Relevance Agent (LangGraph), its tools, the Reddit scan
     app/social    the author's Facebook Page (Graph API)
     app/market    Integrations: MCP servers (mcp-book-knowledge at /mcp, mcp-guardrails at /guardrails/mcp)
-                  and the app's MCP client for the console (client.py)
+                  and the app's MCP client for the console (client.py); only when MCP_SERVERS is on (config.py)
     app/api       FastAPI routers, one per area
 
 The prompts are Markdown files in prompts/ (core/prompt_files.py), the limits are in limits.toml.
@@ -38,6 +38,7 @@ from app.core import guest as guest_account  # noqa: E402
 from app.agents import page_inbox_worker  # noqa: E402
 from app.db import records  # noqa: E402
 from app.core.mcp_auth import RequireMcpAuth  # noqa: E402
+from app.core.security_headers import SecurityHeadersMiddleware  # noqa: E402
 from app.market.book_server import book_server  # noqa: E402
 from app.market.guard_server import guard_server  # noqa: E402
 from app.rag import ingestion, retrieval, summary  # noqa: E402
@@ -70,49 +71,66 @@ mcp_app = book_server.streamable_http_app(streamable_http_path="/mcp", stateless
 guard_app = guard_server.streamable_http_app(streamable_http_path="/mcp", stateless_http=True, json_response=True)
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    """Restore the saved data, then run the MCP session managers while the API runs (a mounted app's own lifespan
-    is not started)."""
-    restore_data()
-    page_inbox_worker.start_if_configured()  # Facebook Page inbox with approval in Telegram (needs the data above)
-    try:
-        async with AsyncExitStack() as stack:
-            for server in (book_server, guard_server):
-                await stack.enter_async_context(server.session_manager.run())
-            yield
-    finally:
-        page_inbox_worker.stop()
+def build_app(api_docs: bool = config.API_DOCS, mcp: bool = config.MCP_SERVERS) -> FastAPI:
+    """The API as one FastAPI app.
+
+    Args:
+        api_docs: Show the API description (/docs, /redoc, /openapi.json). It lists every endpoint to anyone, so only
+            a local server shows it (config.api_docs); otherwise these addresses answer like any unknown one.
+        mcp: Run the two MCP servers (config.mcp_servers). Off: they are not mounted, so /mcp, /guardrails/mcp and
+            every unknown address answer 404; the tool console and new API keys answer 503 (api/deps.py mcp_on).
+    """
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        """Restore the saved data, then run the MCP session managers while the API runs (a mounted app's own lifespan
+        is not started)."""
+        restore_data()
+        page_inbox_worker.start_if_configured()  # Facebook Page inbox with approval in Telegram (needs the data above)
+        try:
+            async with AsyncExitStack() as stack:
+                for server in (book_server, guard_server) if mcp else ():
+                    await stack.enter_async_context(server.session_manager.run())
+                yield
+        finally:
+            page_inbox_worker.stop()
+
+    app = FastAPI(title="Marketer App API", lifespan=lifespan,
+                  docs_url="/docs" if api_docs else None, redoc_url="/redoc" if api_docs else None,
+                  openapi_url="/openapi.json" if api_docs else None)
+
+    # Allow the Next.js dev client (port 3000) to call the API from the browser.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.CLIENT_ORIGINS,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=[logs.HEADER, "Content-Disposition"],  # request id; the file name of downloads (asset export)
+    )
+    # Around CORS, so its own answers (preflight, refused origin) carry the security headers too.
+    app.add_middleware(SecurityHeadersMiddleware)
+    # Added last = outermost: every request (API and MCP) gets its id first, and the id is on every response.
+    app.add_middleware(logs.RequestIdMiddleware)
+
+    # Include the API routers. /health is open; every other endpoint needs a signed-in user (auth.py → 401 otherwise).
+    app.include_router(health.router)
+    app.include_router(guest.router)  # "Try as guest": open, it signs the visitor in (api/guest.py)
+    for module in (projects, sources, knowledge, assets, ad_images, campaigns, discussions, substack, facebook,
+                   youtube, automation, mcp_console, keys):
+        app.include_router(module.router, dependencies=[Depends(auth.current_user)])
+    # Facebook Login and Google sign-in send the browser back here without a sign-in token; the signed `state` names
+    # the user.
+    app.include_router(facebook.callback_router)
+    app.include_router(youtube.callback_router)
+
+    if mcp:
+        # Last, so the API routes match first. /guardrails before the catch-all "/", which only serves POST/GET /mcp.
+        # Both need a personal API key or a sign-in token (mcp_auth.py → 401 otherwise).
+        app.mount("/guardrails", RequireMcpAuth(guard_app))  # → /guardrails/mcp
+        app.mount("/", RequireMcpAuth(mcp_app))
+    return app
 
 
-app = FastAPI(title="Marketer App API", lifespan=lifespan)
-
-# Allow the Next.js dev client (port 3000) to call the API from the browser.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=config.CLIENT_ORIGINS,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=[logs.HEADER, "Content-Disposition"],  # request id; the file name of downloads (asset export)
-)
-# Added last = outermost: every request (API and MCP) gets its id first, and the id is on every response.
-app.add_middleware(logs.RequestIdMiddleware)
-
-# Include the API routers. /health is open; every other endpoint needs a signed-in user (auth.py → 401 otherwise).
-app.include_router(health.router)
-app.include_router(guest.router)  # "Try as guest": open, it signs the visitor in (api/guest.py)
-for module in (projects, sources, knowledge, assets, ad_images, campaigns, discussions, substack, facebook, youtube,
-               automation, mcp_console, keys):
-    app.include_router(module.router, dependencies=[Depends(auth.current_user)])
-# Facebook Login and Google sign-in send the browser back here without a sign-in token; the signed `state` names the
-# user.
-app.include_router(facebook.callback_router)
-app.include_router(youtube.callback_router)
-
-# Last, so the API routes match first. /guardrails before the catch-all "/", which only serves POST/GET /mcp.
-# Both need a personal API key or a sign-in token (mcp_auth.py → 401 otherwise).
-app.mount("/guardrails", RequireMcpAuth(guard_app))  # → /guardrails/mcp
-app.mount("/", RequireMcpAuth(mcp_app))
+app = build_app()
 
 # run the server
 # cd server

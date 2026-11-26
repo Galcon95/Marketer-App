@@ -21,7 +21,7 @@ import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
 
-from app.core import guest
+from app.core import audit, guest
 from app.core.limits import LIMITS
 from app.db import records
 
@@ -69,6 +69,7 @@ def set_switch(name: str, on: bool, reason: str) -> bool:
             return False
         _switches[name] = on
     logger.warning("App switch %s → %s (%s)", name, _on(on), reason)
+    audit.record("switch.changed", name, f"{_on(on)}: {reason}")
     try:
         records.save_switch(name, on, reason, datetime.now(timezone.utc))
     except OSError as e:  # DatabaseError

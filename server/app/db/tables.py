@@ -138,6 +138,22 @@ class AppSwitchRow(Base):
     changed_at: Mapped[datetime] = mapped_column(UtcDateTime)
 
 
+class AuditEventRow(Base):
+    """One security-relevant event (core/audit.py): who did what, when; see schemas.AuditEvent. Only added and read,
+    never changed. No foreign keys: the events stay when a user or a project is gone."""
+
+    __tablename__ = "audit_events"
+    __table_args__ = {"schema": PRIVATE}
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), Identity(), primary_key=True)
+    at: Mapped[datetime] = mapped_column(UtcDateTime, index=True)
+    action: Mapped[str] = mapped_column(Text)  # e.g. "api_key.created" (audit.ACTIONS)
+    user_id: Mapped[str] = mapped_column(Text, index=True)  # Supabase user id; "" = nobody signed in, or the agent
+    target: Mapped[str] = mapped_column(Text)  # what it was done to: a key id, a post id, a book id
+    detail: Mapped[str] = mapped_column(Text)  # one short line; never a secret or a text someone wrote
+    request_id: Mapped[str] = mapped_column(Text)  # the HTTP request (logs.py); "" outside a request
+
+
 class AutomationSettingsRow(Base):
     """A user's schedule for the marketing agent; see schemas.AutomationSettings. One row per user."""
 

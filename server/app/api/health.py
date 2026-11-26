@@ -7,11 +7,11 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from app.api.deps import admin_only
-from app.core import accounts, images, llm, usage, usage_export
+from app.core import accounts, audit, images, llm, usage, usage_export
 from app.core import state as db
 from app.core.auth import User, current_user
 from app.core.limits import LIMITS
-from app.core.schemas import Health, ServiceStatus, UsageBudget, UsageReport
+from app.core.schemas import AuditEvent, Health, ServiceStatus, UsageBudget, UsageReport
 from app.db import records
 from app.rag import vectorstore
 
@@ -76,6 +76,25 @@ def get_usage(limit: int = Query(50, ge=1, le=1000), scope: Literal["me", "app"]
     report.budget = UsageBudget(spent_today=spent_today, limit_today=LIMITS.per_user.cost_per_day_usd,
                                 spent_month=spent_month, limit_month=LIMITS.per_user.cost_per_month_usd)
     return report
+
+
+@router.get("/audit", response_model=list[AuditEvent], dependencies=[Depends(admin_only)])
+def get_audit(limit: int = Query(100, ge=1, le=1000), user_id: str | None = Query(None, max_length=100),
+              action: str = Query("", max_length=50)):
+    """The audit log (core/audit.py), newest first: the admin only.
+
+    Args:
+        limit: Number of latest events (query parameter, 1-1000).
+        user_id: Only this user's events (a Supabase user id); default: everyone's.
+        action: Only actions that start with this, e.g. "api_key." or "facebook.post_published"; default: all.
+
+    Raises:
+        HTTPException: 403 for anyone but the admin; 503 if the database cannot be read.
+    """
+    try:
+        return audit.recent(limit, user_id, action)
+    except OSError as e:  # DatabaseError
+        raise HTTPException(503, "The audit log cannot be read right now, please try again.") from e
 
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

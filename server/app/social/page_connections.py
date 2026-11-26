@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 from urllib.parse import urlencode
 
-from app.core import accounts, config, secret_box
+from app.core import accounts, audit, config, secret_box
 from app.core import state as db
 from app.core.auth import User
 from app.core.schemas import FacebookConnection, FacebookPageChoice
@@ -236,6 +236,7 @@ def disconnect(user_id: str) -> None:
         _waiting.pop(user_id, None)
     records.delete_facebook_connection(user_id)
     logger.info("A user disconnected their Facebook Page")
+    audit.record("facebook.disconnected", user_id=user_id)
 
 
 def _save(user_id: str, page: PageChoice) -> None:
@@ -244,3 +245,4 @@ def _save(user_id: str, page: PageChoice) -> None:
         user_id=user_id, page_id=page.id, page_name=page.name, token=secret_box.encrypt(page.token),
         connected_at=db.now()))
     logger.info("A user connected the Facebook Page %s", page.id)
+    audit.record("facebook.connected", page.id, user_id=user_id)
