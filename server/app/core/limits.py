@@ -1,4 +1,5 @@
-"""Limits of the app: requests per minute, cost budgets per user and for the whole app, books per user, upload size.
+"""Limits of the app: requests per minute, cost budgets per user, for the demo's guest and for the whole app, books per
+user, upload size.
 
 Read once on import from server/limits.toml; each value can be overridden by an environment variable
 LIMIT_<SECTION>_<NAME> (e.g. LIMIT_PER_USER_COST_PER_DAY_USD=2, also from server/.env). The rules:
@@ -43,9 +44,32 @@ class AppWide:
 
 
 @dataclass(frozen=True)
+class Guest:
+    """Limits of the shared guest account of the public demo (GUEST_EMAIL), instead of the per_user ones for model
+    requests and costs. All visitors share it, so these are the limits of all of them together."""
+
+    model_requests_per_minute: int = 10
+    cost_per_day_usd: float = 0.50
+    cost_per_month_usd: float = 5.00
+    starts_per_ip_per_day: int = 2  # "Try as guest" per visitor's IP address (api/guest.py; not the server's own)
+    scans_per_day: int = 5  # Reddit/Substack scans: each uses Tavily searches, which the cost budget does not count
+
+
+@dataclass(frozen=True)
+class Alarm:
+    """When the server alerts the admin in Telegram (core/alarm.py)."""
+
+    spike_usd: float = 1.00  # model costs of all users together within spike_minutes: alert, and the demo goes off
+    spike_minutes: int = 10
+    refusals_per_hour: int = 20  # refused "Try as guest" (per-address and per-minute limits): alert
+
+
+@dataclass(frozen=True)
 class Limits:
     per_user: PerUser
     app: AppWide
+    guest: Guest = Guest()
+    alarm: Alarm = Alarm()
 
 
 def load(path: Path = LIMITS_FILE, environ: dict[str, str] | None = None) -> Limits:
@@ -63,11 +87,13 @@ def load(path: Path = LIMITS_FILE, environ: dict[str, str] | None = None) -> Lim
         data = tomllib.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
     except (OSError, tomllib.TOMLDecodeError) as e:
         raise LimitsError(f"{path.name} cannot be read: {e}") from e
-    unknown = set(data) - {"per_user", "app"}
+    unknown = set(data) - {"per_user", "app", "guest", "alarm"}
     if unknown:
         raise LimitsError(f"{path.name}: unknown section(s) {', '.join(sorted(unknown))}")
     return Limits(per_user=_section(PerUser, "per_user", data.get("per_user", {}), environ, path),
-                  app=_section(AppWide, "app", data.get("app", {}), environ, path))
+                  app=_section(AppWide, "app", data.get("app", {}), environ, path),
+                  guest=_section(Guest, "guest", data.get("guest", {}), environ, path),
+                  alarm=_section(Alarm, "alarm", data.get("alarm", {}), environ, path))
 
 
 def _section(cls, name: str, values: dict, environ, path: Path):

@@ -5,6 +5,8 @@
  * usage and costs button, MCP keys, export) and the four phase tabs, which render the phase views; the sidebar also
  * opens the MCP servers page (Integrations). Holds the state the
  * views share (refresh counter, the book being worked on) and the Agent Workspace (Phase 4) placeholder.
+ * For the public demo's guest account (GET /me `guest`) it shows a banner, hides the Keys button and explains the
+ * views the guest cannot use (Agent Workspace, Facebook, YouTube, MCP servers) instead of showing them.
  */
 
 import { useCallback, useEffect, useState, useSyncExternalStore, type JSX } from "react";
@@ -25,7 +27,7 @@ import YouTubeConnection from "./YouTubeConnection";
 import AutomationSettings from "./AutomationSettings";
 import KeysDrawer from "./KeysPanel";
 import UsageDrawer, { formatTokens, formatUsd } from "./UsagePanel";
-import { Badge, Button, ErrorNote, Sidebar, StatusRow, Tabs, type NavGroup, type TabItem } from "./ui";
+import { Badge, Button, Card, ErrorNote, Sidebar, StatusRow, Tabs, type NavGroup, type TabItem } from "./ui";
 
 /**
  * Which API server the app talks to, shown next to the breadcrumb in development only (npm run dev = local,
@@ -86,6 +88,35 @@ const TITLES: Record<ViewId, [title: string, crumb: string]> = {
   youtube: ["YouTube channel", "Integrations · your own channel, connected with Google sign-in"],
 };
 
+/** What the views the demo's guest cannot use would do, shown to the guest instead of them. */
+const GUEST_NOTES: Partial<Record<ViewId, string>> = {
+  p4: "The marketing agent works on its own: on a schedule it looks at the author's Facebook Page and YouTube channel, "
+    + "drafts replies to readers, questions under videos and new posts about the book (with a picture), and sends each "
+    + "one to the author in Telegram. Nothing goes out until the author approves it there.",
+  facebook: "Here authors connect their own Facebook Page: read the comments, answer readers with replies drawn from "
+    + "their book, and publish posts and ads with pictures.",
+  youtube: "Here authors connect their own YouTube channel: read the comments under their videos and answer as the "
+    + "channel, with replies drawn from their book.",
+  mcp: "The app's books and tools are also available to AI assistants such as Claude Desktop, through MCP servers "
+    + "with a personal API key.",
+};
+
+/**
+ * Shown to the demo's guest instead of a view it cannot use: what the view does, and how to get it.
+ * @param note What the view does (GUEST_NOTES).
+ */
+function GuestNote({ note }: { note: string }) {
+  return (
+    <Card title="Not available in the demo" icon={Sparkles}>
+      <p style={{ margin: 0 }}>{note}</p>
+      <p className="bc-hint" style={{ margin: 0 }}>
+        It works with your own accounts, so it needs your own sign-up. Log out and choose &ldquo;New here? Create an
+        account&rdquo;.
+      </p>
+    </Card>
+  );
+}
+
 /** Display label and icon for each service name reported by GET /health. */
 const SERVICE_META: Record<string, { label: string; icon: typeof Server }> = {
   api: { label: "API", icon: Server },
@@ -136,6 +167,7 @@ export default function AppShell() {
   const closeExport = useCallback(() => setExportOpen(false), []);
   const [login, setLogin] = useState<LoginResult>(null); // result of a Facebook Login that just sent the user back
   const [googleLogin, setGoogleLogin] = useState<LoginResult>(null); // the same for Google sign-in (YouTube)
+  const guest = me.data?.guest ?? false; // the public demo's shared guest account
   const totals = usage.data?.totals;
   const p = project.data;
   const View = VIEWS[tab];
@@ -239,8 +271,10 @@ export default function AppShell() {
             title={totals ? `Your model calls so far: input ${totals.input_tokens.toLocaleString()} tokens (${formatUsd(totals.input_cost)}), output ${totals.output_tokens.toLocaleString()} tokens (${formatUsd(totals.output_cost)}). Click for details.` : "LLM usage and costs"}>
             <span className="bc-mono">{totals ? `${formatUsd(totals.cost)} · ${formatTokens(totals.input_tokens + totals.output_tokens)} tok` : "usage"}</span>
           </Button>
-          <Button variant="secondary" size="sm" icon={KeyRound} onClick={() => setKeysOpen(true)}
-            title="Personal API keys for the MCP servers (Claude Desktop and other tools)">Keys</Button>
+          {!guest && (
+            <Button variant="secondary" size="sm" icon={KeyRound} onClick={() => setKeysOpen(true)}
+              title="Personal API keys for the MCP servers (Claude Desktop and other tools)">Keys</Button>
+          )}
           <Button variant="secondary" size="sm" icon={FileText} onClick={() => setExportOpen(true)}
             title="Download your generated assets as CSV or Markdown">Export</Button>
           <Button variant="ghost" size="sm" icon={LogOut} onClick={signOut} title={me.data ? `Signed in as ${me.data.email}` : undefined}>
@@ -253,7 +287,18 @@ export default function AppShell() {
         {/* key={tab} remounts the view on tab change, resetting its local state. */}
         <div className="bc-view" key={tab}>
           {health.error && <ErrorNote>Backend unreachable at {API_URL}. Start it with “uv run fastapi dev server.py” in server/.</ErrorNote>}
-          {tab === "facebook"
+          {guest && (
+            <div className="guest-banner" role="status">
+              <Badge tone="accent" dot>Guest demo</Badge>
+              <p>
+                Look around with two classic books: ask them questions, write posts and ads, make pictures. Nothing is
+                posted anywhere, and the demo is cleared for the next visitor after 15 quiet minutes.
+              </p>
+            </div>
+          )}
+          {guest && GUEST_NOTES[tab]
+            ? <GuestNote note={GUEST_NOTES[tab]} />
+            : tab === "facebook"
             ? <FacebookConnection key={login?.result ?? "none"} login={login} onChange={onChange} />
             : tab === "youtube"
               ? <YouTubeConnection key={googleLogin?.result ?? "none"} login={googleLogin} onChange={onChange} />

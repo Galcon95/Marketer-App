@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.agents import book_post, checkpoints, engagement, page_inbox
 from app.campaign import kit
-from app.core import api_keys, auth, config, files, llm, usage
+from app.core import alarm, api_keys, auth, config, files, llm, usage
 from app.core import state as db
 from app.core.auth import User
 from app.core.schemas import Project, UsageTotals
@@ -119,6 +119,17 @@ def no_telegram(monkeypatch):
     """No test reaches the real Telegram bot from server/.env: tests that need it configure a fake."""
     monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "")
     monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", None)
+
+
+@pytest.fixture(autouse=True)
+def alarms(monkeypatch) -> list[str]:
+    """A fresh red button (core/alarm.py) for every test: demo on, not frozen, no costs seen. Alarms are collected
+    here instead of being sent (no thread, no Telegram); tests of the alarm read the list."""
+    sent: list[str] = []
+    alarm.reset()
+    monkeypatch.setattr(alarm, "_dispatch", sent.append)
+    yield sent
+    alarm.reset()
 
 
 @pytest.fixture

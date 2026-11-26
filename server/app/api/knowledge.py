@@ -6,7 +6,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import (
-    check_sources, checked_text, llm_limits, owned_conversation, owned_project, owned_source, retrieve,
+    check_sources, checked_text, llm_limits, no_guest, owned_conversation, owned_project, owned_source, retrieve,
 )
 from app.core import state as db
 from app.core.llm import GenerationError
@@ -44,7 +44,7 @@ def get_summary(source_id: str):
 
 
 @router.post("/sources/{source_id}/summary", response_model=BookSummary, status_code=201,
-             dependencies=[Depends(owned_source), Depends(llm_limits)])  # ownership first: 404 before 429
+             dependencies=[Depends(no_guest), Depends(owned_source), Depends(llm_limits)])  # 404 before 429
 def create_summary(source: Source = Depends(owned_source)):
     """Create (or recreate) the summary of a processed book: chapter summaries + book overview.
 

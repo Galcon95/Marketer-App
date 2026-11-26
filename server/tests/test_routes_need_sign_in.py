@@ -22,10 +22,11 @@ from tests.conftest import OWNER
 # the server runs (health.py: "/" and "/test"), and FastAPI's own API docs. None of them shows or changes any data.
 # The Facebook Login and Google sign-in callbacks have no sign-in token (the provider redirects the browser); they
 # only act on a signed, single-use state that names the user (test_facebook_connect.py and test_youtube_connect.py
-# check forged and replayed ones).
+# check forged and replayed ones). "Try as guest" signs the visitor in as the demo's guest account, with its own
+# limits (test_guest.py).
 OPEN = {("GET", "/health"), ("GET", "/"), ("GET", "/test"), ("GET", "/openapi.json"), ("GET", "/docs"),
         ("GET", "/docs/oauth2-redirect"), ("GET", "/redoc"), ("GET", "/facebook/oauth/callback"),
-        ("GET", "/youtube/oauth/callback")}
+        ("GET", "/youtube/oauth/callback"), ("POST", "/guest")}
 
 def endpoints(routes, prefix: str = ""):
     """(method, path) of every endpoint, also inside included routers. FastAPI 0.143+ keeps an included router as

@@ -9,6 +9,9 @@ and the graph (agents/page_inbox.py) while the server runs.
     /post_facebook    a new post about the book now (phase 3 only); /post_youtube: a question under a video now
                       (phase 2 for YouTube only). Asked for by the author: the daily limit and the schedule's
                       switches do not apply; the proposal waits for "make it so" as always
+    /demo_status      the red button (core/alarm.py): the guest demo on or off, the freeze, recent costs, refusals
+    /demo_off, /demo_on   pause the public guest demo, and switch it on again (also switched off by an alarm)
+    /freeze, /unfreeze    stop all model calls except the admin's, and allow them again
     /start, /help     what the bot does, all commands (COMMANDS, also the bot's "/" menu) and how to answer
     a button          "Make it so" / "Edit" / "Skip" under the current proposal ("Edit": the next text is the
                       author's own version, used as it is)
@@ -61,7 +64,7 @@ from zoneinfo import ZoneInfo
 from app.agents import automation, book_post, engagement
 from app.agents.cycle import Cycle, continue_after_restart
 from app.agents import page_inbox as inbox
-from app.core import config
+from app.core import alarm, config, guest, usage
 from app.core.llm import GenerationError
 from app.core.schemas import CycleTrigger, TelegramUpdate
 from app.rag.retrieval import source_name
@@ -83,6 +86,11 @@ COMMANDS: list[tuple[str, str]] = [
     ("post_youtube", "A question under one of your YouTube videos now (to approve as always)"),
     ("pause", "Stop the schedule for now (/next still works; your schedule is kept)"),
     ("resume", "Start the schedule again (the next run counts from now)"),
+    ("demo_status", "Red button: guest demo on or off, freeze, recent costs and refused starts"),
+    ("demo_off", "Red button: pause the guest demo (Try as guest) now"),
+    ("demo_on", "Switch the guest demo on again"),
+    ("freeze", "Red button: stop all model calls in the app except yours"),
+    ("unfreeze", "Allow model calls for everyone again"),
     ("help", "All commands and how to answer a proposal"),
 ]
 
@@ -462,6 +470,9 @@ class InboxWorker:
         if command == "/status":
             self._say(self._status())
             return
+        if command in RED_BUTTON:
+            self._say(red_button(command))
+            return
         waiting = _waiting()
         if waiting is None:
             self._say("Nothing is waiting for an answer. Send /next to look at your Page.")
@@ -515,6 +526,49 @@ class InboxWorker:
             logger.warning("Page inbox: could not confirm a button press: %s", e)
 
 
+RED_BUTTON = ("/demo_status", "/demo_off", "/demo_on", "/freeze", "/unfreeze")
+
+
+def red_button(command: str) -> str:
+    """Carry out one of the red button's commands (core/alarm.py) and say what is now so."""
+    if command == "/demo_off":
+        changed = alarm.set_switch("demo", False, "/demo_off in Telegram")
+        return ("⛔ Guest demo switched off: “Try as guest” and guest sessions answer “The demo is paused”."
+                if changed else "The guest demo was already off.")
+    if command == "/demo_on":
+        changed = alarm.set_switch("demo", True, "/demo_on in Telegram")
+        return "✅ Guest demo switched on again." if changed else "The guest demo was already on."
+    if command == "/freeze":
+        changed = alarm.set_switch("freeze", True, "/freeze in Telegram")
+        return ("⛔ Frozen: model calls are stopped for everyone except you. /unfreeze allows them again."
+                if changed else "The app was already frozen.")
+    if command == "/unfreeze":
+        changed = alarm.set_switch("freeze", False, "/unfreeze in Telegram")
+        return "✅ Model calls allowed for everyone again." if changed else "The app was not frozen."
+    return demo_status()
+
+
+def demo_status() -> str:
+    """The red button's state, recent costs and refusals, and today's spending of the guest and of the whole app."""
+    spent, of_guest, refusals = alarm.recent()
+    lines = [f"Guest demo: {'on' if alarm.demo_on() else 'OFF'} · Freeze: {'ON' if alarm.frozen() else 'off'}",
+             f"Last {alarm.LIMITS.alarm.spike_minutes} minutes: ${spent:.2f} on model calls (guest ${of_guest:.2f}); "
+             f"alarm at ${alarm.LIMITS.alarm.spike_usd:.2f}",
+             f"Refused “Try as guest” in the last hour: {refusals}"]
+    try:
+        now = datetime.now(UTC)
+        guest_id = guest.user_id() if guest.configured() else None
+        _, _, app_today = usage.spending(guest_id or "", [], now)
+        if guest_id:
+            guest_today, guest_month, _ = usage.spending(guest_id, [], now)
+            lines.append(f"Guest today: ${guest_today:.2f} of ${alarm.LIMITS.guest.cost_per_day_usd:.2f} · this "
+                         f"month: ${guest_month:.2f} of ${alarm.LIMITS.guest.cost_per_month_usd:.2f}")
+        lines.append(f"Whole app today: ${app_today:.2f} of ${alarm.LIMITS.app.cost_per_day_usd:.2f}")
+    except (OSError, guest.GuestError) as e:  # the database or Supabase cannot be asked: the rest still helps
+        lines.append(f"(Today's spending could not be read: {e})")
+    return "\n".join(lines)
+
+
 def _waiting() -> tuple[str, int] | None:
     """The proposal that waits for the author (thread id, message id), of any of the agents."""
     return inbox.waiting_run() or engagement.waiting_run() or book_post.waiting_run()
@@ -561,6 +615,9 @@ def start_if_configured() -> InboxWorker | None:
     """Start the worker when Telegram and the inbox books are configured (logs why not, otherwise). The Facebook
     Page (server/.env) and the YouTube channel (connected in the app) are each looked at when they are there."""
     global _worker
+    if not config.TELEGRAM_POLLING:
+        logger.info("Page inbox worker off: TELEGRAM_POLLING=false (this server only sends alarms)")
+        return None
     missing = [name for name, ok in (("TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID", telegram.is_configured()),
                                      ("FACEBOOK_INBOX_BOOKS", bool(config.FACEBOOK_INBOX_BOOKS))) if not ok]
     if missing:

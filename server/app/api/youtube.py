@@ -19,7 +19,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 
-from app.api.deps import owned_discussion
+from app.api.deps import no_guest, owned_discussion
 from app.core import state as db
 from app.core.auth import User, current_user
 from app.core.guard import output_blocked, scan_third_party
@@ -77,7 +77,7 @@ def status(user: User = Depends(current_user)):
         return YouTubeStatus(connected=False, error=str(e), login_available=login)
 
 
-@router.post("/youtube/connect", response_model=FacebookLoginUrl)
+@router.post("/youtube/connect", response_model=FacebookLoginUrl, dependencies=[Depends(no_guest)])
 def connect(body: FacebookConnectRequest, user: User = Depends(current_user)):
     """Start Google sign-in: the URL of Google's page, where the user picks the account (or brand account) of their
     channel and allows the app to read and answer comments. Google then sends the browser to GET
@@ -123,7 +123,7 @@ def _back(return_to: str, result: str, message: str = "") -> RedirectResponse:
     return RedirectResponse(f"{return_to}/?{query}", status_code=303)
 
 
-@router.delete("/youtube/connection", status_code=204)
+@router.delete("/youtube/connection", status_code=204, dependencies=[Depends(no_guest)])
 def disconnect(user: User = Depends(current_user)):
     """Forget the user's channel: its token is deleted from the app and Google is asked to revoke the access.
 
@@ -170,7 +170,8 @@ def _scanned(thread: YouTubeThread) -> YouTubeThread:
     return thread.model_copy(update={"comments": scanned})
 
 
-@router.post("/discussions/{discussion_id}/reply/youtube", response_model=DiscussionAnalysis)
+@router.post("/discussions/{discussion_id}/reply/youtube", response_model=DiscussionAnalysis,
+             dependencies=[Depends(no_guest)])
 def reply(analysis: DiscussionAnalysis = Depends(owned_discussion),
           channel: youtube.ChannelAccess = Depends(channel_of)):
     """Post the analysis's reply (as the author edited it, without citation markers) as the channel under the comment

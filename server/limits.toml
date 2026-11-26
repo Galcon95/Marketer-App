@@ -17,6 +17,21 @@ max_upload_mb             = 50    # size of one uploaded file (Supabase Storage'
 max_server_upload_mb      = 500   # size of one book the user chooses to store on the server's disk instead
 max_api_keys              = 10    # personal API keys for the MCP servers (e.g. one per tool)
 
+# The shared guest account of the public demo (GUEST_EMAIL; "Try as guest"): instead of the per_user values above for
+# model requests and costs. Every visitor uses the same account, so these are the limits of all visitors together.
+[guest]
+model_requests_per_minute = 10
+cost_per_day_usd          = 0.50
+cost_per_month_usd        = 5.00
+starts_per_ip_per_day     = 2     # "Try as guest" per visitor's IP address (UTC day; the server's own address is exempt)
+scans_per_day             = 5     # Reddit/Substack scans of all visitors: each uses Tavily searches (not in the cost budget)
+
 # The whole app (all users together): protects the API key's budget even with many users.
 [app]
 cost_per_day_usd = 20.00
+
+# Alarms to the admin's Telegram (core/alarm.py; TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID). Each kind at most once an hour.
+[alarm]
+spike_usd         = 1.00  # model costs of all users within spike_minutes: alarm, and the guest demo switches off
+spike_minutes     = 10
+refusals_per_hour = 20    # refused "Try as guest" (someone keeps trying): alarm

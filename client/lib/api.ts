@@ -67,7 +67,31 @@ export interface Me {
   user_id: string;
   email: string;
   admin: boolean; // may see the app-wide usage and costs and use the MCP console
+  guest?: boolean; // the shared guest account of the public demo: the app hides what it may not do
   project: Project; // with counts
+}
+
+/** Response of POST /guest ("Try as guest"): a Supabase session of the demo's guest account (never its password). */
+export interface GuestSession { access_token: string; refresh_token: string; expires_in: number }
+
+/**
+ * POST /guest: sign in as the public demo's shared guest account. Open (no access token is sent); the server may
+ * first start the demo afresh, if nobody used it for 15 minutes.
+ * @returns The session, for supabase.auth.setSession.
+ * @throws ApiError (404 no demo on this server, 429 too many visitors, 503 Supabase down) or Error (unreachable).
+ */
+export async function startGuestDemo(): Promise<GuestSession> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/guest`, { method: "POST" });
+  } catch {
+    throw new Error(`Could not reach the API at ${API_URL}`);
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new ApiError(typeof body?.detail === "string" ? body.detail : `API error ${res.status}`, res.status);
+  }
+  return (await res.json()) as GuestSession;
 }
 
 /** One uploaded file in a project, plus its ingestion state. */

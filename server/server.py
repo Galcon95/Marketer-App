@@ -29,10 +29,12 @@ from app.core import logs
 logs.setup()  # first, so the imports below already log through it (JSON lines with the request id)
 
 from app.api import (  # noqa: E402
-    ad_images, assets, automation, campaigns, discussions, facebook, health, keys, knowledge, mcp_console, projects, sources,
-    substack, youtube,
+    ad_images, assets, automation, campaigns, discussions, facebook, guest, health, keys, knowledge, mcp_console, projects,
+    sources, substack, youtube,
 )
 from app.core import api_keys, auth, config, state, usage  # noqa: E402
+from app.core import alarm  # noqa: E402
+from app.core import guest as guest_account  # noqa: E402
 from app.agents import page_inbox_worker  # noqa: E402
 from app.db import records  # noqa: E402
 from app.core.mcp_auth import RequireMcpAuth  # noqa: E402
@@ -48,6 +50,8 @@ def restore_data() -> None:
     the real data. Without the database (DATABASE_URL not set or not reachable) the server does not start: it would
     create a second library for every returning user and accept no API key."""
     state.projects.update(records.load_projects())  # the clients and their owners
+    guest_account.remember(state.projects.values())  # the demo's guest account, by its user id (core/guest.py)
+    alarm.load()  # the red button's switches: guest demo on/off, freeze (core/alarm.py)
     api_keys.load()  # personal API keys for the MCP servers
     ingestion.restore_sources()
     state.assets.update(records.load_assets())
@@ -96,6 +100,7 @@ app.add_middleware(logs.RequestIdMiddleware)
 
 # Include the API routers. /health is open; every other endpoint needs a signed-in user (auth.py → 401 otherwise).
 app.include_router(health.router)
+app.include_router(guest.router)  # "Try as guest": open, it signs the visitor in (api/guest.py)
 for module in (projects, sources, knowledge, assets, ad_images, campaigns, discussions, substack, facebook, youtube,
                automation, mcp_console, keys):
     app.include_router(module.router, dependencies=[Depends(auth.current_user)])

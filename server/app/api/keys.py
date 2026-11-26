@@ -5,6 +5,7 @@ Only a signed-in user (Supabase access token) can manage keys; an API key itself
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.api.deps import no_guest
 from app.core import api_keys
 from app.core.auth import User, current_user
 from app.core.schemas import ApiKey, ApiKeyCreate, ApiKeyCreated, ApiKeyInfo
@@ -22,7 +23,7 @@ def list_keys(user: User = Depends(current_user)):
     return [_info(k) for k in api_keys.keys_of(user)]
 
 
-@router.post("/api-keys", response_model=ApiKeyCreated, status_code=201)
+@router.post("/api-keys", response_model=ApiKeyCreated, status_code=201, dependencies=[Depends(no_guest)])
 def create_key(body: ApiKeyCreate, user: User = Depends(current_user)):
     """Create a key. The response contains the key itself; it cannot be shown again later.
 
@@ -38,7 +39,7 @@ def create_key(body: ApiKeyCreate, user: User = Depends(current_user)):
     return ApiKeyCreated(**_info(record).model_dump(), key=key)
 
 
-@router.delete("/api-keys/{key_id}", status_code=204)
+@router.delete("/api-keys/{key_id}", status_code=204, dependencies=[Depends(no_guest)])
 def revoke_key(key_id: str, user: User = Depends(current_user)):
     """Revoke (delete) one of the user's keys; it stops working at once.
 

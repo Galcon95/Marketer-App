@@ -50,6 +50,9 @@ Read once on import from environment variables (and server/.env, if present), fi
     TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID → optional, the author's Telegram bot and their chat with it (Bot API, see
                           social/telegram.py): the agent sends proposed replies there and the author approves them;
                           messages from any other chat are ignored. Without both, Telegram is off
+    TELEGRAM_POLLING=false → optional: this server only sends messages (the red button's alarms, core/alarm.py) and
+                          does not run the agent's worker, which polls Telegram: for a local server while another one
+                          (Render) polls the same bot (Telegram allows one poller per bot)
     FACEBOOK_INBOX_BOOKS → optional, comma-separated book ids (src_...) of one client: the Page inbox agent
                           (agents/page_inbox.py) answers readers on the Facebook Page and viewers on the YouTube channel
                           the books' owner connected in the app from the best fitting of them
@@ -61,6 +64,10 @@ Read once on import from environment variables (and server/.env, if present), fi
                           with its public signing keys); without it every API request except /health gets 503
     DEFAULT_CLIENT_OWNER → email of the user who owns the default client ("demo-campaign", the data from before
                           sign-in existed) and is the app's admin (app-wide usage, MCP console); see accounts.py
+    GUEST_EMAIL         → optional, email of the shared guest account of the public demo ("Try as guest"): it may
+                          try the app within the [guest] limits of limits.toml, but not upload or delete books, change
+                          a cover, create API keys, use the MCP servers, connect or post to Facebook or YouTube, or
+                          run the marketing agent (accounts.is_guest, api/deps.py no_guest). Must not be the admin
     SUPABASE_SECRET_KEY → the Supabase project's secret key ("sb_secret_..."): the server stores the uploaded books
                           and their covers with it in the private Storage bucket "books" (files.py); never sent to
                           the browser
@@ -123,6 +130,7 @@ GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 _chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 TELEGRAM_CHAT_ID: int | None = int(_chat_id) if re.fullmatch(r"-?\d+", _chat_id) else None
+TELEGRAM_POLLING = os.getenv("TELEGRAM_POLLING", "true").strip().lower() not in ("false", "0", "off", "no")
 FACEBOOK_INBOX_BOOKS = [s.strip() for s in os.getenv("FACEBOOK_INBOX_BOOKS", "").split(",") if s.strip()]
 FACEBOOK_INBOX_INTERVAL = max(0.0, float(os.getenv("FACEBOOK_INBOX_INTERVAL", "30") or 0))
 
@@ -135,6 +143,9 @@ LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT") or os.getenv("LANGCHAIN_PROJE
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
 SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "").strip()
 DEFAULT_CLIENT_OWNER = os.getenv("DEFAULT_CLIENT_OWNER", "").strip().lower()
+GUEST_EMAIL = os.getenv("GUEST_EMAIL", "").strip().lower()
+if GUEST_EMAIL and GUEST_EMAIL == DEFAULT_CLIENT_OWNER:
+    raise RuntimeError("GUEST_EMAIL must not be the admin's email (DEFAULT_CLIENT_OWNER).")
 LOCAL_FILES_DIR = Path(os.getenv("LOCAL_FILES_DIR", "").strip() or SERVER_DIR / "data" / "books")
 # The author's own cover pictures, named like the book's file ("My-Book.pdf" → "My-Book.png" or ".jpg"): used instead of
 # the cover taken from the PDF (rag/ingestion.py folder_cover). Not committed (server/assets/ is git-ignored).

@@ -13,6 +13,7 @@ of the inbox books (FACEBOOK_INBOX_BOOKS); for any other user the schedule is sa
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.agents import automation, cycle, page_inbox_worker
+from app.api.deps import no_guest
 from app.core.auth import User, current_user
 from app.core.schemas import AutomationCycle, AutomationSchedule, AutomationStatus, PauseRequest
 
@@ -33,7 +34,7 @@ def status(user: User = Depends(current_user)):
         raise HTTPException(503, "The schedule cannot be read right now, please try again.") from e
 
 
-@router.put("/automation", response_model=AutomationStatus)
+@router.put("/automation", response_model=AutomationStatus, dependencies=[Depends(no_guest)])
 def save(schedule: AutomationSchedule, user: User = Depends(current_user)):
     """Save the user's schedule; the next run counts from now (saving never starts a run). 422 if it is invalid
     (unknown time zone, no time of day, interval under 15 minutes).
@@ -48,7 +49,7 @@ def save(schedule: AutomationSchedule, user: User = Depends(current_user)):
         raise HTTPException(503, "The schedule could not be saved, please try again.") from e
 
 
-@router.post("/automation/run", status_code=202)
+@router.post("/automation/run", status_code=202, dependencies=[Depends(no_guest)])
 def run_now(user: User = Depends(current_user)) -> dict[str, str]:
     """Ask the agent for a run now: it looks at the Page and the channel and proposes the next reply in Telegram.
     It starts within half a minute.
@@ -66,7 +67,7 @@ def run_now(user: User = Depends(current_user)) -> dict[str, str]:
     return {"status": "Run requested: watch Telegram."}
 
 
-@router.put("/automation/paused", response_model=AutomationStatus)
+@router.put("/automation/paused", response_model=AutomationStatus, dependencies=[Depends(no_guest)])
 def pause(body: PauseRequest, user: User = Depends(current_user)):
     """Pause the schedule (the agent then runs only when asked) or resume it; the schedule itself is kept. After a
     resume the next run counts from now.

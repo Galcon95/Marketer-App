@@ -24,6 +24,18 @@ readers on a Facebook Page (with approval in Telegram) and under the videos of a
 - Quality: 675 server tests (pytest) and 21 client tests (Vitest), run by CI with ruff, ESLint and a type check;
   RAG and agent evaluations in [eval/](eval/README.md)
 
+## Try it online: guest demo
+
+Open [marketer-app-beta.vercel.app](https://marketer-app-beta.vercel.app) and click **Try as guest**. No sign-up is
+needed. The demo has two public-domain books (*The Principles of Political Economy* and Haeckel's *The Evolution of
+Man*): ask them questions, write posts, ads with pictures and campaign kits, and analyse discussions. Nothing is
+posted anywhere. Uploading books, API keys, Facebook, YouTube and the marketing agent need an own account.
+
+All visitors share one guest account. After 15 minutes without activity, the next "Try as guest" starts the demo
+afresh (the books stay). It has its own limits (`[guest]` in [server/limits.toml](server/limits.toml)): $0.50 of model
+calls a day, 2 starts a day per IP address, and 5 Reddit/Substack scans a day. If costs rise suddenly, the server
+switches the demo off by itself and alerts the admin in Telegram (`[alarm]`).
+
 ## Run it locally, step by step
 
 You need **3 terminals**: server, client, and (optionally) the MCP Inspector.
@@ -129,6 +141,14 @@ Press `Ctrl+C` in each terminal.
 - **Facebook Page and YouTube inbox with approval in Telegram:** set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` and
   `FACEBOOK_INBOX_BOOKS` in `server/.env`, plus `FACEBOOK_PAGE_*` for the Page and/or connect your YouTube channel in
   the app, then send `/next` to your bot. See [docs/PAGE_INBOX.md](docs/PAGE_INBOX.md).
+- **Guest demo on your own server:** create a user in Supabase (Authentication → Users), set its email as
+  `GUEST_EMAIL` in `server/.env`, then copy demo books into its library once: `cd server`, then
+  `uv run python scripts/make_guest_demo.py` (no new embedding costs). The server manages the guest's password
+  itself.
+- **Red button in Telegram** (with `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`): alarms on a cost spike, a used-up
+  budget or a changed guest account; `/demo_status`, `/demo_off`, `/demo_on`, `/freeze` (stops all model calls except
+  the admin's) and `/unfreeze`. A local server next to a deployed one: `TELEGRAM_POLLING=false` (sends alarms, does
+  not poll the bot).
 - **Different server URL** for the client: `npm run dev` uses the local server, `npm run dev:render` the one on Render (a badge next to the page title shows which); any other: set `NEXT_PUBLIC_API_URL`.
 
 More details: [docs/AGENT.md](docs/AGENT.md) (the agent), [server/README.md](server/README.md) (layout, MCP tools)

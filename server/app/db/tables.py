@@ -125,6 +125,19 @@ class YouTubeConnectionRow(Base):
     connected_at: Mapped[datetime] = mapped_column(UtcDateTime)
 
 
+class AppSwitchRow(Base):
+    """A switch of the whole app that must survive a restart (core/alarm.py): "demo" (the guest demo is on) and
+    "freeze" (model calls stopped for everyone but the admin). A missing row is the switch's default."""
+
+    __tablename__ = "app_switches"
+    __table_args__ = {"schema": PRIVATE}
+
+    name: Mapped[str] = mapped_column(Text, primary_key=True)
+    on: Mapped[bool] = mapped_column(Boolean)
+    reason: Mapped[str] = mapped_column(Text, server_default=text("''"))  # why it was last changed
+    changed_at: Mapped[datetime] = mapped_column(UtcDateTime)
+
+
 class AutomationSettingsRow(Base):
     """A user's schedule for the marketing agent; see schemas.AutomationSettings. One row per user."""
 

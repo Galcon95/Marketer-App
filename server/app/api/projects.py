@@ -24,7 +24,8 @@ def me(user: User = Depends(current_user)):
         project = accounts.client_of(user)
     except OSError as e:
         raise HTTPException(500, "Your library could not be created, please try again.") from e
-    return Me(user_id=user.id, email=user.email, admin=accounts.is_admin(user), project=with_counts(project))
+    return Me(user_id=user.id, email=user.email, admin=accounts.is_admin(user), guest=accounts.is_guest(user),
+              project=with_counts(project))
 
 
 # ---------- Projects ----------

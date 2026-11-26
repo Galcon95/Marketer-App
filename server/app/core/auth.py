@@ -14,6 +14,7 @@ import jwt
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
+from app.core import alarm, guest
 from app.core.config import SUPABASE_URL
 from app.core.logs import set_request_user
 
@@ -85,6 +86,12 @@ def current_user(request: Request) -> User:
         raise _unauthorized("Please sign in.")
     user = verify_token(token.strip())
     set_request_user(user.id)
+    if guest.is_guest(user.id, user.email):
+        if user.email.lower() != guest.GUEST_EMAIL:
+            alarm.takeover(user.email)  # someone changed the guest account's email: the demo goes off
+        if not alarm.demo_on():
+            raise HTTPException(503, "The demo is paused right now. Please try again later.")
+        guest.seen()  # the demo is not started afresh for another visitor while this one is using it
     return user
 
 

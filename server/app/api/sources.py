@@ -8,7 +8,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response, StreamingResponse
 
-from app.api.deps import llm_limits, owned_project, owned_source
+from app.api.deps import llm_limits, no_guest, owned_project, owned_source
 from app.core import state as db
 from app.core import ad_images, files, images, storage
 from app.core.limits import LIMITS
@@ -23,7 +23,7 @@ router = APIRouter()
 
 # ---------- Sources (content upload & ingestion) ----------
 @router.post("/projects/{project_id}/sources", response_model=Source, status_code=201,
-             dependencies=[Depends(owned_project), Depends(llm_limits)])
+             dependencies=[Depends(no_guest), Depends(owned_project), Depends(llm_limits)])
 def upload_source(project_id: str, background_tasks: BackgroundTasks, file: UploadFile = File(...),
                   store: Literal["supabase", "server"] = Query("supabase")):
     """Store an uploaded file and start processing it into chunks in the background.
@@ -97,7 +97,7 @@ def upload_source(project_id: str, background_tasks: BackgroundTasks, file: Uplo
 
 
 @router.post("/sources/{source_id}/ingest", response_model=Source, status_code=202,
-             dependencies=[Depends(owned_source), Depends(llm_limits)])
+             dependencies=[Depends(no_guest), Depends(owned_source), Depends(llm_limits)])
 def ingest_source(source_id: str, background_tasks: BackgroundTasks, source: Source = Depends(owned_source)):
     """(Re)build the chunks of an uploaded source in the background: Process / Re-index / Retry.
 
@@ -160,7 +160,7 @@ def preview_deletion(source: Source = Depends(owned_source)):
                           assets=len(assets), conversations=len(conversations), discussions=_discussions(source.id))
 
 
-@router.delete("/sources/{source_id}", response_model=SourceDeletion)
+@router.delete("/sources/{source_id}", response_model=SourceDeletion, dependencies=[Depends(no_guest)])
 def delete_source(source_id: str, source: Source = Depends(owned_source)):
     """Delete a book with everything that belongs only to it: its stored files (PDF, cover, summary), chunks and
     vectors, the generated assets made only from it (incl. its campaign kits) and the chats that only used its
@@ -280,7 +280,7 @@ def get_cover(source: Source = Depends(owned_source)):
 MAX_COVER_BYTES = 10 * 1024 * 1024
 
 
-@router.put("/sources/{source_id}/cover", response_class=Response, status_code=204)
+@router.put("/sources/{source_id}/cover", response_class=Response, status_code=204, dependencies=[Depends(no_guest)])
 def upload_cover(file: UploadFile = File(...), source: Source = Depends(owned_source)):
     """Replace a book's cover with the author's own picture (e.g. the newest front cover), used in the library and in
     every ad picture made from now on.

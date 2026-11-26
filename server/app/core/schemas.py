@@ -64,12 +64,23 @@ class Project(BaseModel):
 
 
 class Me(BaseModel):
-    """Response of GET /me: the signed-in user, their project (client) and whether they are the app's admin."""
+    """Response of GET /me: the signed-in user, their project (client) and whether they are the app's admin or the
+    demo's guest."""
 
     user_id: str  # Supabase user id
     email: str
     admin: bool  # may see the app-wide usage and costs and use the MCP console (DEFAULT_CLIENT_OWNER)
+    guest: bool = False  # the shared guest account of the public demo (GUEST_EMAIL): the app hides what it may not do
     project: Project  # the user's own project, with counts
+
+
+class GuestSession(BaseModel):
+    """Response of POST /guest ("Try as guest"): a Supabase session of the demo's shared guest account. The browser
+    hands it to supabase.auth.setSession; the password never leaves the server."""
+
+    access_token: str
+    refresh_token: str
+    expires_in: int  # seconds
 
 
 class ApiKey(BaseModel):

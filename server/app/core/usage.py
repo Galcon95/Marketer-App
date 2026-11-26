@@ -32,6 +32,7 @@ from uuid import UUID
 import tiktoken
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
+from app.core import alarm
 from app.core.logs import current_request_id, current_user_id
 from app.core.schemas import UsageRecord, UsageReport, UsageTotals
 from app.db import records
@@ -92,6 +93,7 @@ def record(rec: UsageRecord) -> None:
         records.add_usage(rec)
     except OSError as e:  # DatabaseError
         logger.warning("Could not save the usage of %s: %s", rec.operation, e)
+    alarm.cost(rec.cost or 0.0, rec.user_id)  # a sudden spike: alarm in Telegram, the guest demo goes off
     with _lock:
         _add(_totals, rec)
         totals = _totals.model_copy()

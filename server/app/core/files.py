@@ -18,6 +18,7 @@ to a temporary file (download) and deletes it afterwards. Tests replace the back
 """
 
 import logging
+import mimetypes
 import os
 import shutil
 from collections.abc import Iterator
@@ -274,6 +275,20 @@ def delete(paths: list[str]) -> None:
     """Delete these files (missing ones are ignored), on the server's disk and in Storage."""
     for store in (_server, _backend):
         store.delete(paths)
+
+
+def copy_source_files(from_project: str, from_source: str, to_project: str, to_source: str) -> list[str]:
+    """Copy all stored files of a source (its book and cover) to another source, each into the store it is in (the
+    server's disk or Storage); returns the copied names, e.g. ["book.pdf", "cover.png"]."""
+    copied = []
+    for store in (_server, _backend):
+        for name in store.names(f"{from_project}/{from_source}"):
+            data = store.get(f"{from_project}/{from_source}/{name}")
+            if data is not None:
+                kind = mimetypes.guess_type(name)[0] or "application/octet-stream"
+                store.put(f"{to_project}/{to_source}/{name}", data, kind)
+                copied.append(name)
+    return copied
 
 
 def delete_source_files(project_id: str, source_id: str) -> None:

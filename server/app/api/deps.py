@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException
 
-from app.core import accounts, guard, usage
+from app.core import accounts, alarm, guard, usage
 from app.core import state as db
 from app.core.auth import User, current_user
 from app.core.limits import LIMITS
@@ -34,12 +34,17 @@ def llm_limits(user: User = Depends(current_user)) -> None:
       - the user's cost budget for today and this month (UTC) and the app's budget for today;
       - at most model_requests_per_minute requests per user (blocked requests count too).
     A call's cost is known only after it, so one request can go a little over a budget; the next one is blocked.
+    The demo's guest (accounts.is_guest) has the [guest] limits instead of the per_user ones.
 
     Raises:
         HTTPException: 429 with a Retry-After header (seconds) when a limit is reached; 503 when the costs so far
             cannot be read from the database.
     """
-    limits = LIMITS.per_user
+    if alarm.frozen() and not accounts.is_admin(user):  # /freeze in Telegram: everyone but the admin stops
+        raise HTTPException(503, "The app is paused by its administrator right now. Please try again later.")
+    guest = accounts.is_guest(user)
+    limits = LIMITS.guest if guest else LIMITS.per_user
+    whose = "The demo's" if guest else "Your"
     now = datetime.now(timezone.utc)
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     month = today.replace(day=1)
@@ -51,13 +56,17 @@ def llm_limits(user: User = Depends(current_user)) -> None:
         logger.error("Could not check the budgets: %s", e)
         raise HTTPException(503, "The usage budget cannot be checked right now, please try again.") from e
     if user_month >= limits.cost_per_month_usd:
-        raise _budget_used(f"Your monthly budget of ${limits.cost_per_month_usd:.2f} is used up. "
+        alarm.budget(f"{_who(user, guest)} used up the monthly budget of ${limits.cost_per_month_usd:.2f}.")
+        raise _budget_used(f"{whose} monthly budget of ${limits.cost_per_month_usd:.2f} is used up. "
                            "It renews on the 1st of next month (UTC).", next_month - now)
     if user_today >= limits.cost_per_day_usd:
-        raise _budget_used(f"Your daily budget of ${limits.cost_per_day_usd:.2f} is used up. "
+        alarm.budget(f"{_who(user, guest)} used up the daily budget of ${limits.cost_per_day_usd:.2f}.")
+        raise _budget_used(f"{whose} daily budget of ${limits.cost_per_day_usd:.2f} is used up. "
                            "It renews at midnight UTC.", tomorrow - now)
     if app_today >= LIMITS.app.cost_per_day_usd:
         logger.warning("The app's daily budget of $%.2f is used up", LIMITS.app.cost_per_day_usd)
+        alarm.budget(f"🚨 The app's daily budget of ${LIMITS.app.cost_per_day_usd:.2f} is used up: model calls are "
+                     "stopped for everyone until midnight UTC.")
         raise _budget_used("The app's daily budget is used up. It renews at midnight UTC.", tomorrow - now)
 
     clock = time.monotonic()
@@ -70,6 +79,11 @@ def llm_limits(user: User = Depends(current_user)) -> None:
             raise HTTPException(429, f"Too many requests: at most {limits.model_requests_per_minute} model requests "
                                      f"per minute. Try again in {wait} seconds.", headers={"Retry-After": str(wait)})
         calls.append(clock)
+
+
+def _who(user: User, guest: bool) -> str:
+    """How an alarm names a user: "The guest demo" or their email."""
+    return "The guest demo" if guest else user.email or user.id
 
 
 def _budget_used(message: str, until: timedelta) -> HTTPException:
@@ -203,6 +217,45 @@ def admin_only(user: User = Depends(current_user)) -> User:
     if not accounts.is_admin(user):
         raise HTTPException(403, "Only the app's administrator can use this.")
     return user
+
+
+def no_guest(user: User = Depends(current_user)) -> User:
+    """FastAPI dependency for what the public demo's shared guest account (accounts.is_guest) may not do: change the
+    library (upload, delete, cover, a new summary), create API keys, connect or post to Facebook or YouTube, run the
+    marketing agent.
+    The guest's work is reset for the next visitor; these would outlast it, reach real people or cost too much.
+
+    Raises:
+        HTTPException: 403 for the guest.
+    """
+    if accounts.is_guest(user):
+        raise HTTPException(403, "Not available in the demo. Create your own account to use this.")
+    return user
+
+
+_guest_scans: dict[str, int] = {}  # UTC day → the demo guest's Reddit/Substack scans that day
+_guest_scans_lock = threading.Lock()
+
+
+def guest_scan_limit(user: User = Depends(current_user)) -> None:
+    """FastAPI dependency for the Reddit/Substack scan: the demo's guest may scan scans_per_day times a day (all
+    visitors together). Each scan uses Tavily searches, which the cost budget does not count. Everyone else: no limit.
+
+    Raises:
+        HTTPException: 429 with Retry-After until midnight UTC.
+    """
+    if not accounts.is_guest(user):
+        return
+    now = datetime.now(timezone.utc)
+    today = now.date().isoformat()
+    with _guest_scans_lock:
+        for day in [d for d in _guest_scans if d != today]:
+            del _guest_scans[day]
+        if _guest_scans.get(today, 0) >= LIMITS.guest.scans_per_day:
+            tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            raise _budget_used(f"The demo's {LIMITS.guest.scans_per_day} scans for today are used up. They renew at "
+                               "midnight UTC.", tomorrow - now)
+        _guest_scans[today] = _guest_scans.get(today, 0) + 1
 
 
 def check_sources(project_id: str, source_ids: list[str] | None) -> None:

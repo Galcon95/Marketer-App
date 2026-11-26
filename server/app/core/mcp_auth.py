@@ -5,7 +5,7 @@ Two kinds of token are accepted:
 - a Supabase access token, like every other API request: how the app's own MCP console (market/client.py) connects,
   forwarding the signed-in user's token.
 
-Anything else gets 401 before the MCP server sees the request. The user is stored in the request's ASGI scope
+Anything else gets 401 before the MCP server sees the request; the public demo's guest (accounts.is_guest) gets 403. The user is stored in the request's ASGI scope
 (scope["state"]["user"], read with user_of) and in the request context of logs.py (for the usage log).
 """
 
@@ -16,7 +16,7 @@ import anyio
 from fastapi import HTTPException
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app.core import api_keys
+from app.core import accounts, api_keys
 from app.core.auth import User, verify_token
 from app.core.logs import set_request_user
 
@@ -28,7 +28,7 @@ async def authenticate(authorization: str) -> User:
 
     Raises:
         HTTPException: 401 without a Bearer token, or with a wrong or revoked key or an invalid access token;
-            503 when an access token cannot be checked right now (see auth.verify_token).
+            503 when an access token cannot be checked right now (see auth.verify_token); 403 for the demo's guest.
     """
     scheme, _, token = authorization.partition(" ")
     token = token.strip()
@@ -41,7 +41,10 @@ async def authenticate(authorization: str) -> User:
             raise HTTPException(401, "This API key is not valid (wrong or revoked).")
         return user
     # A Supabase access token; checking it may fetch the signing keys over the network, so not on the event loop.
-    return await anyio.to_thread.run_sync(verify_token, token)
+    user = await anyio.to_thread.run_sync(verify_token, token)
+    if accounts.is_guest(user):
+        raise HTTPException(403, "Not available in the demo. Create your own account to use this.")
+    return user
 
 
 class RequireMcpAuth:

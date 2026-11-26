@@ -23,7 +23,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 
-from app.api.deps import owned_ad_image, owned_asset, owned_discussion
+from app.api.deps import no_guest, owned_ad_image, owned_asset, owned_discussion
 from app.core import ad_images
 from app.core import state as db
 from app.core.auth import User, current_user
@@ -81,7 +81,7 @@ def status(user: User = Depends(current_user)):
         return FacebookStatus(connected=False, error=str(e), source=source, login_available=login)
 
 
-@router.post("/facebook/connect", response_model=FacebookLoginUrl)
+@router.post("/facebook/connect", response_model=FacebookLoginUrl, dependencies=[Depends(no_guest)])
 def connect(body: FacebookConnectRequest, user: User = Depends(current_user)):
     """Start Facebook Login: the URL of Facebook's dialog, where the user picks their Page and allows the app to read
     and post on it. Facebook then sends the browser to GET /facebook/oauth/callback.
@@ -130,7 +130,7 @@ def pages_to_choose(user: User = Depends(current_user)):
     return page_connections.choices(user.id)
 
 
-@router.post("/facebook/connect/pages/{page_id}", response_model=FacebookStatus)
+@router.post("/facebook/connect/pages/{page_id}", response_model=FacebookStatus, dependencies=[Depends(no_guest)])
 def choose_page(page_id: str, user: User = Depends(current_user)):
     """Connect one of the Pages found by the last login.
 
@@ -146,7 +146,7 @@ def choose_page(page_id: str, user: User = Depends(current_user)):
     return status(user)
 
 
-@router.delete("/facebook/connection", status_code=204)
+@router.delete("/facebook/connection", status_code=204, dependencies=[Depends(no_guest)])
 def disconnect(user: User = Depends(current_user)):
     """Forget the user's Page: its token is deleted from the app. (Facebook still lists the app under the user's
     Business integrations until they remove it there.)
@@ -160,7 +160,7 @@ def disconnect(user: User = Depends(current_user)):
         raise HTTPException(503, "Could not disconnect right now, please try again.") from e
 
 
-@router.post("/assets/{asset_id}/publish/facebook", response_model=Asset)
+@router.post("/assets/{asset_id}/publish/facebook", response_model=Asset, dependencies=[Depends(no_guest)])
 def publish(asset: Asset = Depends(owned_asset), page: facebook.PageAccess = Depends(page_of)):
     """Publish the asset's text (without citation markers) as a post on the author's Facebook Page.
 
@@ -200,7 +200,7 @@ def publish(asset: Asset = Depends(owned_asset), page: facebook.PageAccess = Dep
     return asset
 
 
-@router.post("/ad-images/{image_id}/publish/facebook", response_model=AdImage)
+@router.post("/ad-images/{image_id}/publish/facebook", response_model=AdImage, dependencies=[Depends(no_guest)])
 def publish_picture(body: AdImagePublishRequest, image: AdImage = Depends(owned_ad_image),
                     page: facebook.PageAccess = Depends(page_of)):
     """Post an ad picture with a caption (the author's, e.g. the ad copy's text) as a photo post on the author's
@@ -285,7 +285,8 @@ def _refuse_injection(text: str, what: str) -> None:
                                  "(possibly copied from someone else's comment). Edit it and try again.")
 
 
-@router.post("/discussions/{discussion_id}/reply/facebook", response_model=DiscussionAnalysis)
+@router.post("/discussions/{discussion_id}/reply/facebook", response_model=DiscussionAnalysis,
+             dependencies=[Depends(no_guest)])
 def reply(analysis: DiscussionAnalysis = Depends(owned_discussion), page: facebook.PageAccess = Depends(page_of)):
     """Post the analysis's reply (as the author edited it, without citation markers) as the Page under the comment it
     answers.

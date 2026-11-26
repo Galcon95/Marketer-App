@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from app.api import deps, health, knowledge, projects, sources
 from app.core import limits, logs, usage
 from app.core import state as db
-from app.core.limits import AppWide, Limits, LimitsError, PerUser
+from app.core.limits import AppWide, Guest, Limits, LimitsError, PerUser
 from app.core.schemas import Source, UsageRecord
 from app.db import records
 from tests.conftest import OWNER, STRANGER, sign_in
@@ -29,7 +29,9 @@ def test_the_shipped_file_has_the_agreed_limits():
     assert limits.load() == Limits(
         per_user=PerUser(model_requests_per_minute=20, cost_per_day_usd=1.0, cost_per_month_usd=10.0, max_books=20,
                          max_upload_mb=50, max_server_upload_mb=500, max_api_keys=10),
-        app=AppWide(cost_per_day_usd=20.0))
+        app=AppWide(cost_per_day_usd=20.0),
+        guest=Guest(model_requests_per_minute=10, cost_per_day_usd=0.5, cost_per_month_usd=5.0,
+                    starts_per_ip_per_day=2, scans_per_day=5))
 
 
 def test_missing_file_or_values_keep_the_defaults(tmp_path):

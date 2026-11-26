@@ -4,12 +4,15 @@
  * Login page ("/login"): sign in with email and password, or create an account (Supabase Auth). A new account
  * must be confirmed with the link in the email Supabase sends (handled by app/auth/confirm/route.ts). The background is
  * a picture of a library (public/login-bg.jpg, optimized by next/image) under a tint of the theme's background colour.
+ * "Try as guest" signs in as the public demo's shared guest account without typing anything (POST /guest; the server
+ * answers a session, never the password).
  */
 
 import { useState, type FormEvent } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { BookOpen, LogIn, UserPlus } from "lucide-react";
+import { BookOpen, LogIn, UserPlus, Wand2 } from "lucide-react";
+import { errorMessage, startGuestDemo } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import { Button, Card, ErrorNote } from "@/components/ui";
 import loginBackground from "../../public/login-bg.jpg";
@@ -20,6 +23,7 @@ const MIN_PASSWORD = 8;
 export default function LoginPage() {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [busy, setBusy] = useState(false);
+  const [guestBusy, setGuestBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const signup = mode === "signup";
@@ -49,6 +53,23 @@ export default function LoginPage() {
       router.refresh(); // reload with the new session cookies, so proxy.ts lets the request through
     }
     else setNotice(`Almost done: open the link we sent to ${email} to confirm your account, then sign in.`);
+  }
+
+  /** Sign in as the demo's guest: the server hands over a session, which becomes this browser's sign-in. */
+  async function tryAsGuest() {
+    setError(null);
+    setNotice(null);
+    setGuestBusy(true);
+    try {
+      const session = await startGuestDemo();
+      const { error } = await supabase().auth.setSession(session);
+      if (error) throw error;
+      router.replace("/");
+      router.refresh(); // reload with the new session cookies, so proxy.ts lets the request through
+    } catch (e) {
+      setError(errorMessage(e));
+      setGuestBusy(false);
+    }
   }
 
   /** Switch between "Sign in" and "Create account" and clear the messages. */
@@ -83,6 +104,14 @@ export default function LoginPage() {
           <Button type="button" variant="ghost" size="sm" onClick={toggleMode}>
             {signup ? "I already have an account" : "New here? Create an account"}
           </Button>
+          <div className="login-or" aria-hidden><span>or</span></div>
+          <Button type="button" variant="success" icon={Wand2} loading={guestBusy} onClick={tryAsGuest}
+            title="Look around with two sample books, no account needed">
+            Try as guest
+          </Button>
+          <span className="bc-hint" style={{ textAlign: "center" }}>
+            No sign-up: a demo with two classic books. Nothing is posted anywhere.
+          </span>
         </form>
       </Card>
     </div>

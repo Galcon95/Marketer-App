@@ -3,12 +3,14 @@
 On a user's first request (GET /me), client_of creates their project, named after their email. The default project
 ("demo-campaign": the books, assets and chats from before sign-in existed) goes to the user whose email is
 DEFAULT_CLIENT_OWNER instead; that user is also the app's admin (app-wide usage and costs, MCP console).
+The user whose email is GUEST_EMAIL is the shared guest of the public demo (is_guest): see api/deps.py no_guest.
 Projects and their owners are saved in the database (table projects; app/db/records.py).
 """
 
 import logging
 import threading
 
+from app.core import guest
 from app.core import state as db
 from app.core.auth import User
 from app.core.config import DEFAULT_CLIENT_OWNER
@@ -23,6 +25,12 @@ _lock = threading.Lock()  # sync endpoints run in a thread pool: two first reque
 def is_admin(user: User) -> bool:
     """True for the user whose email is DEFAULT_CLIENT_OWNER (nobody if it is not set)."""
     return bool(DEFAULT_CLIENT_OWNER) and user.email.lower() == DEFAULT_CLIENT_OWNER
+
+
+def is_guest(user: User) -> bool:
+    """True for the shared guest account of the public demo, the user whose email is GUEST_EMAIL (nobody if it is
+    not set)."""
+    return guest.is_guest(user.id, user.email)
 
 
 def owns(user: User, project: Project) -> bool:

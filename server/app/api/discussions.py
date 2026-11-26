@@ -12,7 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.agents import discussion, discussion_scan
 from app.agents.discussion_tools import BookNotReady
-from app.api.deps import check_sources, checked_optional, checked_text, llm_limits, owned_discussion, owned_project
+from app.api.deps import (check_sources, checked_optional, checked_text, guest_scan_limit, llm_limits, owned_discussion,
+                          owned_project)
 from app.core import state as db
 from app.core.guard import check_output
 from app.core.llm import GenerationError
@@ -23,7 +24,7 @@ router = APIRouter()
 
 
 @router.post("/projects/{project_id}/discussions/scan", response_model=ScanResult,
-             dependencies=[Depends(owned_project), Depends(llm_limits)])
+             dependencies=[Depends(owned_project), Depends(llm_limits), Depends(guest_scan_limit)])
 def scan(project_id: str, body: ScanRequest):
     """Search Reddit (threads) or Substack (posts and Notes) on a topic and rank them by how well one book fits
     (agents/discussion_scan.py).

@@ -10,7 +10,7 @@ const TOKEN = "test-access-token";
 vi.mock("../lib/supabase", () => ({ accessToken: async () => TOKEN, signOut: vi.fn() }));
 import {
   adHeadlines, API_URL, ApiError, api, assetTypeLabel, bookTitle, cleanText, errorMessage, fileBlobUrl, filePath, hasCharLimit, humanizeLabel,
-  locationLabel, platformFromUrl, usesPlatform,
+  locationLabel, platformFromUrl, startGuestDemo, usesPlatform,
 } from "../lib/api";
 
 describe("bookTitle", () => {
@@ -204,5 +204,28 @@ describe("adHeadlines", () => {
     expect(adHeadlines("Government influences production [1]. Mill explains it.")).toEqual([]);
     expect(adHeadlines("Headline: Same\nHeadline: Same")).toEqual(["Same"]);
     expect(adHeadlines("The headline: of this story is long")).toEqual([]);
+  });
+});
+
+describe("Try as guest", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("asks POST /guest without any token and returns the session", async () => {
+    const session = { access_token: "a", refresh_token: "r", expires_in: 3600 };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(session), { status: 200 })));
+    await expect(startGuestDemo()).resolves.toEqual(session);
+    const [url, init] = vi.mocked(fetch).mock.calls[0];
+    expect(url).toBe(`${API_URL}/guest`);
+    expect(init?.method).toBe("POST");
+    expect(new Headers(init?.headers).get("Authorization")).toBeNull();
+  });
+
+  it("passes on why the demo cannot start", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      JSON.stringify({ detail: "Too many visitors right now. Try again in 20 seconds." }), { status: 429 })));
+    const error = await startGuestDemo().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(429);
+    expect(errorMessage(error)).toContain("Too many visitors");
   });
 });

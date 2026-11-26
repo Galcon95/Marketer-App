@@ -20,6 +20,7 @@ import { useApi } from "@/lib/useApi";
 import { CitationList } from "../AssetCard";
 import ToolCallCard from "../ToolCallCard";
 import BookCover, { ChangeCoverButton, PageLink } from "../BookCover";
+import { useGuest } from "@/lib/useGuest";
 import BookPicker, { readyBooks } from "../BookPicker";
 import { Badge, Button, Card, Drawer, ErrorNote, Field, Placeholder, ProgressBar, Score, SectionHeading } from "../ui";
 
@@ -280,6 +281,7 @@ function BookCard({ source, refresh, selected, onSelect, onBrowse, onDelete }: {
   onDelete: () => void;
 }) {
   const summary = useApi(`book-summary:${source.id}:${refresh}`, () => api.getSummary(source.id));
+  const guest = useGuest(); // the demo's guest cannot change a cover or delete a book
   const s = summary.data;
   const title = bookTitle(source.filename);
 
@@ -317,13 +319,15 @@ function BookCard({ source, refresh, selected, onSelect, onBrowse, onDelete }: {
               {s ? "Summary" : "Create summary"}
             </Button>
             <Button size="sm" variant="ghost" icon={Database} onClick={() => onBrowse(source, "chunks")}>Chunks</Button>
-            <ChangeCoverButton sourceId={source.id} title={title} />
+            {!guest && <ChangeCoverButton sourceId={source.id} title={title} />}
             <Button size="sm" variant={selected ? "primary" : "ghost"} icon={selected ? Check : Target} onClick={onSelect}
               title={selected ? "Stop working on only this book" : "Ask and generate for this book only"}>
               {selected ? "Working on this book" : "Work on this book"}
             </Button>
-            <Button size="sm" variant="ghost" icon={Trash2} onClick={onDelete} title="Delete this book"
-              aria-label={`Delete ${title}`} />
+            {!guest && (
+              <Button size="sm" variant="ghost" icon={Trash2} onClick={onDelete} title="Delete this book"
+                aria-label={`Delete ${title}`} />
+            )}
           </div>
         </div>
       </div>
@@ -378,6 +382,7 @@ function SourcesCard({ sources, error, onBrowse, onChange }: {
 }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [starting, setStarting] = useState<string | null>(null); // id of the source whose processing is being started
+  const guest = useGuest(); // the demo's guest cannot process or delete books
 
   /**
    * Delete a book after a confirmation that names what also goes (confirmAndDeleteBook), then refresh the app.
@@ -440,11 +445,11 @@ function SourcesCard({ sources, error, onBrowse, onChange }: {
                     <td className="bc-mono">{s.chunk_count}</td>
                     <td className="bc-mono">{formatBytes(s.size_bytes)}</td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                      <IngestButton source={s} starting={starting === s.id} onStart={() => ingest(s.id)} />
+                      {!guest && <IngestButton source={s} starting={starting === s.id} onStart={() => ingest(s.id)} />}
                       <Button variant="ghost" size="sm" icon={BookOpen} onClick={() => onBrowse(s, "summary")} disabled={s.status !== "ready"}
                         title="What the book is about: overview, key themes and chapter summaries">Summary</Button>
                       <Button variant="ghost" size="sm" icon={Database} onClick={() => onBrowse(s, "chunks")} disabled={s.status !== "ready"}>Chunks</Button>
-                      <Button variant="ghost" size="sm" icon={Trash2} aria-label={`Delete ${s.filename}`} onClick={() => remove(s)} />
+                      {!guest && <Button variant="ghost" size="sm" icon={Trash2} aria-label={`Delete ${s.filename}`} onClick={() => remove(s)} />}
                     </td>
                   </tr>
                 );
@@ -541,6 +546,7 @@ function SummaryDrawer({ source, onClose, onChange }: { source: Source; onClose:
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const summary = created ?? loaded.data ?? null;
+  const guest = useGuest(); // the demo's guest cannot summarize a book (again): the demo books keep theirs
 
   /** Ask the server to create (or recreate) the summary; shows it when done. */
   async function create() {
@@ -570,7 +576,7 @@ function SummaryDrawer({ source, onClose, onChange }: { source: Source; onClose:
               No summary yet. Creating one reads the whole book: every chapter is summarized, then the
               chapter summaries are combined into an overview with key themes (about 10–40 seconds).
             </Placeholder>
-            <Button icon={Sparkles} loading={creating} onClick={create}>{creating ? "Summarizing the book…" : "Create summary"}</Button>
+            {!guest && <Button icon={Sparkles} loading={creating} onClick={create}>{creating ? "Summarizing the book…" : "Create summary"}</Button>}
           </div>
         )
       ) : (
@@ -600,8 +606,10 @@ function SummaryDrawer({ source, onClose, onChange }: { source: Source; onClose:
             <span className="bc-hint" style={{ flex: 1 }}>
               {summary.model} · {summary.tokens.toLocaleString()} tokens · {new Date(summary.created_at).toLocaleString()}
             </span>
-            <Button variant="success" size="sm" icon={RotateCcw} loading={creating} onClick={create}
-              title="Summarize the book again (costs tokens; the saved summary is replaced)">Regenerate</Button>
+            {!guest && (
+              <Button variant="success" size="sm" icon={RotateCcw} loading={creating} onClick={create}
+                title="Summarize the book again (costs tokens; the saved summary is replaced)">Regenerate</Button>
+            )}
           </div>
         </>
       )}
@@ -810,6 +818,7 @@ function ChatTurnView({ turn, first }: { turn: ChatTurn; first: boolean }) {
  */
 export default function KnowledgeHub({ refresh, onChange, bookId: selectedBook, onSelectBook }: Props) {
   const sources = useApi(`sources:${refresh}`, api.listSources);
+  const guest = useGuest(); // the demo's guest cannot upload books
   // Source and view shown in the side panel; null = closed.
   const [browsing, setBrowsing] = useState<{ source: Source; view: DrawerView } | null>(null);
   const closeDrawer = useCallback(() => setBrowsing(null), []);
@@ -845,7 +854,7 @@ export default function KnowledgeHub({ refresh, onChange, bookId: selectedBook, 
 
   return (
     <>
-      <UploadPanel sources={list} sourcesLoading={sources.loading} onChange={onChange} />
+      {!guest && <UploadPanel sources={list} sourcesLoading={sources.loading} onChange={onChange} />}
       <BookShelf books={books} refresh={refresh} selected={bookId} onSelect={onSelectBook} onBrowse={openDrawer}
         onDelete={deleteBook} />
       {deleteError && <ErrorNote>{deleteError}</ErrorNote>}

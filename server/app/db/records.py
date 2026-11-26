@@ -17,9 +17,9 @@ from app.core.schemas import (AdImage, ApiKey, Asset, AutomationCycle, Automatio
                               Conversation, DiscussionAnalysis, FacebookConnection, Project, Source, UsageRecord,
                               UsageTotals, YouTubeConnection)
 from app.db.database import session
-from app.db.tables import (AdImageRow, ApiKeyRow, AssetRow, AutomationCycleRow, AutomationSettingsRow, Base, ChunkRow,
-                           ConversationRow, DiscussionRow, FacebookConnectionRow, ProjectRow, SourceRow, SummaryRow,
-                           UsageRow, YouTubeConnectionRow)
+from app.db.tables import (AdImageRow, ApiKeyRow, AppSwitchRow, AssetRow, AutomationCycleRow, AutomationSettingsRow,
+                           Base, ChunkRow, ConversationRow, DiscussionRow, FacebookConnectionRow, ProjectRow,
+                           SourceRow, SummaryRow, UsageRow, YouTubeConnectionRow)
 
 # Fields saved in a JSON column (nested models, lists): written in JSON mode, so datetimes inside become strings.
 ASSET_JSON_FIELDS = {"citations", "source_ids", "ai_tells"}
@@ -446,6 +446,19 @@ def save_summary(summary: BookSummary) -> None:
         s.merge(to_row(SummaryRow, summary, SUMMARY_JSON_FIELDS))
 
 
+# ---------- App switches (core/alarm.py) ----------
+def load_switches() -> dict[str, bool]:
+    """The saved app switches by name (a switch never changed has no row)."""
+    with session() as s:
+        return {row.name: row.on for row in s.scalars(select(AppSwitchRow))}
+
+
+def save_switch(name: str, on: bool, reason: str, when: datetime) -> None:
+    """Set an app switch, with why and when."""
+    with session() as s:
+        s.merge(AppSwitchRow(name=name, on=on, reason=reason, changed_at=when))
+
+
 # ---------- Chunks and their embeddings ----------
 _CHUNK_FIELDS = (ChunkRow.id, ChunkRow.source_id, ChunkRow.text, ChunkRow.chapter, ChunkRow.page, ChunkRow.start_time,
                  ChunkRow.end_time, ChunkRow.token_count)  # everything but the (large) embedding
@@ -475,6 +488,29 @@ def replace_chunks(project_id: str, source_id: str, chunks: list[Chunk], content
         while batch := list(islice(rows, CHUNK_WRITE_BATCH)):
             s.add_all(batch)
             s.flush()  # sent (same transaction); the session keeps written rows only weakly, so they can go
+
+
+def copy_chunks(from_source: str, to_source: str, to_project: str) -> int:
+    """Copy all chunks of a source, with their embeddings, to another source (the demo's books, core/demo_books.py):
+    nothing is embedded again. The copies get ids of the new source ("chk_<source>_<0001…>"), in one transaction,
+    sent in batches of CHUNK_WRITE_BATCH.
+
+    Returns:
+        How many chunks were copied.
+    """
+    prefix = to_source.removeprefix("src_")
+    copied = 0
+    with session() as s:
+        rows = s.scalars(select(ChunkRow).where(ChunkRow.source_id == from_source).order_by(ChunkRow.position)).all()
+        for batch_start in range(0, len(rows), CHUNK_WRITE_BATCH):
+            s.add_all(ChunkRow(id=f"chk_{prefix}_{row.position:04d}", source_id=to_source, project_id=to_project,
+                               position=row.position, text=row.text, chapter=row.chapter, page=row.page,
+                               start_time=row.start_time, end_time=row.end_time, token_count=row.token_count,
+                               content=row.content, embedding=list(row.embedding), embedding_key=row.embedding_key)
+                      for row in rows[batch_start:batch_start + CHUNK_WRITE_BATCH])
+            s.flush()
+            copied += len(rows[batch_start:batch_start + CHUNK_WRITE_BATCH])
+    return copied
 
 
 def delete_chunks(source_id: str) -> None:
