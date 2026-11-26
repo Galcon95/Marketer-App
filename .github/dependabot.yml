@@ -1,6 +1,6 @@
 # Dependabot: weekly pull requests with updates of the dependencies, and security updates as soon as a vulnerability
-# is known. Minor and patch updates come as one pull request per area; a major version comes on its own, because it
-# may need code changes (see client/AGENTS.md about Next.js).
+# is known. Minor and patch updates come as one pull request per area. Major versions of packages are not proposed:
+# they may need code changes (see client/AGENTS.md about Next.js) and are done by hand when there is time.
 
 version: 2
 updates:
@@ -20,6 +20,9 @@ updates:
     groups:
       server:
         update-types: [minor, patch]
+    ignore:  # no major versions: they may need code changes; security updates still come
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: uv  # the evaluation scripts (run locally, not deployed)
     directory: /eval
@@ -29,6 +32,9 @@ updates:
     groups:
       eval:
         update-types: [minor, patch]
+    ignore:  # no major versions: they may need code changes; security updates still come
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: npm  # client/package.json + package-lock.json
     directory: /client
@@ -38,3 +44,6 @@ updates:
     groups:
       client:
         update-types: [minor, patch]
+    ignore:  # no major versions: they may need code changes; security updates still come
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
