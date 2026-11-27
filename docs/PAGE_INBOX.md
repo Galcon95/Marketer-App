@@ -72,6 +72,10 @@ promotion, at most 3 sentences). Telegram shows it with the same buttons; feedba
 Each post gets at most one try (posted or skipped). A **daily limit** (default 2) caps the comments and posts the agent
 writes on its own initiative per day; replies to readers are not limited. Off switch, post age and limit are on the
 Agent Workspace page, next to the **quiet hours** (no scheduled runs then; a run due in them starts when they end).
+The Facebook question has its own switch. **YouTube** is set apart from it (setting `youtube_engage`): by default the
+agent proposes, under one of your videos, a short comment about one topic of the video and what your book says about
+it, with no question (prompt [`engagement_thought.md`](../server/prompts/engagement_thought.md)); it can also ask a
+question as on Facebook, or write nothing of its own there.
 
 **Phase 3: a new post about your book** ([`book_post.py`](../server/app/agents/book_post.py), prompt
 [`book_post.md`](../server/prompts/book_post.md)): at the end of each cycle, after the replies and the question, the

@@ -6,12 +6,13 @@ and the graph (agents/page_inbox.py) while the server runs.
     /next             run a cycle now: look at the Page and the channel and propose the next open item
     /status           the schedule, the next and the last run, the running cycle
     /pause, /resume   stop the schedule for now, and start it again (the schedule itself is kept)
-    /post_facebook    a new post about the book now (phase 3 only); /post_youtube: a question under a video now
+    /post_facebook    a new post about the book now (phase 3 only); /post_youtube: a comment under a video now
                       (phase 2 for YouTube only). Asked for by the author: the daily limit and the schedule's
                       switches do not apply; the proposal waits for "make it so" as always
     /demo_status      the red button (core/alarm.py): the guest demo on or off, the freeze, recent costs, refusals
     /demo_off, /demo_on   pause the public guest demo, and switch it on again (also switched off by an alarm)
     /freeze, /unfreeze    stop all model calls except the admin's, and allow them again
+    /guests           how often "Try as guest" was used (sessions, starts, refused) per period, from the audit log
     /start, /help     what the bot does, all commands (COMMANDS, also the bot's "/" menu) and how to answer
     a button          "Make it so" / "Edit" / "Skip" under the current proposal ("Edit": the next text is the
                       author's own version, used as it is)
@@ -30,8 +31,9 @@ left: then a summary goes to Telegram ("Cycle done: 2 posted, 1 skipped.") and t
 
     1 replies   readers' new comments on the Page and the channel (page_inbox.py)
     2 comment   only when phase 1 found no reader's comment in this cycle: a question under an own recent post
-                without comments, then one under an own recent video without comments (engagement.py; once per
-                platform and cycle), if the schedule allows it (`engage`) and the daily limit is not reached
+                without comments (`engage`), then under an own recent video a comment about one of its topics and
+                the book, or a question (`youtube_engage`; engagement.py; once per platform and cycle), if the
+                schedule allows it and the daily limit is not reached
     3 post      once per cycle, after phases 1 and 2: a new post about the next topic of the books with a call to
                 action (book_post.py), if the schedule allows it (`book_post`) and the daily limit is not reached
 
@@ -57,7 +59,7 @@ reported in Telegram.
 
 import logging
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -67,6 +69,7 @@ from app.agents import page_inbox as inbox
 from app.core import alarm, config, guest, usage
 from app.core.llm import GenerationError
 from app.core.schemas import CycleTrigger, TelegramUpdate
+from app.db import records
 from app.rag.retrieval import source_name
 from app.social import facebook, telegram, youtube
 
@@ -79,14 +82,16 @@ SCAN_COMMENTS = 50  # latest YouTube comment threads looked at per scan (1-3 quo
 
 # The bot's commands: /help lists them, and they are Telegram's command menu (set on start, shown when typing "/").
 COMMANDS: list[tuple[str, str]] = [
-    ("next", "Run a cycle now: replies to new comments (with none, a question under a recent post of yours), "
-             "then a new post about your book"),
+    ("next", "Run a cycle now: replies to new comments (with none, a comment under a recent post or video of yours, "
+             "if switched on), then a new post about your book"),
     ("status", "The schedule, the next and the last run, the running cycle, and a waiting proposal"),
     ("post_facebook", "A new post about your book on your Facebook Page now (to approve as always)"),
-    ("post_youtube", "A question under one of your YouTube videos now (to approve as always)"),
+    ("post_youtube", "A comment under one of your YouTube videos now: one of its topics and what your book says "
+                     "about it (to approve as always)"),
     ("pause", "Stop the schedule for now (/next still works; your schedule is kept)"),
     ("resume", "Start the schedule again (the next run counts from now)"),
     ("demo_status", "Red button: guest demo on or off, freeze, recent costs and refused starts"),
+    ("guests", "How many used “Try as guest”: last 24 hours, 7 days, 30 days, total"),
     ("demo_off", "Red button: pause the guest demo (Try as guest) now"),
     ("demo_on", "Switch the guest demo on again"),
     ("freeze", "Red button: stop all model calls in the app except yours"),
@@ -95,8 +100,8 @@ COMMANDS: list[tuple[str, str]] = [
 ]
 
 HELP = ("I am your marketing agent. I watch your Facebook Page and your YouTube channel and propose replies to "
-        "readers' comments, drafted from your books. When nobody commented, I propose a question under one of your "
-        "recent posts to start a discussion. At the end of a cycle I propose a new post about a topic of your book, "
+        "readers' comments, drafted from your books. When nobody commented, I can propose a comment under one of your "
+        "videos about its topics and your book, or a question under a recent post (as set in the app). At the end of a cycle I propose a new post about a topic of your book, "
         "with a call to action. Nothing is posted without your OK.\n\n"
         "Commands:\n" + "\n".join(f"/{name} – {text}" for name, text in COMMANDS) + "\n\n"
         "Under a proposal:\n"
@@ -199,21 +204,25 @@ class InboxWorker:
         self._end_cycle(error=result == "error")
 
     def propose_engagement(self, asked: bool, platform: str = "facebook", now: bool = False) -> Step:
-        """Phase 2: a question under an own recent Facebook post or YouTube video without comments, when the
-        schedule allows it (`now`: the author asked for it, /post_youtube: switch and daily limit do not apply)."""
+        """Phase 2: a question under an own recent Facebook post without comments (`engage`), or under an own YouTube
+        video a comment about one of its topics and the book, or a question (`youtube_engage`), when the schedule
+        allows it (`now`: the author asked for it, /post_youtube: switch and daily limit do not apply)."""
         owner = automation.inbox_owner()
         if not owner or (platform == "facebook" and not facebook.is_configured()):
             return "none"
         thing = "video" if platform == "youtube" else "post"
         try:
             settings = automation.schedule_of(owner)
-            if not settings.engage and not now:
+            # Facebook: a question, or nothing (`engage`); YouTube: `youtube_engage` (asked for while off: a thought)
+            style = "question" if platform == "facebook" or settings.youtube_engage == "question" else "thought"
+            what = "comment" if style == "thought" else "question"
+            if not now and not (settings.youtube_engage != "off" if platform == "youtube" else settings.engage):
                 return "none"
             limit = settings.youtube_daily_limit if platform == "youtube" else settings.daily_limit
             if not now and engagement.posted_today(owner, settings.timezone, platform) >= limit:
                 if asked:
                     where = "YouTube" if platform == "youtube" else "Facebook"
-                    self._say(f"{where} daily limit reached ({limit} own comments or posts today), so no question "
+                    self._say(f"{where} daily limit reached ({limit} own comments or posts today), so no {what} "
                               f"under a {thing}.")
                 return "none"
             if platform == "youtube" and now and inbox.channel_for_inbox() is None:
@@ -227,15 +236,15 @@ class InboxWorker:
                     self._say(f"No {thing} of yours from the last {days} days is without comments{quiet}.")
                 return "none"
             if asked:
-                self._say(f"Drafting a question for your {thing}…")
-            thread_id = engagement.start(post, test=settings.test_mode, humanize=settings.humanize)
+                self._say(f"Drafting a {what} for your {thing}…")
+            thread_id = engagement.start(post, test=settings.test_mode, humanize=settings.humanize, style=style)
             if thread_id and self.cycle:
                 self.cycle.proposed_comment(thread_id, post)
             self.last_error = ""
             return "proposed" if thread_id else "none"
         except (facebook.FacebookError, youtube.YouTubeError, telegram.TelegramError, GenerationError,
                 inbox.InboxConfigError, LookupError, OSError) as e:
-            self._report(f"Could not prepare a question for your {thing}: {e}", asked)
+            self._report(f"Could not prepare a comment for your {thing}: {e}", asked)
             return "error"
 
     def propose_book_post(self, asked: bool, now: bool = False) -> Step:
@@ -526,7 +535,9 @@ class InboxWorker:
             logger.warning("Page inbox: could not confirm a button press: %s", e)
 
 
-RED_BUTTON = ("/demo_status", "/demo_off", "/demo_on", "/freeze", "/unfreeze")
+RED_BUTTON = ("/demo_status", "/demo_off", "/demo_on", "/freeze", "/unfreeze", "/guests")
+GUEST_PERIODS = (("Last 24 hours", timedelta(days=1)), ("Last 7 days", timedelta(days=7)),
+                 ("Last 30 days", timedelta(days=30)), ("Total", None))
 
 
 def red_button(command: str) -> str:
@@ -545,7 +556,31 @@ def red_button(command: str) -> str:
     if command == "/unfreeze":
         changed = alarm.set_switch("freeze", False, "/unfreeze in Telegram")
         return "✅ Model calls allowed for everyone again." if changed else "The app was not frozen."
+    if command == "/guests":
+        return guest_visits()
     return demo_status()
+
+
+def guest_visits() -> str:
+    """How often "Try as guest" was used, from the audit log: per period the sessions (the demo started afresh after
+    guest.IDLE without anyone: roughly one per visitor), the starts (every press of the button) and the refused
+    starts. No addresses are kept, so these are not exact unique visitors."""
+    now = datetime.now(UTC)
+    lines = ["👥 Guest demo (“Try as guest”)", "period: sessions · starts · refused"]
+    try:
+        for label, span in GUEST_PERIODS:
+            since = now - span if span else None
+            (sessions, _), (starts, latest), (refused, _) = (
+                records.count_audit_events(action, since) for action in ("guest.reset", "guest.started",
+                                                                          "guest.refused"))
+            lines.append(f"{label}: {sessions} · {starts} · {refused}")
+            if span is None:
+                lines.append(f"Last start: {latest:%d %b %Y, %H:%M} UTC" if latest else "Last start: never")
+    except OSError as e:  # DatabaseError
+        return f"The guest numbers could not be read: {e}"
+    lines += ["", "A session = the demo started fresh after 15 minutes without anyone (about one visitor); a start = "
+                  "every press of the button. Counted since the audit log began (26 Nov 2026)."]
+    return "\n".join(lines)
 
 
 def demo_status() -> str:
@@ -566,6 +601,12 @@ def demo_status() -> str:
         lines.append(f"Whole app today: ${app_today:.2f} of ${alarm.LIMITS.app.cost_per_day_usd:.2f}")
     except (OSError, guest.GuestError) as e:  # the database or Supabase cannot be asked: the rest still helps
         lines.append(f"(Today's spending could not be read: {e})")
+    try:
+        day, _ = records.count_audit_events("guest.reset", datetime.now(UTC) - timedelta(days=1))
+        week, _ = records.count_audit_events("guest.reset", datetime.now(UTC) - timedelta(days=7))
+        lines.append(f"Guest sessions: {day} in 24 hours, {week} in 7 days (/guests for more)")
+    except OSError:
+        pass
     return "\n".join(lines)
 
 

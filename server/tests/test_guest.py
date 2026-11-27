@@ -322,11 +322,65 @@ def test_too_many_starts_a_minute_are_refused(supabase, monkeypatch):
     assert [try_as_guest().status_code for _ in range(3)] == [200, 200, 429]
 
 
+def _token(session_id: str) -> str:
+    """An access token as Supabase gives it, with only what start_session reads (not signed)."""
+    import jwt
+    return jwt.encode({"sub": GUEST.id, "session_id": session_id}, "test-secret-of-32-bytes-at-least!!", "HS256")
+
+
+def _guest_request(monkeypatch, session_id: str):
+    monkeypatch.setattr(auth, "verify_token", lambda token: GUEST.model_copy(update={"session_id": session_id}))
+    return lambda: auth.current_user(Request({"type": "http", "headers": [(b"authorization", b"Bearer t")]}))
+
+
+def test_a_guest_session_ends_after_its_time(monkeypatch):
+    guest.forget()
+    started = datetime.now(timezone.utc) - timedelta(minutes=59)
+    guest.start_session(_token("sess-1"), now=started)
+    request = _guest_request(monkeypatch, "sess-1")
+    assert request().id == GUEST.id  # within the hour: the browser's renewed token still works
+    guest.start_session(_token("sess-1"), now=started - timedelta(minutes=2))  # now 61 minutes old
+    with pytest.raises(HTTPException) as ended:
+        request()
+    assert ended.value.status_code == 401 and "guest session has ended" in ended.value.detail
+
+
+def test_an_unknown_guest_session_is_refused(monkeypatch):
+    guest.forget()  # e.g. a session from before a server restart, or one made with a stolen password
+    with pytest.raises(HTTPException) as refused:
+        _guest_request(monkeypatch, "sess-old")()
+    assert refused.value.status_code == 401
+    with pytest.raises(HTTPException):
+        _guest_request(monkeypatch, "")()  # a token without a session id
+
+
+def test_a_fresh_start_ends_the_earlier_guest_sessions(monkeypatch):
+    guest.forget()
+    guest.start_session(_token("sess-1"))
+    guest.end_sessions()
+    guest.start_session(_token("sess-2"))
+    assert not guest.session_ok("sess-1") and guest.session_ok("sess-2")
+
+
+def test_try_as_guest_registers_its_session(supabase, monkeypatch):
+    guest.forget()
+    monkeypatch.setattr(guest, "start_session", lambda token: started.append(token))
+    started = []
+    assert try_as_guest().status_code == 200 and started == ["access"]
+
+
+def test_other_users_have_no_session_limit(monkeypatch):
+    guest.forget()
+    monkeypatch.setattr(auth, "verify_token", lambda token: STRANGER)
+    assert auth.current_user(Request({"type": "http", "headers": [(b"authorization", b"Bearer t")]})) == STRANGER
+
+
 def test_every_signed_in_guest_request_counts_as_activity(monkeypatch):
     guest.forget()
-    monkeypatch.setattr(auth, "verify_token", lambda token: GUEST)
+    guest.start_session(_token("sess-1"))
+    monkeypatch.setattr(auth, "verify_token", lambda token: GUEST.model_copy(update={"session_id": "sess-1"}))
     request = Request({"type": "http", "headers": [(b"authorization", b"Bearer t")]})
-    assert auth.current_user(request) == GUEST
+    assert auth.current_user(request).id == GUEST.id
     assert not guest.idle()
     guest.forget()
     monkeypatch.setattr(auth, "verify_token", lambda token: STRANGER)

@@ -178,6 +178,24 @@ def test_the_red_button_commands():
     assert "allowed for everyone again" in worker.red_button("/unfreeze") and not alarm.frozen()
 
 
+def test_guests_counts_sessions_starts_and_refusals_per_period():
+    from datetime import timedelta
+    from app.core.schemas import AuditEvent
+    for days_old, action in [(0, "guest.reset"), (0, "guest.started"), (0, "guest.started"), (0, "guest.refused"),
+                             (3, "guest.reset"), (3, "guest.started"), (20, "guest.reset"), (20, "guest.started")]:
+        records.add_audit_event(AuditEvent(at=NOW - timedelta(days=days_old, minutes=5), action=action))
+    text = worker.red_button("/guests")
+    assert "Last 24 hours: 1 · 2 · 1" in text
+    assert "Last 7 days: 2 · 3 · 1" in text
+    assert "Last 30 days: 3 · 4 · 1" in text and "Total: 3 · 4 · 1" in text
+    assert "Last start: " in text and "never" not in text
+    assert "Guest sessions: 1 in 24 hours, 2 in 7 days" in worker.red_button("/demo_status")
+
+
+def test_guests_without_any_visit():
+    assert "Total: 0 · 0 · 0" in worker.red_button("/guests") and "Last start: never" in worker.red_button("/guests")
+
+
 def test_demo_status_tells_the_state_and_todays_spending(monkeypatch):
     spend(0.30, STRANGER.id)
     monkeypatch.setattr(guest, "configured", lambda: False)  # no Supabase in tests: without the guest's line

@@ -252,11 +252,13 @@ export interface AutomationSchedule {
   timezone: string;
   quiet_from: string; // "22:00"; "" = no quiet hours
   quiet_to: string;
-  engage: boolean; // no new comments: propose a question under an own recent post without comments
+  engage: boolean; // Facebook, no new comments: propose a question under an own recent post without comments
   engage_days: number; // how recent that Facebook post must be
   daily_limit: number; // Facebook: own questions and book posts per day (replies to readers do not count)
   youtube_engage_days: number; // how recent a video without comments must be
-  youtube_daily_limit: number; // YouTube: own questions under videos per day
+  youtube_daily_limit: number; // YouTube: own comments under videos per day
+  // under an own video: a comment about one of its topics and the book, a question, or nothing; `engage` is Facebook's
+  youtube_engage: "off" | "thought" | "question";
   book_post: boolean; // end each cycle with a new post about the next topic of the books
   book_post_picture: boolean; // the book post comes with an ad picture (about $0.07 each)
   books: string[]; // the books the agent uses (ids); [] = the server's default (FACEBOOK_INBOX_BOOKS)

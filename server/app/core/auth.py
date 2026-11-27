@@ -12,7 +12,7 @@ import logging
 
 import jwt
 from fastapi import HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core import alarm, guest
 from app.core.config import SUPABASE_URL
@@ -32,6 +32,8 @@ class User(BaseModel):
 
     id: str  # Supabase user id (UUID), the token's "sub"
     email: str = ""
+    # the Supabase sign-in session (the token's "session_id"; the same after a token refresh); never in a response
+    session_id: str = Field(default="", exclude=True)
 
 
 def _signing_keys() -> jwt.PyJWKClient:
@@ -72,7 +74,7 @@ def verify_token(token: str) -> User:
         raise _unauthorized("Your session has expired, please sign in again.") from e
     except jwt.PyJWTError as e:
         raise _unauthorized("Invalid access token.") from e
-    return User(id=claims["sub"], email=claims.get("email", ""))
+    return User(id=claims["sub"], email=claims.get("email", ""), session_id=claims.get("session_id", "") or "")
 
 
 def current_user(request: Request) -> User:
@@ -91,6 +93,8 @@ def current_user(request: Request) -> User:
             alarm.takeover(user.email)  # someone changed the guest account's email: the demo goes off
         if not alarm.demo_on():
             raise HTTPException(503, "The demo is paused right now. Please try again later.")
+        if not guest.session_ok(user.session_id):  # the browser renews the token forever: the session has an end
+            raise _unauthorized("Your guest session has ended. Press “Try as guest” to start again.")
         guest.seen()  # the demo is not started afresh for another visitor while this one is using it
     return user
 

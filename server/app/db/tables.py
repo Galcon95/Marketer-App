@@ -183,6 +183,7 @@ class AutomationSettingsRow(Base):
     humanize: Mapped[int] = mapped_column(Integer, server_default=text("80"))
     youtube_engage_days: Mapped[int] = mapped_column(Integer, server_default=text("90"))
     youtube_daily_limit: Mapped[int] = mapped_column(Integer, server_default=text("2"))
+    youtube_engage: Mapped[str] = mapped_column(Text, server_default=text("'thought'"))
 
 
 class AutomationCycleRow(Base):

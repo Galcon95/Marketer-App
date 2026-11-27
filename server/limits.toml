@@ -24,6 +24,7 @@ model_requests_per_minute = 10
 cost_per_day_usd          = 0.50
 cost_per_month_usd        = 5.00
 starts_per_ip_per_day     = 2     # "Try as guest" per visitor's IP address (UTC day; the server's own address is exempt)
+session_minutes           = 60    # a guest is signed out this long after "Try as guest", however active
 scans_per_day             = 5     # Reddit/Substack scans of all visitors: each uses Tavily searches (not in the cost budget)
 
 # The whole app (all users together): protects the API key's budget even with many users.

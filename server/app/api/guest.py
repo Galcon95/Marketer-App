@@ -5,7 +5,8 @@
 If nobody has used the guest account for 15 minutes (core/guest.py IDLE), the demo starts afresh first: the guest gets
 a new password, and its project loses everything visitors made (posts, ads with their pictures, campaign kits,
 chats, discussion analyses, the Substack name). Its books and their summaries stay. While a visitor is active, the
-next one joins them instead, so nobody loses their work halfway.
+next one joins them instead, so nobody loses their work halfway. Each guest session ends after [guest]
+session_minutes, and all of them when the demo starts afresh (core/guest.py: the browser would renew it forever).
 
 Each visitor's IP address may start the demo starts_per_ip_per_day times a day ([guest] in limits.toml; the server's
 own address is exempt, for local testing). The addresses are kept only in memory, as salted hashes, and forgotten the
@@ -64,10 +65,12 @@ def try_as_guest(request: Request):
             if guest.idle() or not guest.has_password():
                 guest.new_password()  # whoever knew the old one (a visitor could have changed it) is locked out
             if guest.idle():
+                guest.end_sessions()  # earlier visitors are signed out with their work
                 cleared = reset(guest.user_id())
                 logger.info("Guest demo started afresh (%d things deleted)", cleared)
                 audit.record("guest.reset", detail=f"{cleared} things deleted", user_id=_guest_id())
             session = guest.sign_in()
+            guest.start_session(session["access_token"])
         except guest.GuestError as e:
             logger.error("Try as guest failed: %s", e)
             raise HTTPException(503, "The guest demo cannot start right now, please try again later.") from e

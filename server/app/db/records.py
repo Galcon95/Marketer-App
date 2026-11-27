@@ -479,6 +479,16 @@ def recent_audit_events(limit: int, user_id: str | None = None, action_prefix: s
         return [AuditEvent.model_validate({f: getattr(row, f) for f in AuditEvent.model_fields}) for row in rows]
 
 
+def count_audit_events(action: str, since: datetime | None = None) -> tuple[int, datetime | None]:
+    """How many audit events of one action there are (since `since`, or ever), and when the latest was."""
+    query = select(func.count(), func.max(AuditEventRow.at)).where(AuditEventRow.action == action)
+    if since is not None:
+        query = query.where(AuditEventRow.at >= since)
+    with session() as s:
+        count, latest = s.execute(query).one()
+        return count, latest
+
+
 # ---------- Chunks and their embeddings ----------
 _CHUNK_FIELDS = (ChunkRow.id, ChunkRow.source_id, ChunkRow.text, ChunkRow.chapter, ChunkRow.page, ChunkRow.start_time,
                  ChunkRow.end_time, ChunkRow.token_count)  # everything but the (large) embedding

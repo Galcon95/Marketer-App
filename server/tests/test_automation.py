@@ -251,6 +251,7 @@ def test_save_keeps_the_new_settings():
                                                  quiet_from="22:00", quiet_to="07:00"))
     saved = records.get_automation_settings(OWNER.id)
     assert (saved.engage, saved.engage_days, saved.daily_limit, saved.quiet_from) == (False, 7, 1, "22:00")
+    assert saved.youtube_engage == "thought"  # YouTube's own setting; `engage` is Facebook's
 
 
 # ---------- book post and test mode ----------

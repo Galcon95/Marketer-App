@@ -6,6 +6,12 @@ SUPABASE_SECRET_KEY) whenever it starts the demo afresh, or when the old one sto
 change it), then signs in itself and hands the browser only the session's tokens.
 
 What the guest may not do: api/deps.py no_guest; its limits: [guest] in limits.toml.
+
+Sessions: the browser renews a Supabase session on its own (refresh token), so without a check a visitor would stay
+signed in as the guest for good. Each "Try as guest" registers its session (the access token's session_id, the same
+after every refresh); auth.current_user lets a guest request through only for a registered session younger than
+[guest] session_minutes, else 401, and the app then signs the visitor out. When the demo starts afresh, all earlier
+sessions end. Kept in memory: after a server restart every visitor presses "Try as guest" again.
 """
 
 import secrets
@@ -14,8 +20,10 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 
 import httpx
+import jwt
 
 from app.core.config import GUEST_EMAIL, SUPABASE_SECRET_KEY, SUPABASE_URL
+from app.core.limits import LIMITS
 from app.core.schemas import Project
 
 IDLE = timedelta(minutes=15)  # the guest's work is kept for the next visitor while someone used it this recently
@@ -24,6 +32,7 @@ TIMEOUT = 15  # seconds for one request to Supabase Auth
 _last_active: datetime | None = None  # when the guest last sent a request (None: not since this server started)
 _password: str | None = None  # the guest's current password (None: not set since this server started)
 _user_id: str | None = None  # the guest's Supabase user id, once known
+_sessions: dict[str, datetime] = {}  # session id → when "Try as guest" started it
 lock = threading.Lock()  # one "Try as guest" at a time: two must not reset or set the password together
 
 
@@ -60,6 +69,31 @@ def idle(now: datetime | None = None) -> bool:
     """True if nobody has used the guest account for IDLE (or not since this server started)."""
     now = now or datetime.now(timezone.utc)
     return _last_active is None or now - _last_active >= IDLE
+
+
+def start_session(access_token: str, now: datetime | None = None) -> None:
+    """Register the session of a "Try as guest" (read from the token Supabase just gave this server; a token without
+    a session id registers nothing, and its requests are then refused)."""
+    try:
+        session_id = jwt.decode(access_token, options={"verify_signature": False}).get("session_id")
+    except jwt.PyJWTError:
+        return
+    if session_id:
+        _sessions[session_id] = now or datetime.now(timezone.utc)
+
+
+def end_sessions() -> None:
+    """End every guest session (the demo starts afresh: earlier visitors' work is gone, and so are they)."""
+    _sessions.clear()
+
+
+def session_ok(session_id: str, now: datetime | None = None) -> bool:
+    """True if a guest request's session was started by "Try as guest" less than [guest] session_minutes ago."""
+    now = now or datetime.now(timezone.utc)
+    limit = timedelta(minutes=LIMITS.guest.session_minutes)
+    for old in [s for s, at in _sessions.items() if now - at >= limit]:
+        _sessions.pop(old, None)
+    return bool(session_id) and session_id in _sessions
 
 
 def _client() -> httpx.Client:
@@ -152,3 +186,4 @@ def forget() -> None:
     """Forget everything about the guest (tests)."""
     global _last_active, _password, _user_id
     _last_active = _password = _user_id = None
+    _sessions.clear()

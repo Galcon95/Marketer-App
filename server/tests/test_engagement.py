@@ -60,7 +60,11 @@ def world(monkeypatch):
     monkeypatch.setattr(eng.telegram, "send_message", send_message)
     monkeypatch.setattr(eng.telegram, "remove_buttons", lambda mid: w.removed.append(mid))
 
+    w.prompts, w.schemas = [], []
+
     def structured(prompt, values, schema, what, temperature):
+        w.prompts.append(prompt)
+        w.schemas.append(schema)
         w.calls.append(values)
         return schema(comment=w.comment, reason="It fits the chapter on green belts."), 10
 
@@ -331,6 +335,23 @@ def test_a_question_under_a_video_is_drafted_from_title_and_description(world):
     assert world.commented == [("vid00000001", "What would a garden city look like where you live?")]
     assert world.posted == [] and "Posted under your video" in world.sent[-1][0]
     assert eng.posted_url(thread_id) == "https://www.youtube.com/watch?v=vid00000001&lc=UgzNEW"
+
+
+def test_a_thought_under_a_video_uses_its_own_prompt_also_for_revisions(world):
+    world.comment = "In the video I walk the green belt; in the book I explain why it stops sprawl [1]."
+    thread_id = eng.start(_video(), style="thought")
+    message_id = eng.waiting_run()[1]
+    text, _ = world.sent[0]
+    assert text.startswith("🟥 YOUTUBE CHANNEL\n💡 A comment under your video: one of its topics")
+    assert "why it stops sprawl." in text and "[1]" not in text
+    assert eng.resume(thread_id, message_id, "feedback", "shorter") == "waiting"
+    assert world.prompts == [eng.THOUGHT_PROMPT, eng.THOUGHT_PROMPT]
+    assert world.schemas == [eng.EngagementThought, eng.EngagementThought]
+
+
+def test_a_question_uses_the_question_prompt(world):
+    _start()
+    assert world.prompts == [eng.PROMPT] and world.schemas == [eng.EngagementComment]
 
 
 def test_the_transcript_is_used_once_and_kept_for_revisions(world):

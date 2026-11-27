@@ -52,6 +52,7 @@ class Guest:
     cost_per_day_usd: float = 0.50
     cost_per_month_usd: float = 5.00
     starts_per_ip_per_day: int = 2  # "Try as guest" per visitor's IP address (api/guest.py; not the server's own)
+    session_minutes: int = 60  # a guest session ends this long after "Try as guest" (core/guest.py session_ok)
     scans_per_day: int = 5  # Reddit/Substack scans: each uses Tavily searches, which the cost budget does not count
 
 

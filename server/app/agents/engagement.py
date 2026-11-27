@@ -19,7 +19,9 @@ one inviting question drafted from the books, posted only after the author's "ma
                  other outcome counts for good, a video for QUIET_DAYS
     draft        the book whose passages fit the post (a video: its title, description and transcript) best (one
                  vector search per book), its best passages, and one model call (prompts/engagement_comment.md): one
-                 open question, at most 3 sentences, no promotion. A video's transcript is fetched once, for the first
+                 open question, at most 3 sentences, no promotion; or, with style "thought" (the schedule's
+                 `youtube_engage`, YouTube's default; prompts/engagement_thought.md), a comment about one topic of the
+                 video and what the book says about it, no question. A video's transcript is fetched once, for the first
                  draft (youtube.video_transcript, 250 quota units), and kept for revisions; without captions, or when
                  YouTube refuses them, the question is drawn from title and description
     propose      the post or video, the book, why, and the comment to Telegram with "Make it so" / "Skip"
@@ -75,9 +77,11 @@ MAX_QUIET_CHECKS = 10  # videos with comments whose last comment is read per pic
 EARLIER_COMMENTS = 5  # latest comments under a video given to the model with another question
 
 PROMPT = prompt_files.chat_prompt("engagement_comment")  # prompts/engagement_comment.md
+THOUGHT_PROMPT = prompt_files.chat_prompt("engagement_thought")  # prompts/engagement_thought.md
 
 Outcome = Literal["posted", "skipped", "failed", "blocked", "gave_up", "tested"]
 Platform = Literal["facebook", "youtube"]
+Style = Literal["question", "thought"]  # what the comment is: one open question, or a thought from the book
 Target = FacebookPost | YouTubeUpload  # what the question goes under
 
 # How each platform reads in the prompt.
@@ -95,12 +99,25 @@ class EngagementComment(BaseModel):
     reason: str = Field(description="One sentence for the author: why this question fits the post and the book.")
 
 
-PROMPT_VERSION = prompts.register("engagement", PROMPT, EngagementComment, {"humanize": HUMANIZE})
+class EngagementThought(BaseModel):
+    """One comment under the author's video about a topic of it and what the book says about that (no question)."""
+
+    comment: str = Field(min_length=1, max_length=1000, description="The comment: 2 to 4 sentences about one topic "
+                                                                     "of the video and what the book says about it; "
+                                                                     "no question; [n] markers for passages used.")
+    reason: str = Field(description="One sentence for the author: which topic of the video this picks up and why "
+                                    "the book fits it.")
+
+
+PROMPT_VERSION = prompts.register("engagement", PROMPT, EngagementComment, THOUGHT_PROMPT, EngagementThought,
+                                  {"humanize": HUMANIZE})
+WRITERS = {"question": (PROMPT, EngagementComment), "thought": (THOUGHT_PROMPT, EngagementThought)}
 
 
 class EngageState(TypedDict, total=False):
     post: dict  # the FacebookPost or YouTubeUpload (as JSON, for the checkpointer)
     platform: Platform  # missing in runs from before YouTube: facebook
+    style: Style  # missing in runs from before the thought comments: question
     transcript: str  # a video's spoken text ("" = none), fetched for the first draft
     source_ids: list[str]
     source_id: str
@@ -250,9 +267,10 @@ def platform_of(target: Target) -> Platform:
     return "youtube" if isinstance(target, YouTubeUpload) else "facebook"
 
 
-def start(post: Target, test: bool = False, humanize: int = HUMANIZE) -> str | None:
-    """Draft the question for the post or video, send the proposal to Telegram and wait. `test`: test mode, nothing is
-    posted; `humanize`: how human the question sounds (0-100).
+def start(post: Target, test: bool = False, humanize: int = HUMANIZE, style: Style = "question") -> str | None:
+    """Draft the comment for the post or video, send the proposal to Telegram and wait. `test`: test mode, nothing is
+    posted; `humanize`: how human the comment sounds (0-100); `style`: one open question, or a thought (a topic of
+    the video and what the book says about it, no question).
 
     Returns:
         The run's thread id, or None if it ended without waiting.
@@ -265,7 +283,7 @@ def start(post: Target, test: bool = False, humanize: int = HUMANIZE) -> str | N
     thread_id = f"{PREFIX}{post.id}:{db.new_id('run')}"
     with tracing.scope():
         _graph().invoke({"post": post.model_dump(mode="json"), "platform": platform_of(post), "source_ids": source_ids,
-                         "revisions": 0, "test": test, "humanize": humanize}, _config(thread_id))
+                         "revisions": 0, "test": test, "humanize": humanize, "style": style}, _config(thread_id))
     if _waiting(thread_id):
         with _lock:
             _runs[post.id] = thread_id
@@ -379,15 +397,16 @@ def _draft(state: EngageState) -> EngageState:
         source_id, passages = _best_book(state["source_ids"], text[:POST_TEXT])
         update = {"source_id": source_id, "chunk_ids": [chunk.id for chunk, _ in passages], "transcript": transcript}
     text = text[:VIDEO_TEXT if platform == "youtube" else POST_TEXT]
+    prompt, schema = WRITERS[_style(state)]
     with usage.tagged(source_id=source_id):
-        result, _ = structured(PROMPT, {
+        result, _ = structured(prompt, {
             "style": style_guidance(humanize := state.get("humanize", HUMANIZE)),
             "book": source_name(source_id) or source_id, "post": text,
             "where": WHERE[platform], "label": LABEL[platform], "earlier": _earlier(target),
             "context": format_context(passages) or "(no passages)",
             "current": facebook.publishable_text(state.get("comment", "")) or "(none yet)",
             "feedback": feedback or "(none)",
-        }, EngagementComment, "engagement comment", temperature_for(humanize))
+        }, schema, "engagement comment", temperature_for(humanize))
     update.update({"comment": result.comment, "reason": result.reason, "feedback": "", "own_text": False})
     if feedback:
         update["revisions"] = state.get("revisions", 0) + 1
@@ -414,15 +433,19 @@ def _propose(state: EngageState) -> EngageState:
     if old := state.get("proposal_message_id"):
         inbox._quietly(telegram.remove_buttons, old)
     buttons = inbox.proposal_buttons(bool(comment) and not blocked, state.get("test", False))
+    thought = _style(state) == "thought"
     if isinstance(target, YouTubeUpload):
-        lines = [inbox.PLATFORM_TAG["youtube"], "💡 A question to start a discussion under your video"
+        lines = [inbox.PLATFORM_TAG["youtube"],
+                 ("💡 A comment under your video: one of its topics and what your book says about it" if thought
+                  else "💡 A question to start a discussion under your video")
                  + (inbox.TEST_HEAD if state.get("test") else ""),
                  f"Your video ({target.published_at:%d %b}): {inbox._excerpt(target.title, EXCERPT)}", target.url,
                  "📝 Drawn from what is said in the video (transcript)" if state.get("transcript")
                  else "📝 No transcript (no captions, or YouTube refused them): drawn from title and description"]
     else:
-        lines = [inbox.PLATFORM_TAG["facebook"], "💡 No new comments, so here is a question to start a discussion "
-                 "under your post"
+        lines = [inbox.PLATFORM_TAG["facebook"],
+                 ("💡 A comment under your post: one of its topics and what your book says about it" if thought
+                  else "💡 No new comments, so here is a question to start a discussion under your post")
                  + (inbox.TEST_HEAD if state.get("test") else ""),
                  f"Your post ({target.created_time:%d %b}): {inbox._excerpt(target.message, EXCERPT)}"]
         if target.permalink_url:
@@ -523,6 +546,10 @@ def _waiting(thread_id: str) -> bool:
 
 def _platform(state: EngageState) -> Platform:
     return state.get("platform", "facebook")
+
+
+def _style(state: EngageState) -> Style:
+    return state.get("style", "question")
 
 
 def _target(state: EngageState) -> Target:

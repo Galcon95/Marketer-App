@@ -408,31 +408,40 @@ export default function AutomationSettings() {
                 <div className="bc-stack" style={{ gap: 8 }}>
                   <label className="bc-row" style={{ gap: 8, flexWrap: "nowrap" }}>
                     <input type="checkbox" checked={draft.engage} onChange={(e) => edit({ engage: e.target.checked })} />
-                    <span>Propose a question under one of my recent posts, and one under one of my recent videos, that
-                      has no comments yet, to start a discussion</span>
+                    <span><strong>Facebook:</strong> propose a question under one of my recent posts that has no
+                      comments yet, to start a discussion</span>
                   </label>
                   {draft.engage && (
-                    <div className="bc-row" style={{ gap: 16 }}>
-                      <label className="bc-row" style={{ gap: 6 }}>
-                        <span className="bc-hint" style={{ margin: 0 }}>Facebook posts from the last</span>
-                        <select className="bc-select" style={{ width: 90 }} value={draft.engage_days}
-                          onChange={(e) => edit({ engage_days: Number(e.target.value) })}>
-                          {[3, 7, 14, 30, 60].map((d) => <option key={d} value={d}>{d} days</option>)}
-                        </select>
-                      </label>
-                      <label className="bc-row" style={{ gap: 6 }}>
-                        <span className="bc-hint" style={{ margin: 0 }}>YouTube videos from the last</span>
-                        <select className="bc-select" style={{ width: 100 }} value={draft.youtube_engage_days}
-                          onChange={(e) => edit({ youtube_engage_days: Number(e.target.value) })}>
-                          {[30, 60, 90, 180, 365].map((d) => <option key={d} value={d}>{d} days</option>)}
-                        </select>
-                      </label>
-                    </div>
+                    <label className="bc-row" style={{ gap: 6 }}>
+                      <span className="bc-hint" style={{ margin: 0 }}>Facebook posts from the last</span>
+                      <select className="bc-select" style={{ width: 90 }} value={draft.engage_days}
+                        onChange={(e) => edit({ engage_days: Number(e.target.value) })}>
+                        {[3, 7, 14, 30, 60].map((d) => <option key={d} value={d}>{d} days</option>)}
+                      </select>
+                    </label>
+                  )}
+                  <label className="bc-row" style={{ gap: 6 }}>
+                    <span><strong>YouTube:</strong> under one of my videos, propose</span>
+                    <select className="bc-select" style={{ width: 330 }} value={draft.youtube_engage}
+                      onChange={(e) => edit({ youtube_engage: e.target.value as AutomationSchedule["youtube_engage"] })}>
+                      <option value="thought">a comment about its topics and my book (no question)</option>
+                      <option value="question">a question to start a discussion</option>
+                      <option value="off">nothing (replies to readers only)</option>
+                    </select>
+                  </label>
+                  {draft.youtube_engage !== "off" && (
+                    <label className="bc-row" style={{ gap: 6 }}>
+                      <span className="bc-hint" style={{ margin: 0 }}>YouTube videos from the last</span>
+                      <select className="bc-select" style={{ width: 100 }} value={draft.youtube_engage_days}
+                        onChange={(e) => edit({ youtube_engage_days: Number(e.target.value) })}>
+                        {[30, 60, 90, 180, 365].map((d) => <option key={d} value={d}>{d} days</option>)}
+                      </select>
+                    </label>
                   )}
                   <span className="bc-hint">
-                    A post gets one such question. A video gets another one when nobody has commented on it for 5
-                    days; the daily limits below keep the pace. Videos take turns: one you skipped comes back after a
-                    day, behind the others.
+                    A post gets one question. A video without comments comes first; a video gets another comment when
+                    nobody has commented on it for 5 days; the daily limits below keep the pace. Videos take turns:
+                    one you skipped comes back after a day, behind the others.
                   </span>
                 </div>
               </fieldset>
@@ -474,8 +483,8 @@ export default function AutomationSettings() {
                   onChange={(e) => edit({ humanize: Number(e.target.value) })}
                   style={{ width: "100%", accentColor: "var(--accent)" }} />
                 <div className="bc-range-ends" aria-hidden><span>Polished marketing</span><span>Very human, casual</span></div>
-                <span className="bc-hint">For everything the agent writes: replies to readers, questions under posts and
-                  videos, and book posts.</span>
+                <span className="bc-hint">For everything the agent writes: replies to readers, comments and questions
+                  under posts and videos, and book posts.</span>
               </div>
 
               <div className="bc-stack" style={{ gap: 8, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
@@ -493,7 +502,7 @@ export default function AutomationSettings() {
                     onChange={(e) => edit({ youtube_daily_limit: Number(e.target.value) })}>
                     {[0, 1, 2, 3, 5, 10].map((n) => <option key={n} value={n}>{n}</option>)}
                   </select>
-                  <span className="bc-hint" style={{ margin: 0 }}>own questions under videos per day</span>
+                  <span className="bc-hint" style={{ margin: 0 }}>own comments under videos per day</span>
                 </label>
                 <span className="bc-hint">Replies to readers are not limited on either.</span>
                 <label className="bc-row" style={{ gap: 8, flexWrap: "nowrap" }}>

@@ -46,7 +46,10 @@ def env(monkeypatch):
                         e.youtube_posted_today if platform == "youtube" else e.posted_today)
     monkeypatch.setattr(eng, "waiting_run", lambda: e.engage_waiting)
 
-    def engage_start(post, test=False, humanize=80):
+    e.styles = []
+
+    def engage_start(post, test=False, humanize=80, style="question"):
+        e.styles.append(style)
         e.humanized.append(humanize)
         e.engaged.append(post.id)
         e.engage_waiting = (f"eng:{post.id}:run1", 201)
@@ -692,6 +695,34 @@ def test_no_question_when_engagement_is_off(engage):
     worker_module.automation.save(OWNER.id, AutomationSchedule(every_minutes=60, engage=False))
     engage.worker.handle(_text("/next"))
     assert engage.engaged == []
+
+
+def test_facebook_gets_a_question_youtube_a_thought_by_default(engage):
+    engage.engage_video = _own_video()
+    engage.worker.handle(_text("/next"))
+    engage.worker.handle(_button("go", message_id=201))
+    assert engage.engaged == ["111_7", "vid00000001"] and engage.styles == ["question", "thought"]
+
+
+def test_facebook_questions_off_leaves_the_video_comment(engage):
+    from app.core.schemas import AutomationSchedule
+    from tests.conftest import OWNER
+    worker_module.automation.save(OWNER.id, AutomationSchedule(every_minutes=60, engage=False))
+    engage.engage_video = _own_video()
+    engage.worker.handle(_text("/next"))
+    assert engage.engaged == ["vid00000001"] and engage.styles == ["thought"]
+
+
+def test_youtube_can_ask_a_question_or_stay_silent(engage):
+    from app.core.schemas import AutomationSchedule
+    from tests.conftest import OWNER
+    engage.engage_post, engage.engage_video = None, _own_video()
+    worker_module.automation.save(OWNER.id, AutomationSchedule(every_minutes=60, youtube_engage="off"))
+    engage.worker.handle(_text("/next"))
+    assert engage.engaged == []
+    worker_module.automation.save(OWNER.id, AutomationSchedule(every_minutes=60, youtube_engage="question"))
+    engage.worker.handle(_text("/next"))
+    assert engage.engaged == ["vid00000001"] and engage.styles == ["question"]
 
 
 def test_while_a_question_waits_a_new_start_keeps_waiting(engage):

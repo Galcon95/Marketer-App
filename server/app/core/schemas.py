@@ -926,8 +926,10 @@ class AutomationSchedule(BaseModel):
     [] = FACEBOOK_INBOX_BOOKS). `test_mode`: everything runs and is proposed, but nothing is published.
     `humanize`: how human the agent's texts sound (0-100, as the Discussions slider): replies, questions and book
     posts. YouTube has its own: `youtube_engage_days` (how recent a video without comments may be; videos stay
-    relevant longer than posts) and `youtube_daily_limit` (own questions under videos per day); `engage_days` and
-    `daily_limit` are Facebook's (questions and book posts)."""
+    relevant longer than posts) and `youtube_daily_limit` (own comments under videos per day); `engage`,
+    `engage_days` and `daily_limit` are Facebook's (questions and book posts). `youtube_engage`: what the agent
+    writes under an own video: "thought" (a short comment about a topic of the video and what the book says about
+    it, no question), "question" (one open question, as on Facebook) or "off" (replies to readers only)."""
 
     mode: Literal["manual", "scheduled"] = "scheduled"
     every_minutes: int = Field(default=0, ge=0, le=1440)  # 0: at `times`; else at least 15
@@ -947,6 +949,7 @@ class AutomationSchedule(BaseModel):
     humanize: int = Field(default=80, ge=0, le=100)
     youtube_engage_days: int = Field(default=90, ge=1, le=365)
     youtube_daily_limit: int = Field(default=2, ge=0, le=10)
+    youtube_engage: Literal["off", "thought", "question"] = "thought"
 
     @model_validator(mode="after")
     def _check(self) -> "AutomationSchedule":
