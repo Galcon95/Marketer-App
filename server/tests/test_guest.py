@@ -362,6 +362,82 @@ def test_a_fresh_start_ends_the_earlier_guest_sessions(monkeypatch):
     assert not guest.session_ok("sess-1") and guest.session_ok("sess-2")
 
 
+# ---------- Sessions survive a server restart ----------
+def _restarted(monkeypatch, minutes_ago: int = 1, last_reset: datetime | None = None):
+    """As if this server started `minutes_ago`, with the demo's last fresh start (from the audit log) `last_reset`."""
+    guest.forget()
+    monkeypatch.setattr(guest, "_server_started", datetime.now(timezone.utc) - timedelta(minutes=minutes_ago))
+    monkeypatch.setattr(guest, "_latest_event", lambda action: last_reset if action == "guest.reset" else None)
+
+
+def test_a_session_from_before_a_restart_goes_on(monkeypatch):
+    _restarted(monkeypatch, last_reset=datetime.now(timezone.utc) - timedelta(minutes=30))
+    signed_in = datetime.now(timezone.utc) - timedelta(minutes=10)
+    assert guest.session_ok("sess-1", signed_in)
+    assert guest.session_ok("sess-1")  # known from now on, also without the time
+
+
+def test_a_session_from_before_a_restart_still_ends_after_its_time(monkeypatch):
+    _restarted(monkeypatch)
+    assert not guest.session_ok("sess-1", datetime.now(timezone.utc) - timedelta(minutes=61))
+
+
+def test_a_session_from_before_the_last_fresh_start_stays_ended(monkeypatch):
+    _restarted(monkeypatch, last_reset=datetime.now(timezone.utc) - timedelta(minutes=5))
+    assert not guest.session_ok("sess-1", datetime.now(timezone.utc) - timedelta(minutes=20))
+    # the visitor whose "Try as guest" started that fresh start signed in a moment after it was logged
+    assert guest.session_ok("sess-2", datetime.now(timezone.utc) - timedelta(minutes=5, seconds=1))
+
+
+def test_a_session_begun_while_the_server_runs_must_be_registered(monkeypatch):
+    """A sign-in with the guest's password from elsewhere (not through "Try as guest") is still refused."""
+    _restarted(monkeypatch, minutes_ago=30)
+    assert not guest.session_ok("sess-1", datetime.now(timezone.utc) - timedelta(minutes=5))
+    assert not guest.session_ok("sess-2", None)  # a token without a sign-in time
+
+
+def test_a_restart_does_not_sign_the_guest_out(monkeypatch):
+    _restarted(monkeypatch)
+    started = datetime.now(timezone.utc) - timedelta(minutes=10)
+    monkeypatch.setattr(auth, "verify_token", lambda token: GUEST.model_copy(
+        update={"session_id": "sess-1", "signed_in_at": started}))
+    assert auth.current_user(Request({"type": "http", "headers": [(b"authorization", b"Bearer t")]})).id == GUEST.id
+
+
+def test_the_sign_in_time_comes_from_the_tokens_amr():
+    assert auth.signed_in_at({"amr": [{"method": "password", "timestamp": 1764250000}]}) == datetime(
+        2025, 11, 27, 13, 26, 40, tzinfo=timezone.utc)
+    assert auth.signed_in_at({"amr": [{"method": "password", "timestamp": 10}, {"method": "otp", "timestamp": 20}]}) \
+        == datetime.fromtimestamp(20, timezone.utc)
+    assert auth.signed_in_at({}) is None and auth.signed_in_at({"amr": [{"method": "x"}, "y"]}) is None
+
+
+def test_a_restart_does_not_start_the_demo_afresh_while_a_session_may_run(monkeypatch):
+    guest.forget()
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(guest, "_latest_event", lambda action: now - timedelta(minutes=20))
+    assert not guest.idle(now)  # someone pressed "Try as guest" 20 minutes ago: their hour is not over
+    monkeypatch.setattr(guest, "_latest_event", lambda action: now - timedelta(minutes=61))
+    assert guest.idle(now)
+    monkeypatch.setattr(guest, "_latest_event", lambda action: None)
+    assert guest.idle(now)  # never started (or the log cannot be read)
+
+
+def test_the_last_events_are_read_from_the_audit_log():
+    from app.core import audit
+    audit.record("guest.reset", detail="0 things deleted")
+    latest = guest._latest_event("guest.reset")
+    assert latest is not None and latest.tzinfo is not None
+    assert datetime.now(timezone.utc) - latest < timedelta(minutes=1)
+
+
+def test_a_fresh_start_is_remembered_without_the_log(monkeypatch):
+    guest.forget()
+    monkeypatch.setattr(guest, "_latest_event", lambda action: pytest.fail("the log is not needed"))
+    guest.end_sessions()
+    assert guest._last_reset() is not None
+
+
 def test_try_as_guest_registers_its_session(supabase, monkeypatch):
     guest.forget()
     monkeypatch.setattr(guest, "start_session", lambda token: started.append(token))
@@ -403,6 +479,28 @@ def test_only_the_address_the_proxy_added_counts(supabase):
     assert try_as_guest("10.0.0.1, 203.0.113.7").status_code == 200
     assert try_as_guest("10.0.0.2, 203.0.113.7").status_code == 200
     assert try_as_guest("10.0.0.3, 203.0.113.7").status_code == 429
+
+
+def test_cloudflares_header_tells_visitors_behind_one_proxy_apart(supabase):
+    """On Render the last X-Forwarded-For entry can be a proxy that many visitors share (seen on 2026-11-27)."""
+    def from_home(address: str) -> int:
+        return TestClient(server.app).post("/guest", headers={
+            "CF-Connecting-IP": address, "X-Forwarded-For": f"{address}, 172.68.0.1"}).status_code
+    assert [from_home("203.0.113.7") for _ in range(3)] == [200, 200, 429]
+    assert [from_home("198.51.100.4") for _ in range(2)] == [200, 200]  # same proxy, another home
+    assert TestClient(server.app).post("/guest", headers={"True-Client-IP": "192.0.2.9"}).status_code == 200
+
+
+def test_the_address_source_is_logged_once_without_the_address(supabase, monkeypatch, caplog):
+    monkeypatch.setattr(guest_api, "_source_logged", [False])
+    with caplog.at_level("INFO", logger="app.api.guest"):
+        TestClient(server.app).post("/guest", headers={"CF-Connecting-IP": "203.0.113.7",
+                                                       "X-Forwarded-For": "203.0.113.7, 172.68.0.1"})
+        TestClient(server.app).post("/guest", headers={"CF-Connecting-IP": "198.51.100.4"})
+    lines = [r.getMessage() for r in caplog.records if "address comes from" in r.getMessage()]
+    assert lines == ["Guest demo: the visitor's address comes from cf-connecting-ip (X-Forwarded-For: 2 entries; "
+                     "the same address as its first entry: yes, as its last: no)"]
+    assert "203.0.113.7" not in caplog.text
 
 
 def test_the_servers_own_address_is_not_limited(supabase):

@@ -9,6 +9,7 @@ Which projects (clients) a user may use is decided per endpoint (authorization),
 """
 
 import logging
+from datetime import datetime, timezone
 
 import jwt
 from fastapi import HTTPException, Request
@@ -34,6 +35,16 @@ class User(BaseModel):
     email: str = ""
     # the Supabase sign-in session (the token's "session_id"; the same after a token refresh); never in a response
     session_id: str = Field(default="", exclude=True)
+    # when that session signed in (the token's "amr" timestamp, also unchanged by a refresh); None if not in the token
+    signed_in_at: datetime | None = Field(default=None, exclude=True)
+
+
+def signed_in_at(claims: dict) -> datetime | None:
+    """The sign-in time of the token's session: Supabase lists how the user authenticated in "amr", each method with a
+    Unix timestamp (e.g. [{"method": "password", "timestamp": 1764250000}]); the latest one counts."""
+    times = [m.get("timestamp") for m in claims.get("amr") or [] if isinstance(m, dict)]
+    times = [t for t in times if isinstance(t, int | float) and not isinstance(t, bool)]
+    return datetime.fromtimestamp(max(times), timezone.utc) if times else None
 
 
 def _signing_keys() -> jwt.PyJWKClient:
@@ -74,7 +85,8 @@ def verify_token(token: str) -> User:
         raise _unauthorized("Your session has expired, please sign in again.") from e
     except jwt.PyJWTError as e:
         raise _unauthorized("Invalid access token.") from e
-    return User(id=claims["sub"], email=claims.get("email", ""), session_id=claims.get("session_id", "") or "")
+    return User(id=claims["sub"], email=claims.get("email", ""), session_id=claims.get("session_id", "") or "",
+                signed_in_at=signed_in_at(claims))
 
 
 def current_user(request: Request) -> User:
@@ -93,7 +105,7 @@ def current_user(request: Request) -> User:
             alarm.takeover(user.email)  # someone changed the guest account's email: the demo goes off
         if not alarm.demo_on():
             raise HTTPException(503, "The demo is paused right now. Please try again later.")
-        if not guest.session_ok(user.session_id):  # the browser renews the token forever: the session has an end
+        if not guest.session_ok(user.session_id, user.signed_in_at):  # the browser renews the token forever
             raise _unauthorized("Your guest session has ended. Press “Try as guest” to start again.")
         guest.seen()  # the demo is not started afresh for another visitor while this one is using it
     return user

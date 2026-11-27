@@ -10,8 +10,14 @@ session_minutes, and all of them when the demo starts afresh (core/guest.py: the
 
 Each visitor's IP address may start the demo starts_per_ip_per_day times a day ([guest] in limits.toml; the server's
 own address is exempt, for local testing). The addresses are kept only in memory, as salted hashes, and forgotten the
-next day (UTC): an IP address is personal data. Behind Render's proxy the visitor's address is the last entry of
-X-Forwarded-For (the one the proxy added; earlier entries come from the visitor and could be made up).
+next day (UTC): an IP address is personal data.
+
+Finding the visitor's address behind Render: Render sits behind Cloudflare, and its proxy appends its own address to
+X-Forwarded-For. The last entry, used until 2026-11-27, was therefore often a proxy shared by many visitors, so
+colleagues testing from their own homes shared one count and were refused after two starts. Cloudflare sets the
+visitor's address in CF-Connecting-IP (and True-Client-IP) and replaces whatever a visitor sends in it, so these come
+first; X-Forwarded-For's last entry only when neither is there. The first visitor after a start logs which header
+was used, without the address, to check this on the live server.
 """
 
 import hashlib
@@ -92,13 +98,27 @@ def _guest_id() -> str:
         return ""
 
 
+ADDRESS_HEADERS = ("cf-connecting-ip", "true-client-ip")  # set by Cloudflare in front of Render (module docstring)
+_source_logged = [False]
+
+
 def client_ip(request: Request) -> str:
-    """The visitor's IP address: the last X-Forwarded-For entry (added by the proxy in front of the server, e.g.
-    Render's), else the connection's own address."""
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded.strip():
-        return forwarded.split(",")[-1].strip()
-    return request.client.host if request.client else ""
+    """The visitor's IP address: Cloudflare's header, else the last X-Forwarded-For entry (added by the proxy in
+    front of the server), else the connection's own address."""
+    forwarded = [part.strip() for part in request.headers.get("x-forwarded-for", "").split(",") if part.strip()]
+    source, address = next(((h, request.headers[h].strip()) for h in ADDRESS_HEADERS
+                            if request.headers.get(h, "").strip()), ("", ""))
+    if not address and forwarded:
+        source, address = "x-forwarded-for (last entry)", forwarded[-1]
+    if not address:
+        source, address = "the connection", request.client.host if request.client else ""
+    if not _source_logged[0]:
+        _source_logged[0] = True
+        logger.info("Guest demo: the visitor's address comes from %s (X-Forwarded-For: %d entries; the same address "
+                    "as its first entry: %s, as its last: %s)", source, len(forwarded),
+                    "yes" if forwarded and forwarded[0] == address else "no",
+                    "yes" if forwarded and forwarded[-1] == address else "no")
+    return address
 
 
 def _visitor(request: Request) -> str | None:

@@ -361,7 +361,14 @@ The app acts as a real **MCP client** (official `mcp` SDK `Client`, Streamable H
   (`test_guest.py`), so a new endpoint cannot be forgotten.
 - After 15 idle minutes the next start resets the guest's work (the books stay). **A guest session ends after 60
   minutes** however active (`session_minutes`; the session's id from the token is checked on every request), so a
-  forgotten browser does not stay signed in.
+  forgotten browser does not stay signed in. **A server restart (a deploy) signs nobody out and wipes nothing**: a
+  session from before it goes on with its sign-in time from the token (Supabase's `amr`), if it is younger than an
+  hour and newer than the demo's last fresh start (from the audit log); a sign-in with the guest's password outside
+  "Try as guest" is still refused.
+- **The visitor's address** for the per-address limit comes from Cloudflare's `CF-Connecting-IP` (in front of Render),
+  not from the last `X-Forwarded-For` entry, which on Render can be a proxy that many visitors share (found in a test
+  with colleagues on 2026-11-27: people at home were refused after two starts). The first start after a deploy logs
+  which header was used, without the address.
 - Own limits (`[guest]`): 10 requests a minute, $0.50 a day and $5 a month for all visitors together, 2 starts per
   IP address a day, 5 scans a day. A cost spike switches the demo off and alerts the admin in Telegram.
 

@@ -9,11 +9,21 @@ What the guest may not do: api/deps.py no_guest; its limits: [guest] in limits.t
 
 Sessions: the browser renews a Supabase session on its own (refresh token), so without a check a visitor would stay
 signed in as the guest for good. Each "Try as guest" registers its session (the access token's session_id, the same
-after every refresh); auth.current_user lets a guest request through only for a registered session younger than
-[guest] session_minutes, else 401, and the app then signs the visitor out. When the demo starts afresh, all earlier
-sessions end. Kept in memory: after a server restart every visitor presses "Try as guest" again.
+after every refresh); auth.current_user lets a guest request through only for a session younger than [guest]
+session_minutes, else 401, and the app then signs the visitor out. When the demo starts afresh, all earlier
+sessions end.
+
+A server restart (a deploy, Render restarting the free server) must not throw the visitors out: on 2026-11-27 two
+deploys during a test ended everyone's session, and their next "Try as guest" used up their starts. So a session
+this server does not know is still accepted if it began before the server started: its sign-in time comes from the
+token itself (Supabase's `amr` claim, the same after every refresh), it must be younger than session_minutes and
+newer than the demo's last fresh start (kept here, and read from the audit log after a restart). A session that
+began while this server runs must have been registered by "Try as guest", so a sign-in with the guest's password from
+elsewhere is still refused. For the same reason the demo is not started afresh right after a restart while a session
+could still be running (the last "Try as guest" in the audit log is less than session_minutes ago).
 """
 
+import logging
 import secrets
 import threading
 from collections.abc import Iterable
@@ -26,13 +36,21 @@ from app.core.config import GUEST_EMAIL, SUPABASE_SECRET_KEY, SUPABASE_URL
 from app.core.limits import LIMITS
 from app.core.schemas import Project
 
+logger = logging.getLogger(__name__)
+
 IDLE = timedelta(minutes=15)  # the guest's work is kept for the next visitor while someone used it this recently
 TIMEOUT = 15  # seconds for one request to Supabase Auth
+# A sign-in time in the token has whole seconds and is set just after the fresh start is logged: a session that began
+# this long before the logged fresh start still counts as after it (earlier visitors were quiet for IDLE anyway).
+RESET_GRACE = timedelta(seconds=60)
 
 _last_active: datetime | None = None  # when the guest last sent a request (None: not since this server started)
 _password: str | None = None  # the guest's current password (None: not set since this server started)
 _user_id: str | None = None  # the guest's Supabase user id, once known
 _sessions: dict[str, datetime] = {}  # session id → when "Try as guest" started it
+_server_started = datetime.now(timezone.utc)  # sessions that began earlier are not in _sessions (see the docstring)
+_reset_at: list[datetime | None] = [None]  # the demo's last fresh start ([None]: not known yet, read from the log)
+_reset_known: list[bool] = [False]
 lock = threading.Lock()  # one "Try as guest" at a time: two must not reset or set the password together
 
 
@@ -66,9 +84,32 @@ def seen(now: datetime | None = None) -> None:
 
 
 def idle(now: datetime | None = None) -> bool:
-    """True if nobody has used the guest account for IDLE (or not since this server started)."""
+    """True if nobody has used the guest account for IDLE. Right after a restart (no request seen yet): only if the
+    last "Try as guest" is longer ago than a session lasts, so a restart does not wipe a visitor's work."""
     now = now or datetime.now(timezone.utc)
-    return _last_active is None or now - _last_active >= IDLE
+    if _last_active is not None:
+        return now - _last_active >= IDLE
+    latest = _latest_event("guest.started")
+    return latest is None or now - latest >= timedelta(minutes=LIMITS.guest.session_minutes)
+
+
+def _latest_event(action: str) -> datetime | None:
+    """When the audit log last recorded this action (None: never, or the log cannot be read: then the demo behaves
+    as before the restart-proof sessions, which is safe)."""
+    from app.db import records  # here, not at the top: the database layer is not needed to import this module
+    try:
+        _, latest = records.count_audit_events(action)
+    except Exception as e:  # noqa: BLE001 (any database error: the demo must still start)
+        logger.warning("Guest demo: the audit log cannot be read (%s)", e)
+        return None
+    return latest.replace(tzinfo=timezone.utc) if latest is not None and latest.tzinfo is None else latest
+
+
+def _last_reset() -> datetime | None:
+    """The demo's last fresh start: noted by end_sessions, or after a restart read once from the audit log."""
+    if not _reset_known[0]:
+        _reset_at[0], _reset_known[0] = _latest_event("guest.reset"), True
+    return _reset_at[0]
 
 
 def start_session(access_token: str, now: datetime | None = None) -> None:
@@ -82,18 +123,31 @@ def start_session(access_token: str, now: datetime | None = None) -> None:
         _sessions[session_id] = now or datetime.now(timezone.utc)
 
 
-def end_sessions() -> None:
+def end_sessions(now: datetime | None = None) -> None:
     """End every guest session (the demo starts afresh: earlier visitors' work is gone, and so are they)."""
     _sessions.clear()
+    _reset_at[0], _reset_known[0] = now or datetime.now(timezone.utc), True
 
 
-def session_ok(session_id: str, now: datetime | None = None) -> bool:
-    """True if a guest request's session was started by "Try as guest" less than [guest] session_minutes ago."""
+def session_ok(session_id: str, signed_in_at: datetime | None = None, now: datetime | None = None) -> bool:
+    """True if a guest request's session is younger than [guest] session_minutes and may go on: started by "Try as
+    guest" on this server, or (`signed_in_at`, from the token) begun before this server started and after the demo's
+    last fresh start (see the module docstring)."""
     now = now or datetime.now(timezone.utc)
     limit = timedelta(minutes=LIMITS.guest.session_minutes)
     for old in [s for s, at in _sessions.items() if now - at >= limit]:
         _sessions.pop(old, None)
-    return bool(session_id) and session_id in _sessions
+    if not session_id:
+        return False
+    if session_id in _sessions:
+        return True
+    if signed_in_at is None or signed_in_at >= _server_started or now - signed_in_at >= limit:
+        return False
+    reset = _last_reset()
+    if reset is not None and signed_in_at < reset - RESET_GRACE:
+        return False
+    _sessions[session_id] = signed_in_at  # known from now on (and ended with the others at the next fresh start)
+    return True
 
 
 def _client() -> httpx.Client:
@@ -187,3 +241,4 @@ def forget() -> None:
     global _last_active, _password, _user_id
     _last_active = _password = _user_id = None
     _sessions.clear()
+    _reset_at[0], _reset_known[0] = None, False
