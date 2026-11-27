@@ -431,6 +431,53 @@ class ConversationInfo(BaseModel):
     turn_count: int
 
 
+# ---------- Ask the app (rag/manual_qa.py) ----------
+AppPage = Literal["p1", "p2", "p3", "p4", "mcp", "facebook", "youtube", "help", "unknown"]
+
+
+class HelpTurn(BaseModel):
+    """An earlier question and answer of the same "Ask the app" chat (kept by the browser, not saved)."""
+
+    question: str = Field(min_length=1, max_length=1000)
+    answer: str = Field(max_length=4000)
+
+
+class HelpRequest(BaseModel):
+    """Request body for POST /help/ask: a question about using the app, the screen the user has open (the app's
+    view ids: p1-p4 the tabs, mcp/facebook/youtube the sidebar pages) and the chat so far (the last few turns)."""
+
+    question: str = Field(min_length=1, max_length=1000)
+    page: AppPage = "unknown"
+    history: list[HelpTurn] = Field(default_factory=list, max_length=6)
+
+
+class HelpAnswer(BaseModel):
+    """The model's answer: Markdown from the manual only (rag/manual_qa.py checks its links)."""
+
+    answer: str = Field(min_length=1, max_length=3000, description="The answer in Markdown: short, steps as a "
+                                                                   "numbered list, button names in bold, links only "
+                                                                   "to the manual's sections.")
+    covered: bool = Field(description="True if the manual answers the question; false if it does not cover it.")
+    sections: list[str] = Field(default_factory=list, max_length=5, description="The links (/help#…) of the "
+                                                                                 "sections the answer is based on.")
+
+
+class HelpSection(BaseModel):
+    """A section of the manual: its heading and anchor (/help#anchor)."""
+
+    title: str
+    anchor: str
+
+
+class HelpResponse(BaseModel):
+    """Response of POST /help/ask."""
+
+    answer: str  # Markdown; links only to sections of the manual (/help#anchor)
+    covered: bool  # the manual covers the question
+    sections: list[HelpSection]  # the sections the answer is based on (existing ones only), for "Read more" links
+    tokens: int
+
+
 # ---------- Discussions (Community: Discussion Relevance Agent) ----------
 # Where a discussion was found. The social platforms match Platform, so the draft reply can be checked against
 # their rules (core/platforms.py); "reddit", "substack", "forum" and "other" have no fixed rules.

@@ -21,6 +21,11 @@ def text() -> str:
     return MANUAL_PATH.read_text(encoding="utf-8")
 
 
+def for_model() -> str:
+    """The manual as the model reads it: without the <!-- notes for developers -->."""
+    return re.sub(r"<!--.*?-->", "", text(), flags=re.DOTALL).strip()
+
+
 def anchor(heading: str) -> str:
     """A heading's anchor: lower case, letters and digits joined by "-" ("Connect your YouTube channel" →
     "connect-your-youtube-channel")."""

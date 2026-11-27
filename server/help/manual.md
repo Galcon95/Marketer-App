@@ -37,12 +37,20 @@ cannot do.
   channel** and **MCP servers**. The *Library* entries (Asset Library, Audiences, Settings) are not available yet.
 - **System status** at the bottom of the sidebar shows whether the app's parts work: API, Vector DB (the book
   search), LLM (the language model) and Pictures. "Offline" means that part cannot be reached right now.
-- **The top bar** has the usage button (costs so far, e.g. "$0.0153 · 12.3k tok"), **Keys**, **Export**, **Help** and
-  **Log out**.
+- **The top bar** has the usage button (costs so far, e.g. "$0.0153 · 12.3k tok"), **Keys**, **Export**, **Ask the
+  app**, **Help** and **Log out**.
 - **Light mode / Dark mode**: the round button in the corner switches the theme; the app remembers it.
 - On a phone the sidebar is hidden: open it with the menu button in the top bar.
 
 > Switching tabs clears what you typed but did not send on the tab you leave.
+
+### Ask the app
+
+Click **Ask the app** in the top bar and ask how to do something, e.g. "How do I make an ad picture?", in any
+language. The answer comes from this manual, with links to the sections it used under **Read more**. It knows which
+screen you have open, so "What is this page for?" works too. It only explains: it cannot change anything in the app.
+The chat stays while you work and is not saved; **New chat** clears it. Each question is a small AI request and counts
+in your usage. If an answer does not match what you see, this manual is right.
 
 ## Your books (Knowledge Hub)
 

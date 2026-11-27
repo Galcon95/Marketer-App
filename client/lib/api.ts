@@ -360,6 +360,17 @@ export interface VerifyItem { claim: string; status: "verified" | "not_found"; c
 export interface VerifyResponse { items: VerifyItem[] }
 
 /** Response of POST /ask: an answer written from the books, with its cited and all retrieved passages. */
+/** One question and answer of an "Ask the app" chat (POST /help/ask; kept in the browser, not saved). */
+export interface HelpTurn { question: string; answer: string }
+
+/** Response of POST /help/ask: Markdown from the manual, and the sections it is based on (/help#anchor). */
+export interface HelpResponse {
+  answer: string;
+  covered: boolean; // false: the manual does not describe it
+  sections: { title: string; anchor: string }[];
+  tokens: number;
+}
+
 export interface AskResponse {
   question: string;
   search_query: string; // what was searched: the question, or its standalone rewrite for a follow-up
@@ -1067,6 +1078,13 @@ export const api = {
   ask: async (question: string, k = 6, sourceIds?: string[], conversationId?: string) =>
     request<AskResponse>(`/projects/${await projectId()}/ask`,
       postJson({ question, k, source_ids: sourceIds, conversation_id: conversationId })),
+  /**
+   * POST /help/ask: "Ask the app", a question about using the app, answered from the manual.
+   * @param page The view the user has open (AppShell's view id).
+   * @param history The chat so far (kept in the browser only); the server uses the last turns.
+   */
+  askApp: (question: string, page: string, history: HelpTurn[]) =>
+    request<HelpResponse>("/help/ask", postJson({ question, page, history: history.slice(-6) })),
   /** GET /projects/{id}/conversations: past "Ask your book" chats without their turns, most recent first. */
   listConversations: async () => request<ConversationInfo[]>(`/projects/${await projectId()}/conversations`),
   /** GET /conversations/{id}: one chat with all its turns. */

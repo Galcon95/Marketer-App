@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore, type JSX } from "react";
 import {
-  Brain, CircleHelp, Cpu, Database, FileText, Image as ImageIcon, KeyRound, LogOut, Menu, MessagesSquare, Moon, Plug, Server, Settings, Sparkles,
+  Brain, CircleHelp, Cpu, Database, FileText, Image as ImageIcon, KeyRound, LogOut, MessageCircleQuestion, Menu, MessagesSquare, Moon, Plug, Server, Settings, Sparkles,
   SquarePlay, Sun, SunMoon, ThumbsUp, Users,
 } from "lucide-react";
 import { api, API_URL } from "@/lib/api";
@@ -25,6 +25,7 @@ import ExportDrawer from "./ExportDrawer";
 import FacebookConnection, { type LoginResult } from "./FacebookConnection";
 import YouTubeConnection from "./YouTubeConnection";
 import AutomationSettings from "./AutomationSettings";
+import AskAppDrawer, { type AppChatTurn } from "./AskAppDrawer";
 import KeysDrawer from "./KeysPanel";
 import LegalFooter from "./LegalFooter";
 import UsageDrawer, { formatTokens, formatUsd } from "./UsagePanel";
@@ -166,6 +167,9 @@ export default function AppShell() {
   const closeKeys = useCallback(() => setKeysOpen(false), []);
   const [exportOpen, setExportOpen] = useState(false); // the asset export panel
   const closeExport = useCallback(() => setExportOpen(false), []);
+  const [askOpen, setAskOpen] = useState(false); // "Ask the app"
+  const closeAsk = useCallback(() => setAskOpen(false), []);
+  const [askTurns, setAskTurns] = useState<AppChatTurn[]>([]); // its chat, kept while the drawer is closed
   const [login, setLogin] = useState<LoginResult>(null); // result of a Facebook Login that just sent the user back
   const [googleLogin, setGoogleLogin] = useState<LoginResult>(null); // the same for Google sign-in (YouTube)
   const guest = me.data?.guest ?? false; // the public demo's shared guest account
@@ -280,6 +284,8 @@ export default function AppShell() {
           )}
           <Button variant="secondary" size="sm" icon={FileText} onClick={() => setExportOpen(true)}
             title="Download your generated assets as CSV or Markdown">Export</Button>
+          <Button variant="secondary" size="sm" icon={MessageCircleQuestion} onClick={() => setAskOpen(true)}
+            title="Ask how to do anything in the app: answered from the manual">Ask the app</Button>
           <Button variant="secondary" size="sm" icon={CircleHelp} onClick={() => window.open("/help", "_blank", "noopener")}
             title="The manual: how to do everything in the app (opens in a new tab)">Help</Button>
           <Button variant="ghost" size="sm" icon={LogOut} onClick={signOut} title={me.data ? `Signed in as ${me.data.email}` : undefined}>
@@ -314,6 +320,7 @@ export default function AppShell() {
       {usageOpen > 0 && <UsageDrawer openCount={usageOpen} onClose={closeUsage} admin={me.data?.admin} />}
       {keysOpen && <KeysDrawer onClose={closeKeys} />}
       {exportOpen && <ExportDrawer onClose={closeExport} />}
+      {askOpen && <AskAppDrawer page={tab} turns={askTurns} setTurns={setAskTurns} onClose={closeAsk} onAnswer={onChange} />}
       <Button variant="secondary" size="sm" icon={theme === "dark" ? Sun : theme === "light" ? Moon : SunMoon}
         className="theme-toggle" onClick={toggleTheme} aria-label="Switch between light and dark theme">
         {theme === "dark" ? "Light mode" : theme === "light" ? "Dark mode" : "Theme"}

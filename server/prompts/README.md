@@ -52,4 +52,5 @@ in the Python code. The loader is `app/core/prompt_files.py`.
 | Page inbox agent | `page_inbox_revise` |
 | Engagement agent (cycle phase 2) | `engagement_comment` (question), `engagement_thought` (comment without a question) |
 | Book post agent (cycle phase 3) | `book_post` |
+| Ask the app (help assistant, answers from `server/help/manual.md`) | `help_answer` |
 | Ad images | `ad_image`, `ad_image_parts` |

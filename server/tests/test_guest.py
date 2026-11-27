@@ -486,6 +486,7 @@ OWN_ONLY = {
     ("GET", "/facebook/status"), ("GET", "/facebook/comments"), ("GET", "/facebook/connect/pages"),
     ("GET", "/youtube/status"), ("GET", "/youtube/comments"),  # the guest never has a Page or channel
     ("GET", "/automation"), ("GET", "/automation/cycles"),  # the guest's own (empty) schedule and cycles
+    ("POST", "/help/ask"),  # Ask the app: reads only the manual, within the guest's budgets
 }
 
 

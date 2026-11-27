@@ -51,6 +51,16 @@
 .help-text code { font-family: var(--font-geist-mono), monospace; font-size: .9em; padding: 0 .3em; border-radius: 4px; background: var(--surface); }
 .md-tip { padding: var(--space-3) var(--space-4); border-left: 3px solid var(--accent-text); border-radius: 4px; background: color-mix(in srgb, var(--accent-text) 8%, var(--surface)); }
 @media (max-width: 760px) { .help-layout { grid-template-columns: 1fr; } .help-toc { position: static; } }
+.ask-app { gap: var(--space-4); }
+.ask-app-turn { gap: var(--space-2); }
+.ask-app-q { margin: 0; align-self: flex-end; max-width: 90%; padding: var(--space-2) var(--space-3); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--accent-text) 14%, var(--surface)); }
+.ask-app-a { line-height: 1.55; }
+.ask-app-a p { margin: 0 0 var(--space-2); }
+.ask-app-a ol, .ask-app-a ul { margin: 0 0 var(--space-2); padding-left: 1.3em; }
+.ask-app-a a { color: var(--accent-text); }
+.ask-app-more { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); font-size: 13px; color: var(--ink-muted); }
+.ask-app-form { display: flex; gap: var(--space-2); align-items: flex-end; position: sticky; bottom: 0; padding-top: var(--space-2); background: var(--surface); }
+.ask-app-form textarea { flex: 1; resize: vertical; }
 .login-page { position: relative; isolation: isolate; overflow: hidden; min-height: 100vh; display: grid; place-items: center; padding: var(--space-4); background: var(--bg); }
 .login-page > .bc-card { width: min(400px, 100%); box-shadow: 0 24px 64px rgb(0 0 0 / .45); }
 .login-bg { object-fit: cover; object-position: center; z-index: -2; }

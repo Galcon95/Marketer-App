@@ -7,8 +7,9 @@ import Link from "next/link";
 import { Fragment } from "react";
 import { parseMarkdown, type Inline } from "@/lib/markdown";
 
-/** One line's pieces as React elements (always text: no HTML is ever rendered). */
-function InlineText({ parts }: { parts: Inline[] }) {
+/** One line's pieces as React elements (always text: no HTML is ever rendered). `newTab`: every link opens in a
+ * new tab (in the app's drawers, so the user's work stays where it is). */
+function InlineText({ parts, newTab = false }: { parts: Inline[]; newTab?: boolean }) {
   return (
     <>
       {parts.map((p, i) => {
@@ -16,7 +17,7 @@ function InlineText({ parts }: { parts: Inline[] }) {
         if (p.kind === "italic") return <em key={i}>{p.text}</em>;
         if (p.kind === "code") return <code key={i}>{p.text}</code>;
         if (p.kind === "link") {
-          return /^https?:\/\//.test(p.href)
+          return newTab || /^https?:\/\//.test(p.href)
             ? <a key={i} href={p.href} target="_blank" rel="noreferrer">{p.text}</a>
             : <Link key={i} href={p.href}>{p.text}</Link>;
         }
@@ -26,7 +27,7 @@ function InlineText({ parts }: { parts: Inline[] }) {
   );
 }
 
-export default function Markdown({ text }: { text: string }) {
+export default function Markdown({ text, newTab = false }: { text: string; newTab?: boolean }) {
   return (
     <>
       {parseMarkdown(text).map((block, i) => {
@@ -37,12 +38,12 @@ export default function Markdown({ text }: { text: string }) {
           }
           case "list": {
             const Tag = block.ordered ? "ol" : "ul";
-            return <Tag key={i}>{block.items.map((item, j) => <li key={j}><InlineText parts={item} /></li>)}</Tag>;
+            return <Tag key={i}>{block.items.map((item, j) => <li key={j}><InlineText parts={item} newTab={newTab} /></li>)}</Tag>;
           }
           case "tip":
-            return <p key={i} className="md-tip"><InlineText parts={block.content} /></p>;
+            return <p key={i} className="md-tip"><InlineText parts={block.content} newTab={newTab} /></p>;
           default:
-            return <p key={i}><InlineText parts={block.content} /></p>;
+            return <p key={i}><InlineText parts={block.content} newTab={newTab} /></p>;
         }
       })}
     </>

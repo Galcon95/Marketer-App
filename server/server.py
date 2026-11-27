@@ -116,7 +116,7 @@ def build_app(api_docs: bool = config.API_DOCS, mcp: bool = config.MCP_SERVERS) 
     app.include_router(guest.router)  # "Try as guest": open, it signs the visitor in (api/guest.py)
     app.include_router(help.open_router)  # the user manual: open, like the privacy notice (api/help.py)
     for module in (projects, sources, knowledge, assets, ad_images, campaigns, discussions, substack, facebook,
-                   youtube, automation, mcp_console, keys):
+                   youtube, automation, mcp_console, keys, help):
         app.include_router(module.router, dependencies=[Depends(auth.current_user)])
     # Facebook Login and Google sign-in send the browser back here without a sign-in token; the signed `state` names
     # the user.
