@@ -3,20 +3,23 @@
 /**
  * Login page ("/login"): sign in with email and password, or create an account (Supabase Auth). A new account
  * must be confirmed with the link in the email Supabase sends (handled by app/auth/confirm/route.ts). The background is
- * a picture of a library (public/login-bg.jpg, optimized by next/image) under a tint of the theme's background colour.
+ * one of the pictures in public/login-bg/, a different one on every visit (lib/loginBackground.ts), optimized by
+ * next/image, under a tint of the theme's background colour. It is picked in the browser after the first render: a
+ * random pick during the server render would differ from the browser's and break hydration; until then the tint
+ * alone shows, for a moment.
  * "Try as guest" signs in as the public demo's shared guest account without typing anything (POST /guest; the server
  * answers a session, never the password).
  */
 
-import { useState, type FormEvent } from "react";
-import Image from "next/image";
+import { useEffect, useState, type FormEvent } from "react";
+import Image, { type StaticImageData } from "next/image";
 import { useRouter } from "next/navigation";
 import { BookOpen, LogIn, UserPlus, Wand2 } from "lucide-react";
 import { errorMessage, startGuestDemo } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import { Button, Card, ErrorNote } from "@/components/ui";
 import LegalFooter from "@/components/LegalFooter";
-import loginBackground from "../../public/login-bg.jpg";
+import { nextLoginBackground } from "@/lib/loginBackground";
 
 /** Shortest password accepted when signing up; Supabase's default minimum is 6. */
 const MIN_PASSWORD = 8;
@@ -27,6 +30,9 @@ export default function LoginPage() {
   const [guestBusy, setGuestBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [background, setBackground] = useState<StaticImageData | null>(null);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- picked once after mounting, see the module docstring
+  useEffect(() => setBackground(nextLoginBackground()), []);
   const signup = mode === "signup";
   const router = useRouter();
 
@@ -82,8 +88,8 @@ export default function LoginPage() {
 
   return (
     <div className="bc-root login-page">
-      <Image src={loginBackground} alt="" fill sizes="100vw" placeholder="blur" loading="eager" fetchPriority="high"
-        className="login-bg" />
+      {background && <Image src={background} alt="" fill sizes="100vw" placeholder="blur" loading="eager"
+        fetchPriority="high" className="login-bg" />}
       <div className="login-shade" aria-hidden />
       <Card title={signup ? "Create your account" : "Sign in to Marketer App"} icon={BookOpen}>
         <form className="login-form" onSubmit={submit}>
