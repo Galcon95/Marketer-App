@@ -22,8 +22,10 @@ readers on a Facebook Page (with approval in Telegram) and under the videos of a
 - The agent (purpose, use cases, how it works, technical decisions, evaluation): [docs/AGENT.md](docs/AGENT.md)
 - Stack: Next.js client (`client/`), FastAPI server (`server/`), Supabase (Auth, PostgreSQL with pgvector, Storage),
   models via OpenRouter, tracing in LangSmith
-- Quality: 675 server tests (pytest) and 21 client tests (Vitest), run by CI with ruff, ESLint and a type check;
-  RAG and agent evaluations in [eval/](eval/README.md)
+- Quality: 1,329 server tests (pytest) and 21 client tests (Vitest), run by CI with ruff, ESLint, a type check, a
+  secret scan and dependency audits; RAG, agent and guard evaluations in [eval/](eval/README.md)
+- Working with coding agents: [AGENTS.md](AGENTS.md) (rules, commands, workflow) and the `release` skill in
+  [.claude/skills/](.claude/skills/release/SKILL.md)
 
 ## Try it online: guest demo
 
@@ -36,6 +38,42 @@ All visitors share one guest account. After 15 minutes without activity, the nex
 afresh (the books stay). It has its own limits (`[guest]` in [server/limits.toml](server/limits.toml)): $0.50 of model
 calls a day, 2 starts a day per IP address, and 5 Reddit/Substack scans a day. If costs rise suddenly, the server
 switches the demo off by itself and alerts the admin in Telegram (`[alarm]`).
+
+## Deployment and observability
+
+**Where it runs.** The client runs on Vercel ([marketer-app-beta.vercel.app](https://marketer-app-beta.vercel.app)),
+the FastAPI server on Render's free plan, and data in Supabase (Auth, PostgreSQL with pgvector, Storage for pictures).
+Models are called through OpenRouter. A cron job pings `/health` every 5 minutes so the free server does not fall
+asleep; `/health` reports each part separately (API, vector database, language model, image model).
+
+**Configuration and secrets.** All settings are environment variables, documented one by one in
+`server/.env.example`: locally in `server/.env` and `client/.env.local` (never committed; gitleaks checks every
+push), in production in the Render and Vercel settings. Limits and budgets that are not secret live in
+`server/limits.toml`. Each user's own Facebook Page token and YouTube refresh token are stored in the database only
+encrypted (Fernet, key in the server's environment). Production has no public API docs and sends security
+headers ([SECURITY.md](SECURITY.md)).
+
+**Releasing updates.** Every push to `main` runs CI (ruff, pytest, ESLint, type check, Vitest, gitleaks, pip-audit,
+npm audit). Vercel deploys the client from `main` by itself; the server is deployed by hand (Render Manual Deploy)
+once the change was tested on a local server against the same database. Database changes are Alembic migrations that
+only add (a new column with a default), so the old server keeps working until the new one is live. The steps are
+written down as a skill for the coding agent: [release](.claude/skills/release/SKILL.md).
+
+**Handling failures.** Model calls have a timeout and retries, and fail as a clear 502/504 to the user, never as a
+hanging request. The agents' runs are saved in PostgreSQL (LangGraph checkpointer), so a proposal waiting for the
+author's answer survives a restart; a cycle interrupted by one is marked as such. Spending is capped per user, for the
+guest demo and for the whole app per day; a cost spike, a used-up budget or many refused guest starts send an alarm
+to the admin's Telegram and switch the guest demo off. The admin can also do that from the phone: `/demo_off`,
+`/freeze` (stops all model calls but the admin's), `/demo_status`, `/guests`.
+
+**Observability.** Each model call is recorded with its operation, model, tokens, cost (as OpenRouter reports it),
+user, book and the id of the HTTP request that caused it (usage log in the database; in the app under Usage, also
+as an Excel export). Every log line is JSON with that request id, so a request can be followed through retrieval,
+model calls, tool calls and refusals; each request's duration is logged. Tool calls are saved with their arguments,
+result and duration. With `DEBUG_MODE=true` every graph run is traced in LangSmith (prompts, tool calls, latency per
+step, tokens), tagged with the same request id and the prompt version. Security-relevant events (keys, connections,
+everything posted, blocked injections, guest starts) go to an append-only audit log (`GET /audit`, admin only).
+LangSmith is off in production by default, because traces would contain book text and readers' comments.
 
 ## Run it locally, step by step
 

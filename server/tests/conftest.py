@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.agents import book_post, checkpoints, engagement, page_inbox
 from app.campaign import kit
-from app.core import alarm, api_keys, auth, config, files, llm, usage
+from app.core import alarm, api_keys, auth, config, files, llm, tracing, usage
 from app.core import state as db
 from app.core.auth import User
 from app.core.schemas import Project, UsageTotals
@@ -44,6 +44,15 @@ def test_database(monkeypatch):
     database.use_engine(engine)
     yield engine
     engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def no_tracing(monkeypatch):
+    """No test run goes to LangSmith, even with DEBUG_MODE=true in server/.env: the test runs are fakes, and they
+    used up the free plan's monthly traces that the real app needs."""
+    monkeypatch.setattr(tracing, "_enabled", False)
+    monkeypatch.setenv("LANGSMITH_TRACING", "false")
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
 
 
 @pytest.fixture(autouse=True)
