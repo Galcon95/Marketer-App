@@ -60,7 +60,7 @@ from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
 
 from app.agents import checkpoints, discussion
-from app.core import config, prompt_files, prompts, tracing
+from app.core import config, links, prompt_files, prompts, tracing
 from app.core import state as db
 from app.core.guard import clean_text, output_blocked, quote_untrusted
 from app.core.llm import structured
@@ -471,7 +471,10 @@ def _revise(state: InboxState) -> InboxState:
         "context": format_context(passages) or "(no passages)",
         "reply": facebook.publishable_text(analysis.reply) or "(none yet)", "feedback": state["feedback"],
     }, Revision, "revised reply", temperature_for(humanize))
-    records.save_discussion(analysis.model_copy(update={"reply": revision.reply, "edited": True,
+    project = db.projects.get(analysis.project_id)
+    reply, removed = links.keep_own_links(revision.reply, links.own_links(project.owner_id if project else None))
+    issues = [i for i in analysis.output_issues if "book links" not in i] + ([links.note(removed)] if removed else [])
+    records.save_discussion(analysis.model_copy(update={"reply": reply, "edited": True, "output_issues": issues,
                                                         "updated_at": db.now()}))
     return {"revisions": state.get("revisions", 0) + 1, "feedback": "", "own_text": False}
 
@@ -640,6 +643,8 @@ def _proposal_text(item: InboxItem, analysis: DiscussionAnalysis, reply: str, bl
     lines += ["", f"📖 {source_name(analysis.source_id) or analysis.source_id}",
               f"Agent: {analysis.recommendation} – {facebook.publishable_text(analysis.reason)}"]
     lines += revision_note(state)
+    if not state.get("own_text"):
+        lines += [f"🔗 {issue}" for issue in analysis.output_issues if "book links" in issue]
     if blocked:
         lines += ["", "⚠️ The reply looks like it contains instructions to an AI and will not be posted. Answer with "
                       "feedback to rewrite it, ✏️ Edit to write it yourself, or skip."]

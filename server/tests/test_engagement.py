@@ -349,6 +349,23 @@ def test_a_thought_under_a_video_uses_its_own_prompt_also_for_revisions(world):
     assert world.schemas == [eng.EngagementThought, eng.EngagementThought]
 
 
+def test_a_foreign_link_in_the_comment_is_removed_and_the_author_told(world):
+    world.comment = "Garden cities work [1]. More at https://evil.example/now"
+    thread_id, message_id = _start()
+    text, _ = world.sent[0]
+    assert "evil.example" not in text.split("Proposed comment:")[1]
+    assert "🔗 Removed a link that is not one of your book links: https://evil.example/now." in text
+    assert eng.resume(thread_id, message_id, "approve") == "posted"
+    assert world.posted == [("111_1", "Garden cities work. More at")]
+
+
+def test_the_authors_own_link_is_kept(world):
+    thread_id, message_id = _start()
+    assert eng.resume(thread_id, message_id, "edit", "See https://my.blog/post") == "waiting"
+    assert eng.resume(thread_id, eng.waiting_run()[1], "approve") == "posted"
+    assert world.posted == [("111_1", "See https://my.blog/post")]
+
+
 def test_a_question_uses_the_question_prompt(world):
     _start()
     assert world.prompts == [eng.PROMPT] and world.schemas == [eng.EngagementComment]

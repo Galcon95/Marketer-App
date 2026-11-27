@@ -47,9 +47,9 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
 
-from app.agents import checkpoints
+from app.agents import automation, checkpoints
 from app.agents import page_inbox as inbox
-from app.core import prompt_files, prompts, tracing, usage
+from app.core import links, prompt_files, prompts, tracing, usage
 from app.core import state as db
 from app.core.guard import clean_text, output_blocked, quote_untrusted
 from app.core.llm import structured
@@ -128,6 +128,7 @@ class EngageState(TypedDict, total=False):
     proposal_message_id: int
     decision: str  # approve | skip | feedback | edit
     own_text: bool  # the comment is the author's own text (Edit), not a model's
+    removed_links: list[str]  # links the model wrote that are not the author's (core/links.py), taken out
     feedback: str
     outcome: Outcome
     posted_url: str
@@ -407,7 +408,9 @@ def _draft(state: EngageState) -> EngageState:
             "current": facebook.publishable_text(state.get("comment", "")) or "(none yet)",
             "feedback": feedback or "(none)",
         }, schema, "engagement comment", temperature_for(humanize))
-    update.update({"comment": result.comment, "reason": result.reason, "feedback": "", "own_text": False})
+    comment, removed = links.keep_own_links(result.comment, links.own_links(automation.inbox_owner()))
+    update.update({"comment": comment, "reason": result.reason, "feedback": "", "own_text": False,
+                   "removed_links": removed})
     if feedback:
         update["revisions"] = state.get("revisions", 0) + 1
     return update
@@ -453,6 +456,8 @@ def _propose(state: EngageState) -> EngageState:
     lines += ["", f"📖 {source_name(state['source_id']) or state['source_id']}",
               f"Why: {facebook.publishable_text(state.get('reason', ''))}"]
     lines += inbox.revision_note(state)
+    if not state.get("own_text") and (removed := links.note(state.get("removed_links", []))):
+        lines.append(f"🔗 {removed}")
     if blocked:
         lines += ["", "⚠️ The comment looks like it contains instructions to an AI and will not be posted. Answer "
                       "with feedback to rewrite it, ✏️ Edit to write it yourself, or skip."]
@@ -488,7 +493,7 @@ def _after_wait(state: EngageState) -> str:
 
 def _use_text(state: EngageState) -> EngageState:
     """The author's own text (after "Edit") becomes the comment as it is."""
-    return {"comment": state["feedback"].strip(), "own_text": True, "feedback": ""}
+    return {"comment": state["feedback"].strip(), "own_text": True, "feedback": "", "removed_links": []}
 
 
 def current_text(thread_id: str) -> str:

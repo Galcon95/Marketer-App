@@ -44,9 +44,9 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
 
-from app.agents import checkpoints
+from app.agents import automation, checkpoints
 from app.agents import page_inbox as inbox
-from app.core import files, images, prompt_files, prompts, tracing, usage
+from app.core import files, images, links, prompt_files, prompts, tracing, usage
 from app.core import ad_images
 from app.core import state as db
 from app.core.guard import output_blocked, quote_untrusted
@@ -113,6 +113,7 @@ class PostState(TypedDict, total=False):
     proposal_message_id: int
     decision: str  # approve | skip | feedback | edit
     own_text: bool  # the post is the author's own text (Edit), not a model's
+    removed_links: list[str]  # links the model wrote that are not the author's (core/links.py), taken out
     feedback: str
     outcome: Outcome
     posted_url: str
@@ -311,7 +312,9 @@ def _draft(state: PostState) -> PostState:
             "current": facebook.publishable_text(state.get("post", "")) or "(none yet)",
             "feedback": feedback or "(none)",
         }, BookPost, "book post", temperature_for(humanize))
-    update.update({"post": result.post, "reason": result.reason, "feedback": "", "own_text": False,
+    own = links.own_links(automation.inbox_owner()) + ([state["link"]] if state.get("link") else [])
+    post, removed = links.keep_own_links(result.post, own)
+    update.update({"post": post, "reason": result.reason, "feedback": "", "own_text": False, "removed_links": removed,
                    "headline": result.headline.strip()[:images.MAX_HEADLINE_CHARS],
                    "scene": result.scene.strip()[:images.MAX_SCENE_CHARS]})
     if feedback:
@@ -348,6 +351,8 @@ def _propose(state: PostState) -> PostState:
     if picture_line:
         lines.append(picture_line)
     lines += inbox.revision_note(state)
+    if not state.get("own_text") and (removed := links.note(state.get("removed_links", []))):
+        lines.append(f"🔗 {removed}")
     if blocked:
         lines += ["", "⚠️ The post looks like it contains instructions to an AI and will not be published. Answer "
                       "with feedback to rewrite it, ✏️ Edit to write it yourself, or skip."]
@@ -390,7 +395,7 @@ def _after_wait(state: PostState) -> str:
 
 def _use_text(state: PostState) -> PostState:
     """The author's own text (after "Edit") becomes the post as it is."""
-    return {"post": state["feedback"].strip(), "own_text": True, "feedback": ""}
+    return {"post": state["feedback"].strip(), "own_text": True, "feedback": "", "removed_links": []}
 
 
 def current_text(thread_id: str) -> str:

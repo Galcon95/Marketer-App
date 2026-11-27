@@ -66,7 +66,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.core import prompt_files
 from app.agents.discussion_tools import MAX_PASSAGES, SEARCH_K, Research, make_tools, start_research
-from app.core import prompts, tracing
+from app.core import links, prompts, tracing
 from app.core import state as db
 from app.core.config import LLM_MODEL
 from app.core.guard import check_output, injection_note, quote_untrusted, scan_third_party
@@ -228,11 +228,16 @@ def analyze_discussion(project_id: str, req: DiscussionRequest) -> DiscussionAna
         raise model_failure(e) from e
     assessment, draft = state["assessment"], state.get("draft")
     now = db.now()
+    project = db.projects.get(project_id)
+    reply, removed = links.keep_own_links(state.get("suggested_reply", ""),
+                                          links.own_links(project.owner_id if project else None))
+    if removed:
+        state["output_issues"] = [i for i in state.get("output_issues", []) if "not from the book" not in i] + [
+            links.note(removed)]
     return DiscussionAnalysis(
         id=db.new_id("dsc"), project_id=project_id, source_id=req.source_id, discussion=req.discussion, url=req.url,
         platform=req.platform, angle=req.angle, recommendation=assessment.recommendation, reason=state["reason"],
-        missing_context=assessment.missing_context, suggested_reply=state.get("suggested_reply", ""),
-        reply=state.get("suggested_reply", ""),
+        missing_context=assessment.missing_context, suggested_reply=reply, reply=reply,
         book_mention=BookMention(suggest=draft.mention_book, reason=draft.mention_reason) if draft else None,
         citations=state["citations"], search_queries=list(research.queries), tool_calls=state.get("tool_calls", []),
         platform_issues=state.get("platform_issues", []), injection_risk=risk, injection_findings=findings,

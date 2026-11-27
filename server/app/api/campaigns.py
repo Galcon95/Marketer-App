@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.api.deps import check_sources, checked_optional, checked_text, llm_limits, owned_project
 from app.campaign import kit
 from app.core import state as db
-from app.core import ad_images, usage
+from app.core import ad_images, links, usage
 from app.core.config import LLM_MODEL
 from app.core.llm import GenerationError
 from app.core.schemas import Asset, CampaignPage, CampaignRequest, CampaignResponse, CampaignSummary
@@ -52,8 +52,12 @@ def create_campaign(project_id: str, body: CampaignRequest):
     created = db.now()
     order = iter(range(9))  # 1 µs apart, so the kit keeps its order when the assets are reloaded (sorted by time)
 
+    project = db.projects.get(project_id)
+    own = links.own_links(project.owner_id if project else None)
+
     def make(asset_type, text: str, tokens: int, **extra) -> Asset:
-        """One asset of the kit with the fields all pieces share."""
+        """One asset of the kit with the fields all pieces share; only the author's book links stay in its text."""
+        text, _ = links.keep_own_links(text, own)
         return Asset(id=db.new_id("ast"), project_id=project_id, asset_type=asset_type, grounded=False, brief=brief,
                      text=text, citations=[], created_at=created + timedelta(microseconds=next(order)), tokens=tokens, audience=body.audience,
                      humanize=body.humanize, source_ids=[body.source_id] if body.source_id else [],

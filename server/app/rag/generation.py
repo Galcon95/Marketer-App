@@ -38,7 +38,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
 from app.core import prompt_files
-from app.core import prompts, style, tracing, usage
+from app.core import links, prompts, style, tracing, usage
 from app.core import state as db
 from app.core.config import LLM_MODEL
 from app.core.guard import quote_untrusted
@@ -156,13 +156,15 @@ def create_asset(project_id: str, req: GenerateRequest) -> Asset:
         cost = records.usage_cost(asset_id=asset_id)
     except OSError:  # DatabaseError: the asset is still worth keeping, only without its cost
         cost = None
+    project = db.projects.get(project_id)  # only the author's book links stay in a model's text (core/links.py)
+    text, _ = links.keep_own_links(result["text"], links.own_links(project.owner_id if project else None))
     asset = Asset(
         id=asset_id,
         project_id=project_id,
         asset_type=req.asset_type,
         grounded=req.grounded,
         brief=req.brief,
-        text=result["text"],
+        text=text,
         citations=result.get("citations", []),
         created_at=db.now(),
         tokens=result.get("tokens", 0),
