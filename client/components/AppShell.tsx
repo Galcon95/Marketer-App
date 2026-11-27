@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore, type JSX } from "react";
 import {
-  Brain, Cpu, Database, FileText, Image as ImageIcon, KeyRound, LogOut, Menu, MessagesSquare, Moon, Plug, Server, Settings, Sparkles,
+  Brain, CircleHelp, Cpu, Database, FileText, Image as ImageIcon, KeyRound, LogOut, Menu, MessagesSquare, Moon, Plug, Server, Settings, Sparkles,
   SquarePlay, Sun, SunMoon, ThumbsUp, Users,
 } from "lucide-react";
 import { api, API_URL } from "@/lib/api";
@@ -280,6 +280,8 @@ export default function AppShell() {
           )}
           <Button variant="secondary" size="sm" icon={FileText} onClick={() => setExportOpen(true)}
             title="Download your generated assets as CSV or Markdown">Export</Button>
+          <Button variant="secondary" size="sm" icon={CircleHelp} onClick={() => window.open("/help", "_blank", "noopener")}
+            title="The manual: how to do everything in the app (opens in a new tab)">Help</Button>
           <Button variant="ghost" size="sm" icon={LogOut} onClick={signOut} title={me.data ? `Signed in as ${me.data.email}` : undefined}>
             Log out
           </Button>

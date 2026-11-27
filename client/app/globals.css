@@ -40,6 +40,17 @@
 .legal-text ul { padding-left: 1.2em; }
 .legal-text li { margin-bottom: var(--space-2); }
 .legal-text a { color: var(--accent-text); }
+.help-layout { display: grid; grid-template-columns: 220px minmax(0, 760px); gap: var(--space-6); justify-content: center; }
+.help-toc { position: sticky; top: var(--space-4); align-self: start; display: flex; flex-direction: column; gap: var(--space-2); font-size: 14px; }
+.help-toc a { color: var(--ink-muted); text-decoration: none; }
+.help-toc a:hover { color: var(--ink); }
+.help-toc .help-back { color: var(--accent-text); margin-bottom: var(--space-2); }
+.help-text { margin: 0; }
+.help-text h2 { scroll-margin-top: var(--space-4); padding-top: var(--space-2); border-top: 1px solid var(--border); }
+.help-text h3 { scroll-margin-top: var(--space-4); margin: var(--space-4) 0 var(--space-2); font-size: 16px; }
+.help-text code { font-family: var(--font-geist-mono), monospace; font-size: .9em; padding: 0 .3em; border-radius: 4px; background: var(--surface); }
+.md-tip { padding: var(--space-3) var(--space-4); border-left: 3px solid var(--accent-text); border-radius: 4px; background: color-mix(in srgb, var(--accent-text) 8%, var(--surface)); }
+@media (max-width: 760px) { .help-layout { grid-template-columns: 1fr; } .help-toc { position: static; } }
 .login-page { position: relative; isolation: isolate; overflow: hidden; min-height: 100vh; display: grid; place-items: center; padding: var(--space-4); background: var(--bg); }
 .login-page > .bc-card { width: min(400px, 100%); box-shadow: 0 24px 64px rgb(0 0 0 / .45); }
 .login-bg { object-fit: cover; object-position: center; z-index: -2; }

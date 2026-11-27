@@ -7,8 +7,8 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-/** Pages that are open without signing in: the login page, the link in the confirmation email, the privacy notice. */
-const PUBLIC_PATHS = ["/login", "/auth/", "/privacy"];
+/** Pages open without signing in: the login page, the confirmation email's link, the privacy notice, the manual. */
+const PUBLIC_PATHS = ["/login", "/auth/", "/privacy", "/help"];
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });

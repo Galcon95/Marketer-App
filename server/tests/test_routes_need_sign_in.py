@@ -28,7 +28,8 @@ from tests.conftest import OWNER
 # when this run has them.
 DOCS = {("GET", "/openapi.json"), ("GET", "/docs"), ("GET", "/docs/oauth2-redirect"), ("GET", "/redoc")}
 OPEN = {("GET", "/health"), ("GET", "/"), ("GET", "/test"), ("GET", "/facebook/oauth/callback"),
-        ("GET", "/youtube/oauth/callback"), ("POST", "/guest")} | (DOCS if config.API_DOCS else set())
+        ("GET", "/youtube/oauth/callback"), ("POST", "/guest"), ("GET", "/help/manual")} | (
+    DOCS if config.API_DOCS else set())
 
 def endpoints(routes, prefix: str = ""):
     """(method, path) of every endpoint, also inside included routers. FastAPI 0.143+ keeps an included router as

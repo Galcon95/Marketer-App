@@ -29,8 +29,8 @@ from app.core import logs
 logs.setup()  # first, so the imports below already log through it (JSON lines with the request id)
 
 from app.api import (  # noqa: E402
-    ad_images, assets, automation, campaigns, discussions, facebook, guest, health, keys, knowledge, mcp_console, projects,
-    sources, substack, youtube,
+    ad_images, assets, automation, campaigns, discussions, facebook, guest, health, help, keys, knowledge, mcp_console,
+    projects, sources, substack, youtube,
 )
 from app.core import api_keys, auth, config, state, usage  # noqa: E402
 from app.core import alarm  # noqa: E402
@@ -114,6 +114,7 @@ def build_app(api_docs: bool = config.API_DOCS, mcp: bool = config.MCP_SERVERS) 
     # Include the API routers. /health is open; every other endpoint needs a signed-in user (auth.py → 401 otherwise).
     app.include_router(health.router)
     app.include_router(guest.router)  # "Try as guest": open, it signs the visitor in (api/guest.py)
+    app.include_router(help.open_router)  # the user manual: open, like the privacy notice (api/help.py)
     for module in (projects, sources, knowledge, assets, ad_images, campaigns, discussions, substack, facebook,
                    youtube, automation, mcp_console, keys):
         app.include_router(module.router, dependencies=[Depends(auth.current_user)])

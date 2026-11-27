@@ -47,6 +47,9 @@ agent design and evals: [docs/AGENT.md](docs/AGENT.md) · Telegram agent: [docs/
   servers fight over the bot.
 - **Migrations are additive** (new columns with defaults), because Render's running code and the local code share one
   Supabase database. Apply them yourself (`alembic upgrade head`) and say so.
+- **The user manual follows the screens.** `server/help/manual.md` is the Help page and what "Ask the app" knows:
+  when a screen, label, limit or flow changes, change the manual in the same commit. Keep its headings stable
+  (links use their anchors).
 - **Docstrings and comments explain why**, in plain English, like the existing code (module docstrings describe the
   flow; see `app/agents/engagement.py`). Update the docs that describe a feature you change (`docs/`, `FEATURES.md`,
   `SECURITY.md`, `README.md`).

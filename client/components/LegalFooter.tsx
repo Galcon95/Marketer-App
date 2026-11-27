@@ -11,6 +11,7 @@ export default function LegalFooter() {
     <footer className="legal-footer">
       <span>Beta · a student project (Turing College capstone)</span>
       <span>Answers, drafts and pictures are made by AI and can be wrong: check them before you use them.</span>
+      <Link href="/help">Help</Link>
       <Link href="/privacy">Privacy</Link>
     </footer>
   );
