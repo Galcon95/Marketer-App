@@ -15,6 +15,7 @@ import { BookOpen, LogIn, UserPlus, Wand2 } from "lucide-react";
 import { errorMessage, startGuestDemo } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import { Button, Card, ErrorNote } from "@/components/ui";
+import LegalFooter from "@/components/LegalFooter";
 import loginBackground from "../../public/login-bg.jpg";
 
 /** Shortest password accepted when signing up; Supabase's default minimum is 6. */
@@ -114,6 +115,7 @@ export default function LoginPage() {
           </span>
         </form>
       </Card>
+      <LegalFooter />
     </div>
   );
 }

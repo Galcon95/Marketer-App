@@ -26,6 +26,7 @@ import FacebookConnection, { type LoginResult } from "./FacebookConnection";
 import YouTubeConnection from "./YouTubeConnection";
 import AutomationSettings from "./AutomationSettings";
 import KeysDrawer from "./KeysPanel";
+import LegalFooter from "./LegalFooter";
 import UsageDrawer, { formatTokens, formatUsd } from "./UsagePanel";
 import { Badge, Button, Card, ErrorNote, Sidebar, StatusRow, Tabs, type NavGroup, type TabItem } from "./ui";
 
@@ -306,6 +307,7 @@ export default function AppShell() {
               ? <YouTubeConnection key={googleLogin?.result ?? "none"} login={googleLogin} onChange={onChange} />
               : <View refresh={refresh} onChange={onChange} bookId={bookId} onSelectBook={setBookId} />}
         </div>
+        <LegalFooter />
       </main>
       {usageOpen > 0 && <UsageDrawer openCount={usageOpen} onClose={closeUsage} admin={me.data?.admin} />}
       {keysOpen && <KeysDrawer onClose={closeKeys} />}

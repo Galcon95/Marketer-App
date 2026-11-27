@@ -30,6 +30,16 @@
 
 /* Login page (app/login/page.tsx): one centred card over a library picture, tinted so the card stays readable
    (more at the edges); the tint follows the theme's background colour, so it works in dark and light mode. */
+.legal-footer { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2) var(--space-4); padding: var(--space-4); font-size: 12px; color: var(--ink-muted); text-align: center; }
+.legal-footer a { color: inherit; text-decoration: underline; }
+.login-page .legal-footer { position: absolute; left: 0; right: 0; bottom: 0; color: var(--ink); text-shadow: 0 1px 2px rgb(0 0 0 / .6); }
+.legal-page { min-height: 100vh; background: var(--bg); color: var(--ink); padding: var(--space-6) var(--space-4); }
+.legal-text { max-width: 720px; margin: 0 auto; line-height: 1.6; }
+.legal-text h1 { margin: 0 0 var(--space-2); }
+.legal-text h2 { margin: var(--space-6) 0 var(--space-2); font-size: 18px; }
+.legal-text ul { padding-left: 1.2em; }
+.legal-text li { margin-bottom: var(--space-2); }
+.legal-text a { color: var(--accent-text); }
 .login-page { position: relative; isolation: isolate; overflow: hidden; min-height: 100vh; display: grid; place-items: center; padding: var(--space-4); background: var(--bg); }
 .login-page > .bc-card { width: min(400px, 100%); box-shadow: 0 24px 64px rgb(0 0 0 / .45); }
 .login-bg { object-fit: cover; object-position: center; z-index: -2; }
