@@ -1,0 +1,477 @@
+{
+  "prompt_version": "ask_app@091251de",
+  "commit": "46e96cb-dirty",
+  "summary": {
+    "passed": 15,
+    "total": 16,
+    "checks": {
+      "covered": 16,
+      "section": 16,
+      "mentions": 15,
+      "language": 16,
+      "clean": 16
+    },
+    "kinds": {
+      "how-to": {
+        "passed": 10,
+        "total": 11
+      },
+      "page": {
+        "passed": 2,
+        "total": 2
+      },
+      "language": {
+        "passed": 1,
+        "total": 1
+      },
+      "not-covered": {
+        "passed": 2,
+        "total": 2
+      }
+    },
+    "tokens": 115953
+  },
+  "results": [
+    {
+      "id": "upload",
+      "kind": "how-to",
+      "question": "How do I upload my book?",
+      "page": "p1",
+      "covered": true,
+      "sections": [
+        "upload-a-book"
+      ],
+      "must_mention": [
+        "Choose PDF",
+        "PDF"
+      ],
+      "language": "en",
+      "answer": "To upload your book, follow these steps:\n\n1. Open **Knowledge Hub** and click **Choose PDF** in **Upload a book**.\n2. Pick the book as a **PDF** (other formats are not accepted yet). Up to 50 MB is stored in the cloud.\n3. The app uploads it and processes it by itself: it reads the text, splits it into short passages, and makes them searchable. You will see the steps and their progress.\n4. When it shows **ready** and \"N chunks\", the book can be used.",
+      "answer_covered": true,
+      "answer_sections": [
+        "upload-a-book"
+      ],
+      "tokens": 7279,
+      "checks": {
+        "covered": true,
+        "section": true,
+        "mentions": true,
+        "language": true,
+        "clean": true
+      },
+      "passed": true
+    },
+    {
+      "id": "big-pdf",
+      "kind": "how-to",
+      "question": "My PDF is 120 MB. Can I still use it?",
+      "page": "p1",
+      "covered": true,
+      "sections": [
+        "upload-a-book"
+      ],
+      "must_mention": [
+        "Store on server"
+      ],
+      "language": "en",
+      "answer": "Yes, you can use a 120 MB PDF, but it will be stored on the server instead of the cloud. This means it will only be available while the server keeps its files, and it is not backed up.",
+      "answer_covered": true,
+      "answer_sections": [
+        "upload-a-book"
+      ],
+      "tokens": 7211,
+      "checks": {
+        "covered": true,
+        "section": true,
+        "mentions": false,
+        "language": true,
+        "clean": true
+      },
+      "passed": false
+    },
+    {
+      "id": "summary",
+      "kind": "how-to",
+      "question": "How do I get a summary of my book, and how long does it take?",
+      "page": "p1",
+      "covered": true,
+      "sections": [
+        "summarize-a-book"
+      ],
+      "must_mention": [
+        "Create summary"
+      ],
+      "language": "en",
+      "answer": "To get a summary of your book, follow these steps:\n\n1. Click **Create summary** on the book in the **Knowledge Hub**.\n2. The summary will show **What the book is about**, **Key themes**, and **Chapters** with their pages.\n\nIt takes about 10 to 40 seconds to generate the summary.",
+      "answer_covered": true,
+      "answer_sections": [
+        "summarize-a-book"
+      ],
+      "tokens": 7246,
+      "checks": {
+        "covered": true,
+        "section": true,
+        "mentions": true,
+        "language": true,
+        "clean": true
+      },
+      "passed": true
+    },
+    {
+      "id": "ad-picture",
+      "kind": "how-to",
+      "question": "How do I make a picture for an ad, and what does it cost?",
+      "page": "p2",
+      "covered": true,
+      "sections": [
+        "make-an-ad-picture"
+      ],
+      "must_mention": [
+        "Create image",
+        "0.07"
+      ],
+      "language": "en",
+      "answer": "To make an ad picture, follow these steps:\n\n1. Open **Content Studio** and select an **Ad copy** card.\n2. Click **Create image**.\n3. Check the **Headline in the picture** (up to 80 characters) or tick **No text in the picture**.\n4. Describe the **Scene** if you like, e.g. \"on a café table, morning light\".\n5. Choose the **Format**: Square 1:1, Portrait 4:5, Story 9:16, or Wide 16:9.\n6. Click **Create image**. It takes about 15 seconds to generate.\n\nThe cost for creating an ad picture is about $0.07, which is counted in your usage.",
+      "answer_covered": true,
+      "answer_sections": [
+        "make-an-ad-picture"
+      ],
+      "tokens": 7335,
+      "checks": {
+        "covered": true,
+        "section": true,
+        "mentions": true,
+        "language": true,
+        "clean": true
+      },
+      "passed": true
+    },
+    {
+      "id": "campaign",
+      "kind": "how-to",
+      "question": "Can the app write a whole campaign for my book at once?",
+      "page": "p2",
+      "covered": true,
+      "sections": [
+        "make-a-campaign-kit"
+      ],
+      "must_mention": [
+        "Campaign kit"
+      ],
+      "language": "en",
+      "answer": "Yes, the app can write a whole campaign for your book at once using the **Campaign kit** feature.",
+      "answer_covered": true,
+      "answer_sections": [
+        "make-a-campaign-kit"
+      ],
+      "tokens": 7190,
+      "checks": {
+        "covered": true,
+        "section": true,
+        "mentions": true,
+        "language": true,
+        "clean": true
+      },
+      "passed": true
+    },
+    {
+      "id": "reddit",
+      "kind": "how-to",
+      "question": "How do I find Reddit discussions where my book could help?",
+      "page": "p3",
+      "covered": true,
+      "sections": [
+        "find-discussions-on-reddit-or-substack"
+      ],
+      "must_mention": [
+        "Scan Reddit",
+        "Topic"
+      ],
+      "language": "en",
+      "answer": "1. Open **Community** and choose your book under **Working on**.\n2. Click **Scan Reddit**.\n3. Enter a **Topic**, e.g. \"AI future, civilizations\".\n4. Optionally, name up to 5 **Subreddits** to search in.\n5. Choose the **Time** (past week, month, or year) and how many results per search.\n6. Click **Scan Reddit**. It takes 5 to 20 seconds to get results.",
+      "answer_covered": true,
+      "answer_sections": [
+        "find-discussions-on-reddit-or-substack"
+      ],
+      "tokens": 7286,
+      "checks": {
+        "covered": true,
+        "section": true,
+        "mentions": true,
+        "language": true,
+        "clean": true
+      },
+      "passed": true
+    },
+    {
+      "id": "skip",
+      "kind": "how-to",
+      "question": "The agent said Skip for a discussion. What does that mean?",
+      "page": "p3",
+      "covered": true,
+      "sections": [
+        "let-the-agent-analyse-a-discussion"
+      ],
+      "must_mention": [],
+      "language": "en",
+      "answer": "The agent decided that the book has nothing worth adding to the discussion, and replying would look like an ad.",
+      "answer_covered": true,
+      "answer_sections": [
+        "let-the-agent-analyse-a-discussion"
+      ],
+      "tokens": 7200,
+      "checks": {
+        "covered": true,
+        "section": true,
+        "mentions": true,
+        "language": true,
+        "clean": true
+      },
+      "passed": true
+    },
+    {
+      "id": "youtube",
+      "kind": "how-to",
+      "question": "How do I connect my YouTube channel?",
+      "page": "p1",
+      "covered": true,
+      "sections": [
+        "connect-your-youtube-channel"
+      ],
+      "must_mention": [
+        "Connect with Google"
+      ],
+      "language": "en",
+      "answer": "1. Open **YouTube channel** in the sidebar (under **Integrations**).\n2. Click **Connect with Google**.\n3. Pick the Google account that owns the channel (or its brand account).\n4. Allow the app to see and manage your YouTube comments.\n5. Back in the app, the channel shows as **connected**, with its subscribers.",
+      "answer_covered": true,
+      "answer_sections": [
+        "connect-your-youtube-channel"
+      ],
+      "tokens": 7243,
+      "checks": {
+        "covered": true,
+        "section": true,
+        "mentions": true,
+        "language": true,
+        "clean": true
+      },
+      "passed": true
+    },
+    {
+      "id": "telegram-edit",
+      "kind": "how-to",
+      "question": "In Telegram, how do I change the agent's text before it is posted?",
+      "page": "p4",
+      "covered": true,
+      "sections": [
+        "answer-the-agent-in-telegram"
+      ],
+      "must_mention": [
+        "Edit"
+      ],
+      "language": "en",
+      "answer": "To change the agent's text before it is posted in Telegram, you need to respond to the proposal with an edit command. Here’s how to do it:\n\n1. When you receive the proposal in Telegram, look for the text that the agent has drafted.\n2. Reply with **✏️ Edit** (or write \"edit\").\n3. Copy the text the bot sends to you.\n4. Make your changes to the text as needed.\n5. Send the edited text back to the bot.\n6. The agent will propose the edited text again for your approval.",
+      "answer_covered": true,
+      "answer_sections": [
+        "answer-the-agent-in-telegram"
+      ],
+      "tokens": 7295,
+      "checks": {
+        "covered": true,
+        "section": true,
+        "mentions": true,
+        "language": true,
+        "clean": true
+      },
+      "passed": true
+    },
+    {
+      "id": "test-mode",
+      "kind": "how-to",
+      "question": "Can I try the marketing agent without anything being published?",
+      "page": "p4",
+      "covered": true,
+      "sections": [
+        "set-up-the-agent-s-schedule"
+      ],
+      "must_mention": [
+        "Test mode"
+      ],
+      "language": "en",
+      "answer": "Yes, you can try the marketing agent without publishing anything by switching on **Test mode**. In this mode, everything is proposed in Telegram as usual, but nothing is published, not even after \"Make it so\".",
+      "answer_covered": true,
+      "answer_sections": [
+        "the-marketing-agent-agent-workspace"
+      ],
+      "tokens": 7212,
+      "checks": {
+        "covered": true,
+        "section": true,
+        "mentions": true,
+        "language": true,
+        "clean": true
+      },
+      "passed": true
+    },
+    {
+      "id": "budget",
+      "kind": "how-to",
+      "question": "It says my budget is used up. What now?",
+      "page": "p2",
+      "covered": true,
+      "sections": [
+        "usage-limits-and-costs",
+        "troubleshooting"
+      ],
+      "must_mention": [
+        "midnight"
+      ],
+      "language": "en",
+      "answer": "Your daily or monthly AI budget is spent; it renews at midnight UTC or on the 1st. You can check your usage and costs in the app.",
+      "answer_covered": true,
+      "answer_sections": [
+        "usage-limits-and-costs"
+      ],
+      "tokens": 7200,
+      "checks": {
+        "covered": true,
+        "section": true,
+        "mentions": true,
+        "language": true,
+        "clean": true
+      },
+      "passed": true
+    },
+    {
+      "id": "this-page-p3",
+      "kind": "page",
+      "question": "What is this page for?",
+      "page": "p3",
+      "covered": true,
+      "sections": [
+        "discussions-and-comments-community"
+      ],
+      "must_mention": [
+        "discussion"
+      ],
+      "language": "en",
+      "answer": "This page is for managing discussions and comments related to your book. You can find discussions on Reddit or Substack, let the agent analyze a discussion, and answer comments on your Facebook Page and YouTube channel.",
+      "answer_covered": true,
+      "answer_sections": [
+        "discussions-and-comments-community"
+      ],
+      "tokens": 7210,
+      "checks": {
+        "covered": true,
+        "section": true,
+        "mentions": true,
+        "language": true,
+        "clean": true
+      },
+      "passed": true
+    },
+    {
+      "id": "this-page-p1",
+      "kind": "page",
+      "question": "What can I do here?",
+      "page": "p1",
+      "covered": true,
+      "sections": [
+        "your-books-knowledge-hub",
+        "ask-your-book"
+      ],
+      "must_mention": [
+        "book"
+      ],
+      "language": "en",
+      "answer": "In the **Knowledge Hub** tab, you can manage your books, create summaries, and ask questions about your books. Here are the main actions you can take: \n\n1. **Upload a book**: Click **Choose PDF** to upload a new book.\n2. **View your books**: See the list of your uploaded books with details like cover, title, and summary.\n3. **Create a summary**: Click **Create summary** to generate a summary of a selected book.\n4. **Ask your book**: Type a question in **Ask your book** to get answers based on the book's content.\n5. **Work on one book or all books**: Choose which book to focus on for asking questions or writing.\n6. **Delete a book**: Click the trash icon to remove a book if needed.\n\nFor more details, see the section on [Your books (Knowledge Hub)](/help#your-books-knowledge-hub).",
+      "answer_covered": true,
+      "answer_sections": [
+        "your-books-knowledge-hub"
+      ],
+      "tokens": 7367,
+      "checks": {
+        "covered": true,
+        "section": true,
+        "mentions": true,
+        "language": true,
+        "clean": true
+      },
+      "passed": true
+    },
+    {
+      "id": "german",
+      "kind": "language",
+      "question": "Wie verbinde ich meine Facebook-Seite mit der App?",
+      "page": "facebook",
+      "covered": true,
+      "sections": [
+        "connect-your-facebook-page"
+      ],
+      "must_mention": [
+        "Connect with Facebook"
+      ],
+      "language": "de",
+      "answer": "1. Du benötigst eine Facebook **Seite** für dein Buch (nicht dein persönliches Profil oder eine Gruppe) und vollständige Kontrolle darüber.\n2. Während die App auf Facebooks Seite in Entwicklung ist, können nur Tester verbinden: Bitte den App-Besitzer, dich hinzuzufügen, und akzeptiere die Einladung auf.\n3. Öffne **Facebook Page** in der Seitenleiste (unter Integrationen) und klicke auf **Connect with Facebook**.\n4. Melde dich bei Facebook an, wähle deine Seite aus und lasse alle Berechtigungen aktiviert (Seiten auflisten, Beiträge und Kommentare lesen, Beiträge veröffentlichen, auf Kommentare antworten). Wenn eine deaktiviert ist, schlägt das Lesen oder Posten fehl.\n5. Kehre zur App zurück und wähle die Seite aus, falls du mehrere verwaltest. Sie wird jetzt als **connected** angezeigt.",
+      "answer_covered": true,
+      "answer_sections": [
+        "connect-your-facebook-page"
+      ],
+      "tokens": 7357,
+      "checks": {
+        "covered": true,
+        "section": true,
+        "mentions": true,
+        "language": true,
+        "clean": true
+      },
+      "passed": true
+    },
+    {
+      "id": "not-covered",
+      "kind": "not-covered",
+      "question": "Can the app translate my book into Spanish?",
+      "page": "p1",
+      "covered": false,
+      "sections": [],
+      "must_mention": [],
+      "language": "en",
+      "answer": "The manual does not describe it.",
+      "answer_covered": false,
+      "answer_sections": [
+        "your-books-knowledge-hub"
+      ],
+      "tokens": 7172,
+      "checks": {
+        "covered": true,
+        "section": true,
+        "mentions": true,
+        "language": true,
+        "clean": true
+      },
+      "passed": true
+    },
+    {
+      "id": "off-topic",
+      "kind": "not-covered",
+      "question": "Write me a short poem about cats.",
+      "page": "unknown",
+      "covered": false,
+      "sections": [],
+      "must_mention": [],
+      "language": "en",
+      "answer": "The manual does not describe it.",
+      "answer_covered": false,
+      "answer_sections": [],
+      "tokens": 7150,
+      "checks": {
+        "covered": true,
+        "section": true,
+        "mentions": true,
+        "language": true,
+        "clean": true
+      },
+      "passed": true
+    }
+  ]
+}

@@ -332,9 +332,13 @@ In **Agent Workspace** → **Marketing agent schedule**:
    and, if you like, **Quiet hours** (no runs at night; a run due then waits).
 4. Under **When there are no new comments**, choose the Facebook question and what to write under YouTube videos.
 5. Under **At the end of each cycle**, switch the book post on or off, and its picture (about $0.07 each).
-6. Set **How human should the agent sound?**, the **daily limits** for Facebook and YouTube (replies to readers are
-   not limited) and, to try it out safely, **Test mode** (everything is proposed, nothing is published).
+6. Set **How human should the agent sound?** and the **daily limits** for Facebook and YouTube (replies to readers
+   are not limited).
 7. Click **Save schedule**.
+
+> **Try the agent without publishing anything: switch on Test mode.** Everything is proposed in Telegram as usual,
+> but nothing is published, not even after "Make it so". "Manual only" is different: the agent then runs only when
+> you ask, but what you approve is published.
 
 **Run now** starts a cycle at once; **Pause schedule** / **Resume schedule** stops and restarts the schedule.
 **Recent cycles** lists the last cycles with what was proposed and what happened to each proposal.

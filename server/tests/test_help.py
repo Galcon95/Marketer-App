@@ -107,6 +107,18 @@ def test_ask_needs_a_sign_in():
     assert TestClient(server.app).post("/help/ask", json={"question": "Hi"}).status_code == 401
 
 
+def test_the_help_eval_names_only_sections_that_exist():
+    """eval/help_questions.json expects answers based on manual sections: renaming a heading must not silently
+    break the eval."""
+    import json
+    from pathlib import Path
+    items = json.loads((Path(__file__).resolve().parents[2] / "eval" / "help_questions.json").read_text(
+        encoding="utf-8"))["items"]
+    anchors = {a for _, _, a in manual.sections()}
+    assert len(items) >= 12 and len({i["id"] for i in items}) == len(items)
+    assert not [(i["id"], s) for i in items for s in i["sections"] if s not in anchors]
+
+
 def test_every_link_inside_the_manual_points_to_a_section_that_exists():
     text = manual.text()
     anchors = {a for _, _, a in manual.sections(text)}

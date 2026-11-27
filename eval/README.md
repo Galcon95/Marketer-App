@@ -163,3 +163,46 @@ Results of 2026-11-26 (`reports/guard/`): before the red-team work 28% caught an
 through (1 of 13): that is the limit of rules, and the reason outside text is always quoted as data.
 
 `server/tests/test_guard_redteam.py` runs the same set as a test with the measured numbers as the floor.
+
+## Ask the app (`run_help_eval.py`)
+
+Measures the help assistant (`server/app/rag/manual_qa.py`, the "Ask the app" button), which answers from the whole
+user manual in one prompt. 16 questions in `help_questions.json`: 11 how-to questions of authors, 2 "what is this
+page for?" questions (with the screen the user has open), 1 in German, and 2 the manual does not cover (translating a
+book, a poem about cats). The script imports the server's code and calls the real model, like `POST /help/ask`; no
+running server, no sign-in.
+
+```sh
+cd server
+uv run python ../eval/run_help_eval.py              # all questions; reports/help/<date_time>/results.json
+uv run python ../eval/run_help_eval.py --only page  # items whose id contains "page"
+```
+
+Each answer is checked by rules, not by a judge model, so a run costs only the 16 questions (about 115k tokens,
+about one cent with gpt-4o-mini): **covered** (says correctly whether the manual covers it), **section** (based on
+an expected section of the manual, or the chapter that contains it), **mentions** (names the buttons and values a
+user needs), **language** (a German question gets a German answer), **clean** (no link other than to the manual).
+`server/tests/test_help.py` checks that every expected section exists, so renaming a heading cannot silently break
+the set.
+
+**Results (2026-11-27, gpt-4o-mini, temperature 0.2):**
+
+| Run | Change before it | Passed | What failed |
+|---|---|---|---|
+| 1 | first run | 15/16 | big-pdf: correct, but did not name the **Store on server** button |
+| 2 | prompt: "whenever the user has to click something, name it" | 15/16 | test-mode: linked the chapter, not its subsection (the eval's rule, see run 3) |
+| 3 | eval: the chapter of an expected subsection counts | 14/16 | test-mode: **wrong**, said "Manual only" publishes nothing; skip: the eval asked for a word already in the question |
+| 4 | manual: Test mode got its own tip, set apart from "Manual only"; eval: skip fixed | 16/16 | – |
+| 5 | none (same as run 4) | 15/16 | big-pdf: did not name the button again |
+
+What this shows:
+- **The eval found a real error that reading the answers by hand had missed.** In run 3, the assistant confused
+  "Manual only" with Test mode. The cause was the manual: Test mode was only mentioned in the middle of a long step.
+  Making the manual clearer fixed it, which is the point of answering from a manual: improve the manual, and the
+  assistant improves with it.
+- **Answers vary between runs** (temperature 0.2). Runs 4 and 5 are the same code with 16/16 and 15/16. One run is
+  not enough to call a change better or worse: compare two or more runs, item by item.
+- **Two of the five failures were in the eval, not the answers** (a too strict section rule, a required word that
+  the question already contained). Both fixes are documented above and in the script, and they were made because the
+  answers were right, not to make the numbers look better.
+- Known weak spot: the 120 MB question sometimes explains correctly without naming the button.
