@@ -178,8 +178,11 @@ def is_book_post(thread_id: str) -> bool:
     return thread_id.startswith(PREFIX)
 
 
-def start(topic: Topic, settings: AutomationSettings) -> str | None:
+def start(topic: Topic, settings: AutomationSettings, picture: bool | None = None) -> str | None:
     """Write the post about the topic, send the proposal to Telegram and wait.
+
+    `picture`: True or False for this one post (/post_facebook_pic: the author asked for a picture although the
+    schedule's `book_post_picture` is off); None follows the schedule. Never a picture when images are not configured.
 
     Returns:
         The run's thread id, or None if it ended without waiting.
@@ -193,7 +196,8 @@ def start(topic: Topic, settings: AutomationSettings) -> str | None:
     with tracing.scope():
         _graph().invoke({"topic": topic.model_dump(mode="json"), "link": settings.book_links.get(topic.source_id, ""),
                          "test": settings.test_mode, "humanize": settings.humanize, "revisions": 0,
-                         "with_picture": settings.book_post_picture and images.is_configured(), "pictures": 0},
+                         "with_picture": (settings.book_post_picture if picture is None else picture)
+                                         and images.is_configured(), "pictures": 0},
                         _config(thread_id))
     if _waiting(thread_id):
         with _lock:

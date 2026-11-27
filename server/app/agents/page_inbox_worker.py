@@ -6,7 +6,8 @@ and the graph (agents/page_inbox.py) while the server runs.
     /next             run a cycle now: look at the Page and the channel and propose the next open item
     /status           the schedule, the next and the last run, the running cycle
     /pause, /resume   stop the schedule for now, and start it again (the schedule itself is kept)
-    /post_facebook    a new post about the book now (phase 3 only); /post_youtube: a comment under a video now
+    /post_facebook    a new post about the book now (phase 3 only); /post_facebook_pic: the same with a picture,
+                      even when the schedule's picture switch is off; /post_youtube: a comment under a video now
                       (phase 2 for YouTube only). Asked for by the author: the daily limit and the schedule's
                       switches do not apply; the proposal waits for "make it so" as always
     /demo_status      the red button (core/alarm.py): the guest demo on or off, the freeze, recent costs, refusals
@@ -66,7 +67,7 @@ from zoneinfo import ZoneInfo
 from app.agents import automation, book_post, engagement
 from app.agents.cycle import Cycle, continue_after_restart
 from app.agents import page_inbox as inbox
-from app.core import alarm, config, guest, usage
+from app.core import alarm, config, guest, images, usage
 from app.core.llm import GenerationError
 from app.core.schemas import CycleTrigger, TelegramUpdate
 from app.db import records
@@ -86,6 +87,8 @@ COMMANDS: list[tuple[str, str]] = [
              "if switched on), then a new post about your book"),
     ("status", "The schedule, the next and the last run, the running cycle, and a waiting proposal"),
     ("post_facebook", "A new post about your book on your Facebook Page now (to approve as always)"),
+    ("post_facebook_pic", "The same, with a picture (your cover in a scene, about $0.07), even when pictures are "
+                          "switched off in the app"),
     ("post_youtube", "A comment under one of your YouTube videos now: one of its topics and what your book says "
                      "about it (to approve as always)"),
     ("pause", "Stop the schedule for now (/next still works; your schedule is kept)"),
@@ -247,13 +250,18 @@ class InboxWorker:
             self._report(f"Could not prepare a comment for your {thing}: {e}", asked)
             return "error"
 
-    def propose_book_post(self, asked: bool, now: bool = False) -> Step:
+    def propose_book_post(self, asked: bool, now: bool = False, picture: bool | None = None) -> Step:
         """Phase 3: a new post about the next topic of the books, when the schedule allows it (`now`: the author
-        asked for it, /post_facebook: switch and daily limit do not apply)."""
+        asked for it, /post_facebook: switch and daily limit do not apply). `picture`: True for /post_facebook_pic
+        (a picture for this post, whatever the schedule's picture switch); None follows the switch."""
         owner = automation.inbox_owner()
         if not owner or not facebook.is_configured():
             if now:
                 self._say("No Facebook Page is connected: connect it in the app (Integrations → Facebook Page).")
+            return "none"
+        if picture and not images.is_configured():
+            self._say("Pictures cannot be made on this server (no image model is set up), so no post with a picture. "
+                      "/post_facebook writes one without.")
             return "none"
         try:
             settings = automation.schedule_of(owner)
@@ -271,8 +279,8 @@ class InboxWorker:
                               "chapters are the topics.")
                 return "none"
             if asked:
-                self._say("Writing a new post about your book…")
-            thread_id = book_post.start(topic, settings)
+                self._say("Writing a new post about your book" + (" and making its picture…" if picture else "…"))
+            thread_id = book_post.start(topic, settings, picture=picture)
             if thread_id and self.cycle:
                 self.cycle.proposed_post(thread_id, topic, source_name(topic.source_id) or topic.source_id)
             self.last_error = ""
@@ -282,9 +290,9 @@ class InboxWorker:
             self._report(f"Could not prepare a post about your book: {e}", asked)
             return "error"
 
-    def post_now(self, platform: str) -> None:
-        """/post_facebook, /post_youtube: one proposal for that platform right away, in a cycle of its own (after
-        the decision only new readers' comments may follow, no other phase)."""
+    def post_now(self, platform: str, picture: bool | None = None) -> None:
+        """/post_facebook, /post_facebook_pic, /post_youtube: one proposal for that platform right away, in a cycle
+        of its own (after the decision only new readers' comments may follow, no other phase)."""
         if waiting := _waiting():
             self._say("A proposal is still waiting for your answer (above).", reply_to=waiting[1])
             return
@@ -293,7 +301,7 @@ class InboxWorker:
         self.cycle = Cycle(automation.inbox_owner() or "", "telegram")
         self.cycle.engage_tried, self.cycle.post_tried = {"facebook", "youtube"}, True
         result = (self.propose_engagement(True, "youtube", now=True) if platform == "youtube"
-                  else self.propose_book_post(True, now=True))
+                  else self.propose_book_post(True, now=True, picture=picture))
         if result != "proposed":
             self._end_cycle(error=result == "error")
 
@@ -472,6 +480,9 @@ class InboxWorker:
             return
         if command in ("/post_facebook", "/post_youtube"):
             self.post_now(command.removeprefix("/post_"))
+            return
+        if command == "/post_facebook_pic":
+            self.post_now("facebook", picture=True)
             return
         if command in ("/pause", "/resume"):
             self._say(self._pause(command == "/pause"))

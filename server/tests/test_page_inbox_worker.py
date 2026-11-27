@@ -62,8 +62,11 @@ def env(monkeypatch):
     monkeypatch.setattr(bp, "next_topic", lambda settings: e.post_topic)
     monkeypatch.setattr(bp, "waiting_run", lambda: e.post_waiting)
 
-    def post_start(topic, settings):
+    e.post_pictures = []
+
+    def post_start(topic, settings, picture=None):
         e.book_posted.append(topic.key)
+        e.post_pictures.append(picture)
         e.tests.append(settings.test_mode)
         e.humanized.append(settings.humanize)
         e.post_waiting = (f"post:{topic.key}:run1", 301)
@@ -843,6 +846,23 @@ def test_post_facebook_proposes_a_book_post_now_even_beyond_the_limit(post_phase
     post_phase.worker.handle(_button("go", message_id=301))
     assert post_phase.engaged == [] and post_phase.worker.cycle is None  # no other phase follows
     assert ("Cycle done: 1 posted.", None) in post_phase.said
+
+
+def test_post_facebook_pic_asks_for_a_picture_for_this_post_only(post_phase, monkeypatch):
+    monkeypatch.setattr(worker_module.images, "is_configured", lambda: True)
+    post_phase.worker.handle(_text("/post_facebook_pic"))
+    assert post_phase.book_posted == ["src_1#0"] and post_phase.post_pictures == [True]
+    assert ("Writing a new post about your book and making its picture…", None) in post_phase.said
+    post_phase.worker.handle(_button("skip", message_id=301))
+    post_phase.worker.handle(_text("/post_facebook"))  # the next one follows the schedule's switch again
+    assert post_phase.post_pictures == [True, None]
+
+
+def test_post_facebook_pic_without_an_image_model_says_so(post_phase, monkeypatch):
+    monkeypatch.setattr(worker_module.images, "is_configured", lambda: False)
+    post_phase.worker.handle(_text("/post_facebook_pic"))
+    assert post_phase.book_posted == [] and post_phase.worker.cycle is None
+    assert "Pictures cannot be made" in post_phase.said[-1][0]
 
 
 def test_post_youtube_proposes_a_question_under_a_video_now(post_phase):

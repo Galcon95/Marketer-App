@@ -357,8 +357,9 @@ the proposed text. Answer with:
 
 Only the newest proposal counts; answering an older one gets "That proposal is no longer current".
 
-Commands: **/next** runs a cycle now, **/post_facebook** proposes a new book post now, **/post_youtube** a comment
-under a video now (both also beyond the daily limit), **/status** shows the schedule and the running cycle,
+Commands: **/next** runs a cycle now, **/post_facebook** proposes a new book post now, **/post_facebook_pic** the
+same with a picture (also when **With a picture** is switched off in the schedule; about $0.07 per picture),
+**/post_youtube** a comment under a video now (all three also beyond the daily limit), **/status** shows the schedule and the running cycle,
 **/pause** and **/resume** stop and restart the schedule, **/help** lists everything.
 
 ## Usage, limits and costs

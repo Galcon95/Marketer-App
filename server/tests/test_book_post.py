@@ -79,9 +79,9 @@ def world(monkeypatch):
     return w
 
 
-def _start(settings=None):
+def _start(settings=None, picture=None):
     topic = bp.next_topic(settings or _settings())
-    thread_id = bp.start(topic, settings or _settings())
+    thread_id = bp.start(topic, settings or _settings(), picture=picture)
     assert thread_id and bp.is_book_post(thread_id)
     return thread_id, bp.waiting_run()[1]
 
@@ -306,6 +306,12 @@ def test_test_mode_makes_the_picture_but_posts_nothing(world, pictures):
     assert len(pictures.photos) == 1
     assert bp.resume(thread_id, message_id, "approve") == "tested"
     assert pictures.posted_photos == [] and _agent_files(pictures.files) == []
+
+
+def test_a_picture_asked_for_one_post_overrides_the_switch(world, pictures):
+    """/post_facebook_pic: a picture although the schedule's switch is off."""
+    _start(_settings(book_post_picture=False), picture=True)
+    assert len(pictures.made) == 1 and "With the picture above" in world.sent[0][0]
 
 
 def test_pictures_switched_off_on_the_server_mean_none(world, pictures, monkeypatch):
