@@ -102,6 +102,9 @@ class Topic(BaseModel):
 
 
 class PostState(TypedDict, total=False):
+    """The book post graph's state, saved by the checkpointer while the proposal waits in Telegram (so only JSON-able
+    values: a restart must be able to resume it)."""
+
     topic: dict  # the Topic (as JSON, for the checkpointer)
     link: str  # where to get the book ("" = none)
     test: bool  # test mode: publish nothing

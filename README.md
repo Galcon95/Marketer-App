@@ -16,14 +16,15 @@ every drafted reply and reached a RAGAs faithfulness of 0.83
 
 Around the agent, the app also writes summaries, posts and campaign kits from the book with citations, answers
 readers on a Facebook Page (with approval in Telegram) and under the videos of a YouTube channel, and offers the book and the guardrails as two MCP servers.
+A user manual (**Help**) explains every screen, and **Ask the app** answers how-to questions from it.
 
 - Features: [FEATURES.md](FEATURES.md)
 - Security (threats, measures, known limits, reporting a problem): [SECURITY.md](SECURITY.md)
 - The agent (purpose, use cases, how it works, technical decisions, evaluation): [docs/AGENT.md](docs/AGENT.md)
 - Stack: Next.js client (`client/`), FastAPI server (`server/`), Supabase (Auth, PostgreSQL with pgvector, Storage),
   models via OpenRouter, tracing in LangSmith
-- Quality: 1,329 server tests (pytest) and 21 client tests (Vitest), run by CI with ruff, ESLint, a type check, a
-  secret scan and dependency audits; RAG, agent and guard evaluations in [eval/](eval/README.md)
+- Quality: 1,346 server tests (pytest) and 35 client tests (Vitest), run by CI with ruff, ESLint, a type check, a
+  secret scan and dependency audits; RAG, agent, guard and "Ask the app" evaluations in [eval/](eval/README.md)
 - Working with coding agents: [AGENTS.md](AGENTS.md) (rules, commands, workflow) and the `release` skill in
   [.claude/skills/](.claude/skills/release/SKILL.md)
 
@@ -35,7 +36,7 @@ Man*): ask them questions, write posts, ads with pictures and campaign kits, and
 posted anywhere. Uploading books, API keys, Facebook, YouTube and the marketing agent need an own account.
 
 All visitors share one guest account. After 15 minutes without activity, the next "Try as guest" starts the demo
-afresh (the books stay). It has its own limits (`[guest]` in [server/limits.toml](server/limits.toml)): $0.50 of model
+afresh (the books stay), and a guest session ends after an hour. It has its own limits (`[guest]` in [server/limits.toml](server/limits.toml)): $0.50 of model
 calls a day, 2 starts a day per IP address, and 5 Reddit/Substack scans a day. If costs rise suddenly, the server
 switches the demo off by itself and alerts the admin in Telegram (`[alarm]`).
 

@@ -135,6 +135,7 @@ class InboxWorker:
 
     # ----- lifecycle -----
     def start(self) -> None:
+        """Set the bot's "/" menu and start the polling thread (a daemon: it never keeps the server from stopping)."""
         try:
             telegram.set_commands(COMMANDS)
         except telegram.TelegramError as e:  # only the menu is missing; the commands work anyway

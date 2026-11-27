@@ -36,6 +36,7 @@ class _Index:
         self.df = Counter(term for t in self.terms.values() for term in t)
 
     def scores(self, query: str, chunk_ids) -> dict[str, float]:
+        """BM25 score of each of `chunk_ids` for the query (chunks without a query word are left out)."""
         n = len(self.terms)
         idf = {t: math.log(1 + (n - self.df[t] + 0.5) / (self.df[t] + 0.5)) for t in set(tokens(query)) if self.df[t]}
         result = {}

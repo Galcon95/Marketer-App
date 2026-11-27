@@ -52,8 +52,15 @@ The drafting is done by the [Discussion Relevance Agent](AGENT.md) in its own Pa
 | **✅ Make it so** button, or the text `make it so` | The reply is posted as the Page or the channel; you get the link. The next open item follows. |
 | **Skip** button, or `skip` | Nothing is posted; the item is not proposed again. |
 | Any other text, e.g. "shorter, mention volume 2" | Feedback: the reply is rewritten from the same book passages and proposed again (up to 5 rounds, then finish it in the app). |
+| **✏️ Edit** button, or `edit` | The current text is sent so you can copy it; the next text you send is your own version, proposed as it is. |
+| **🔄 New picture** / **🚫 Without picture** | Under a book post with a picture: make another one (up to 3), or post the text alone. |
+| `/post_facebook` | A new book post now (phase 3 only), even when book posts are switched off or the daily limit is reached. |
+| `/post_facebook_pic` | The same with a picture, for this one post, while **With a picture** stays off in the schedule (about $0.07). |
+| `/post_youtube` | A comment under one of your videos now (phase 2 for YouTube only), also beyond the daily limit. |
 | `/status` | The schedule, the next and the last run, the running cycle, and whether a proposal is waiting. |
 | `/pause`, `/resume` | Stop the schedule for now, and start it again (the schedule is kept; after `/resume` the next run counts from then). `/next` works while paused. |
+| `/demo_status`, `/demo_off`, `/demo_on`, `/freeze`, `/unfreeze` | The admin's red button (`core/alarm.py`): the guest demo on or off, all model calls but the admin's stopped, recent costs and refused guest starts. |
+| `/guests` | How often "Try as guest" was used: sessions, starts and refusals in the last 24 hours, 7 days, 30 days and in total (from the audit log). |
 | `/help` | All commands with what they do, and how to answer a proposal. The same commands appear in Telegram's menu when you type `/` (set when the server starts). |
 
 **Cycles** ([`cycle.py`](../server/app/agents/cycle.py)): each start (the schedule, **Run now**, `/next`) is a cycle.
@@ -84,6 +91,10 @@ the chapter's passages and a call to action. The topics are the chapters of the 
 Knowledge); the books take turns, and no topic comes again before every topic had its turn (skipped ones count too,
 from the cycle log). Each book's optional **link** (where to get it, e.g. its Amazon page) is attached to posts about
 that book. The agent also gets your latest Page posts so it does not repeat them. It counts toward the daily limit.
+With **With a picture** on (or for one post, `/post_facebook_pic`), an ad picture is made from the post's headline
+and scene with your cover in it and sent above the proposal; it is posted as a photo with the text (the link then at
+the end of the text). Every drafted text keeps only your own book links: any other link is removed, and the proposal
+says so (`core/links.py`).
 
 **Books:** at the top of the Agent Workspace you tick the books the agent uses for replies, questions and book posts,
 each with its link. Until you choose, it uses `FACEBOOK_INBOX_BOOKS`, which also stays the server setting that says

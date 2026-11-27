@@ -67,6 +67,8 @@ class Alarm:
 
 @dataclass(frozen=True)
 class Limits:
+    """All of limits.toml, one section per field. Frozen: read once at startup, never changed while running."""
+
     per_user: PerUser
     app: AppWide
     guest: Guest = Guest()

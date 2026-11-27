@@ -64,8 +64,8 @@ export default function PrivacyPage() {
 
         <h2>Cookies and browser storage</h2>
         <p>
-          The app keeps only what it needs to work: your sign-in session and your choice of light or dark theme. No
-          consent banner is needed for that.
+          The app keeps only what it needs to work: your sign-in session, your choice of light or dark theme, and
+          which login background was shown last (so the next one differs). No consent banner is needed for that.
         </p>
 
         <h2>Guest demo</h2>

@@ -115,6 +115,9 @@ WRITERS = {"question": (PROMPT, EngagementComment), "thought": (THOUGHT_PROMPT, 
 
 
 class EngageState(TypedDict, total=False):
+    """The engagement graph's state, saved by the checkpointer while the proposal waits. Fields added later have
+    defaults in code, so runs saved before them still resume."""
+
     post: dict  # the FacebookPost or YouTubeUpload (as JSON, for the checkpointer)
     platform: Platform  # missing in runs from before YouTube: facebook
     style: Style  # missing in runs from before the thought comments: question

@@ -53,6 +53,10 @@ def cover_path(project_id: str, source_id: str) -> str:
 
 
 class Backend(Protocol):
+    """Where files are kept: Supabase Storage, or a folder on the server for books the user stores there (tests put
+    an in-memory store and a temporary folder in their place). Paths are relative to the backend's root; a missing
+    file is None, not an error."""
+
     def put(self, path: str, data: bytes | Path, content_type: str) -> None: ...
     def get(self, path: str) -> bytes | None: ...
     def stream(self, path: str) -> Iterator[bytes] | None: ...
