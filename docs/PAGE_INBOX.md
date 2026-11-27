@@ -61,6 +61,7 @@ The drafting is done by the [Discussion Relevance Agent](AGENT.md) in its own Pa
 | `/pause`, `/resume` | Stop the schedule for now, and start it again (the schedule is kept; after `/resume` the next run counts from then). `/next` works while paused. |
 | `/demo_status`, `/demo_off`, `/demo_on`, `/freeze`, `/unfreeze` | The admin's red button (`core/alarm.py`): the guest demo on or off, all model calls but the admin's stopped, recent costs and refused guest starts. |
 | `/guests` | How often "Try as guest" was used: sessions, starts and refusals in the last 24 hours, 7 days, 30 days and in total (from the audit log). |
+| `/online` | Who is using the app: signed-in users of the last 15 minutes and of the last day (emails shortened, e.g. `pe…@example.com`), and the guest demo's open sessions with its last activity. Kept only in memory (`core/presence.py`): a restart starts it empty. |
 | `/help` | All commands with what they do, and how to answer a proposal. The same commands appear in Telegram's menu when you type `/` (set when the server starts). |
 
 **Cycles** ([`cycle.py`](../server/app/agents/cycle.py)): each start (the schedule, **Run now**, `/next`) is a cycle.

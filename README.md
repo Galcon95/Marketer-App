@@ -65,7 +65,7 @@ hanging request. The agents' runs are saved in PostgreSQL (LangGraph checkpointe
 author's answer survives a restart; a cycle interrupted by one is marked as such. Spending is capped per user, for the
 guest demo and for the whole app per day; a cost spike, a used-up budget or many refused guest starts send an alarm
 to the admin's Telegram and switch the guest demo off. The admin can also do that from the phone: `/demo_off`,
-`/freeze` (stops all model calls but the admin's), `/demo_status`, `/guests`.
+`/freeze` (stops all model calls but the admin's), `/demo_status`, `/guests`, `/online` (who is using the app now).
 
 **Observability.** Each model call is recorded with its operation, model, tokens, cost (as OpenRouter reports it),
 user, book and the id of the HTTP request that caused it (usage log in the database; in the app under Usage, also

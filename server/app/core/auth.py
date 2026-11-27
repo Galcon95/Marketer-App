@@ -15,7 +15,7 @@ import jwt
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.core import alarm, guest
+from app.core import alarm, guest, presence
 from app.core.config import SUPABASE_URL
 from app.core.logs import set_request_user
 
@@ -108,6 +108,7 @@ def current_user(request: Request) -> User:
         if not guest.session_ok(user.session_id, user.signed_in_at):  # the browser renews the token forever
             raise _unauthorized("Your guest session has ended. Press “Try as guest” to start again.")
         guest.seen()  # the demo is not started afresh for another visitor while this one is using it
+    presence.seen(user.id, user.email)  # for the admin's /online in Telegram (memory only)
     return user
 
 

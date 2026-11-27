@@ -14,6 +14,8 @@ and the graph (agents/page_inbox.py) while the server runs.
     /demo_off, /demo_on   pause the public guest demo, and switch it on again (also switched off by an alarm)
     /freeze, /unfreeze    stop all model calls except the admin's, and allow them again
     /guests           how often "Try as guest" was used (sessions, starts, refused) per period, from the audit log
+    /online           who is using the app now: signed-in users (emails masked) and the guest demo's open sessions
+                      (core/presence.py, memory only)
     /start, /help     what the bot does, all commands (COMMANDS, also the bot's "/" menu) and how to answer
     a button          "Make it so" / "Edit" / "Skip" under the current proposal ("Edit": the next text is the
                       author's own version, used as it is)
@@ -67,7 +69,7 @@ from zoneinfo import ZoneInfo
 from app.agents import automation, book_post, engagement
 from app.agents.cycle import Cycle, continue_after_restart
 from app.agents import page_inbox as inbox
-from app.core import alarm, config, guest, images, usage
+from app.core import alarm, config, guest, images, presence, usage
 from app.core.llm import GenerationError
 from app.core.schemas import CycleTrigger, TelegramUpdate
 from app.db import records
@@ -95,6 +97,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("resume", "Start the schedule again (the next run counts from now)"),
     ("demo_status", "Red button: guest demo on or off, freeze, recent costs and refused starts"),
     ("guests", "How many used “Try as guest”: last 24 hours, 7 days, 30 days, total"),
+    ("online", "Who is using the app now: signed-in users and the guest demo's open sessions"),
     ("demo_off", "Red button: pause the guest demo (Try as guest) now"),
     ("demo_on", "Switch the guest demo on again"),
     ("freeze", "Red button: stop all model calls in the app except yours"),
@@ -547,7 +550,9 @@ class InboxWorker:
             logger.warning("Page inbox: could not confirm a button press: %s", e)
 
 
-RED_BUTTON = ("/demo_status", "/demo_off", "/demo_on", "/freeze", "/unfreeze", "/guests")
+RED_BUTTON = ("/demo_status", "/demo_off", "/demo_on", "/freeze", "/unfreeze", "/guests", "/online")
+ONLINE = timedelta(minutes=15)  # /online: active this recently counts as "online now"
+ONLINE_LIST = 10  # users listed at most per group
 GUEST_PERIODS = (("Last 24 hours", timedelta(days=1)), ("Last 7 days", timedelta(days=7)),
                  ("Last 30 days", timedelta(days=30)), ("Total", None))
 
@@ -570,7 +575,46 @@ def red_button(command: str) -> str:
         return "✅ Model calls allowed for everyone again." if changed else "The app was not frozen."
     if command == "/guests":
         return guest_visits()
+    if command == "/online":
+        return online()
     return demo_status()
+
+
+def _ago(then: datetime, now: datetime) -> str:
+    minutes = int((now - then).total_seconds() // 60)
+    return "just now" if minutes < 1 else f"{minutes} min ago" if minutes < 60 else f"{minutes // 60} h ago"
+
+
+def guest_now(now: datetime | None = None) -> str:
+    """One line on the guest demo right now: open sessions and the last activity."""
+    now = now or datetime.now(UTC)
+    sessions, last = guest.open_sessions(now), guest.last_active()
+    if not sessions and (last is None or now - last >= ONLINE):
+        return "Guest demo: nobody in it"
+    return (f"Guest demo: {sessions} open session{'s' if sessions != 1 else ''}, last activity "
+            + (_ago(last, now) if last else "unknown"))
+
+
+def online(now: datetime | None = None) -> str:
+    """/online: who used the app in the last 15 minutes and earlier today (core/presence.py; memory only, emails
+    masked), and the guest demo's open sessions."""
+    now = now or datetime.now(UTC)
+    users = [p for p in presence.recent(now) if not guest.is_guest(p.user_id, p.email)]
+    active = [p for p in users if now - p.last_seen < ONLINE]
+    earlier = [p for p in users if now - p.last_seen >= ONLINE]
+    lines = [f"🟢 Online now (last {int(ONLINE.total_seconds() // 60)} minutes)", guest_now(now)]
+    lines += [f"{presence.masked(p.email)}: {_ago(p.last_seen, now)}" for p in active[:ONLINE_LIST]]
+    if not active:
+        lines.append("No signed-in user.")
+    elif len(active) > ONLINE_LIST:
+        lines.append(f"… and {len(active) - ONLINE_LIST} more")
+    if earlier:
+        lines += ["", f"Earlier (last 24 hours): {len(earlier)} user{'s' if len(earlier) != 1 else ''}"]
+        lines += [f"{presence.masked(p.email)}: {_ago(p.last_seen, now)}" for p in earlier[:ONLINE_LIST]]
+    since = max(presence.SINCE, now - presence.KEEP)
+    lines += ["", f"Known since {since:%d %b, %H:%M} UTC (a server restart forgets it). A guest session counts until "
+                  "its hour is over, even if the tab was closed."]
+    return "\n".join(lines)
 
 
 def guest_visits() -> str:
@@ -599,6 +643,7 @@ def demo_status() -> str:
     """The red button's state, recent costs and refusals, and today's spending of the guest and of the whole app."""
     spent, of_guest, refusals = alarm.recent()
     lines = [f"Guest demo: {'on' if alarm.demo_on() else 'OFF'} · Freeze: {'ON' if alarm.frozen() else 'off'}",
+             guest_now() + " (/online for everyone)",
              f"Last {alarm.LIMITS.alarm.spike_minutes} minutes: ${spent:.2f} on model calls (guest ${of_guest:.2f}); "
              f"alarm at ${alarm.LIMITS.alarm.spike_usd:.2f}",
              f"Refused “Try as guest” in the last hour: {refusals}"]

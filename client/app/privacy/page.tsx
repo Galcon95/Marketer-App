@@ -49,7 +49,8 @@ export default function PrivacyPage() {
           <li><strong>Meta (Facebook)</strong> and <strong>Google (YouTube)</strong>: only if you connect your Page or
             channel, and only to read its comments and publish what you approved.</li>
           <li><strong>Telegram:</strong> only for the app&apos;s operator, to approve the marketing agent&apos;s
-            proposals.</li>
+            proposals and to see the app&apos;s state, e.g. who used it in the last day (email addresses
+            shortened, such as “pe…@example.com”).</li>
         </ul>
         <p>
           LangSmith (tracing of AI requests) is used only by the developer for debugging and is switched off in

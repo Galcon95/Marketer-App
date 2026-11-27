@@ -333,9 +333,10 @@ The app acts as a real **MCP client** (official `mcp` SDK `Client`, Streamable H
   email address is removed, and the proposal says so.
 - **Telegram commands:** `/next` (a cycle now), `/post_facebook` (a book post now), `/post_facebook_pic` (the same with
   a picture, while the switch stays off), `/post_youtube` (a comment under a video now), `/status`, `/pause`,
-  `/resume`; the admin's red button: `/demo_status`, `/demo_off`, `/demo_on`, `/freeze`, `/unfreeze`, and `/guests`
-  (guest sessions, starts and refusals in the last 24 hours, 7 days, 30 days and in total, from the audit log). The
-  commands are the bot's "/" menu.
+  `/resume`; the admin's red button: `/demo_status`, `/demo_off`, `/demo_on`, `/freeze`, `/unfreeze`, `/guests`
+  (guest sessions, starts and refusals in the last 24 hours, 7 days, 30 days and in total, from the audit log) and
+  `/online` (who used the app in the last 15 minutes and the last day, emails shortened, and the guest demo's open
+  sessions; memory only, `core/presence.py`). The commands are the bot's "/" menu.
 - Admin only: other users see a notice (one Telegram bot, one Page inbox).
 - Later: the multi-agent campaign workflow (Strategist → Copywriter → Auditor → human checkpoint).
 

@@ -150,6 +150,19 @@ def session_ok(session_id: str, signed_in_at: datetime | None = None, now: datet
     return True
 
 
+def open_sessions(now: datetime | None = None) -> int:
+    """How many guest sessions are open (younger than session_minutes): about the visitors in the demo right now (a
+    visitor who closed the tab still counts until their hour is over)."""
+    now = now or datetime.now(timezone.utc)
+    limit = timedelta(minutes=LIMITS.guest.session_minutes)
+    return sum(1 for at in list(_sessions.values()) if now - at < limit)
+
+
+def last_active() -> datetime | None:
+    """When the guest last sent a request (None: not since this server started)."""
+    return _last_active
+
+
 def _client() -> httpx.Client:
     return httpx.Client(base_url=f"{SUPABASE_URL}/auth/v1", timeout=TIMEOUT,
                         headers={"apikey": SUPABASE_SECRET_KEY, "Authorization": f"Bearer {SUPABASE_SECRET_KEY}"})
